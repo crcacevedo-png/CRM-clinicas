@@ -41,7 +41,7 @@ export default function LoginPage() {
       <AnimatedMedicalBackground />
       
       {/* Login Card */}
-      <div className="relative z-10 min-h-screen flex items-center justify-center p-8">
+      <div className="relative z-10 min-h-screen flex items-center justify-start p-8 pl-24">
         <div 
           className="w-full max-w-md bg-white p-10 shadow-2xl"
           style={{ borderRadius: '8px' }}
