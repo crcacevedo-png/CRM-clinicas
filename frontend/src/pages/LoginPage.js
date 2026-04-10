@@ -36,10 +36,16 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex">
-      {/* Left Panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-white">
-        <div className="w-full max-w-md">
+    <div className="min-h-screen relative">
+      {/* Full page animated background */}
+      <AnimatedMedicalBackground />
+      
+      {/* Login Card */}
+      <div className="relative z-10 min-h-screen flex items-center justify-center p-8">
+        <div 
+          className="w-full max-w-md bg-white p-10 shadow-2xl"
+          style={{ borderRadius: '8px' }}
+        >
           {/* Logo */}
           <div className="mb-10">
             <img 
@@ -140,75 +146,6 @@ export default function LoginPage() {
             Contacta al administrador si necesitas acceso.
           </p>
         </div>
-      </div>
-
-      {/* Right Panel - Animated Visual */}
-      <div className="hidden lg:flex flex-1 items-center justify-center relative overflow-hidden">
-        {/* Animated Background */}
-        <AnimatedMedicalBackground />
-        
-        {/* Content Overlay */}
-        <div className="relative z-10 max-w-lg text-center px-12">
-          {/* Subtle glow behind text */}
-          <div 
-            className="absolute inset-0 blur-3xl opacity-20"
-            style={{ 
-              background: 'radial-gradient(ellipse at center, rgba(46, 196, 182, 0.3) 0%, transparent 70%)'
-            }}
-          />
-          
-          <h1 
-            className="text-4xl font-semibold text-white tracking-tight mb-4 relative"
-            style={{ 
-              textShadow: '0 2px 20px rgba(0, 0, 0, 0.3)'
-            }}
-          >
-            Panel de Administración
-          </h1>
-          <p 
-            className="text-lg leading-relaxed relative"
-            style={{ 
-              color: 'rgba(255, 255, 255, 0.8)',
-              textShadow: '0 1px 10px rgba(0, 0, 0, 0.2)'
-            }}
-          >
-            Gestiona clínicas, usuarios y catálogos médicos desde un solo lugar.
-          </p>
-
-          {/* Feature indicators */}
-          <div className="flex justify-center gap-8 mt-10 relative">
-            {[
-              { label: 'Clínicas', icon: '🏥' },
-              { label: 'Usuarios', icon: '👥' },
-              { label: 'Catálogos', icon: '📋' },
-            ].map((item, index) => (
-              <div 
-                key={index}
-                className="flex flex-col items-center gap-2 opacity-70"
-              >
-                <div 
-                  className="w-12 h-12 flex items-center justify-center text-xl"
-                  style={{ 
-                    backgroundColor: 'rgba(46, 196, 182, 0.15)',
-                    border: '1px solid rgba(46, 196, 182, 0.3)',
-                    borderRadius: '12px'
-                  }}
-                >
-                  {item.icon}
-                </div>
-                <span className="text-xs text-white/60">{item.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Bottom gradient fade */}
-        <div 
-          className="absolute bottom-0 left-0 right-0 h-32 pointer-events-none"
-          style={{
-            background: 'linear-gradient(to top, rgba(10, 37, 64, 0.8) 0%, transparent 100%)'
-          }}
-        />
       </div>
     </div>
   );
