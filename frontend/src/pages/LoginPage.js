@@ -46,7 +46,7 @@ export default function LoginPage() {
               src="/logo-cortexia-cropped.png" 
               alt="Cortexia Medical" 
               style={{ 
-                height: '52px',
+                height: '130px',
                 width: 'auto',
                 objectFit: 'contain'
               }}

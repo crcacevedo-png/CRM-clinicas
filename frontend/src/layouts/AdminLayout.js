@@ -37,7 +37,7 @@ export default function AdminLayout() {
           <img 
             src="/logo-cortexia-cropped.png" 
             alt="Cortexia Medical" 
-            className="h-8 w-auto brightness-0 invert"
+            className="h-20 w-auto brightness-0 invert"
           />
           <p className="text-xs mt-2" style={{ color: '#2EC4B6' }}>Super Admin</p>
         </div>

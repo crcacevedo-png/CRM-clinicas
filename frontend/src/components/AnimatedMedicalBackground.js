@@ -371,8 +371,8 @@ export default function AnimatedMedicalBackground() {
 
       time += 16;
       
-      // Heartbeat timing: ~60 BPM = 1 beat per second
-      heartbeatPhase += 0.016; // Increment phase
+      // Heartbeat timing: ~30 BPM = 1 beat per 2 seconds
+      heartbeatPhase += 0.008; // Increment phase (half speed for 30 BPM)
       const heartbeat = getHeartbeatMultiplier(heartbeatPhase);
 
       ctx.clearRect(0, 0, width, height);
