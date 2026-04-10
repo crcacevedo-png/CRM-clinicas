@@ -72,54 +72,6 @@ export default function AnimatedMedicalBackground() {
       }
     };
 
-    // Wave layers with heartbeat influence
-    const waves = [
-      { 
-        amplitude: 80, 
-        frequency: 0.002, 
-        speed: 0.0002, 
-        yOffset: 0.85, 
-        colorStart: 'rgba(15, 42, 68, 0.95)',
-        colorEnd: 'rgba(15, 42, 68, 0.98)',
-        glowColor: 'rgba(46, 196, 182, 0.5)',
-        glowWidth: 3,
-        heartbeatInfluence: 0.3
-      },
-      { 
-        amplitude: 60, 
-        frequency: 0.0025, 
-        speed: 0.00025, 
-        yOffset: 0.72, 
-        colorStart: 'rgba(19, 59, 92, 0.85)',
-        colorEnd: 'rgba(19, 59, 92, 0.9)',
-        glowColor: 'rgba(46, 196, 182, 0.4)',
-        glowWidth: 2.5,
-        heartbeatInfluence: 0.4
-      },
-      { 
-        amplitude: 45, 
-        frequency: 0.003, 
-        speed: 0.0003, 
-        yOffset: 0.58, 
-        colorStart: 'rgba(26, 73, 113, 0.7)',
-        colorEnd: 'rgba(26, 73, 113, 0.75)',
-        glowColor: 'rgba(46, 196, 182, 0.35)',
-        glowWidth: 2,
-        heartbeatInfluence: 0.5
-      },
-      { 
-        amplitude: 30, 
-        frequency: 0.0035, 
-        speed: 0.00035, 
-        yOffset: 0.45, 
-        colorStart: 'rgba(31, 90, 135, 0.5)',
-        colorEnd: 'rgba(31, 90, 135, 0.55)',
-        glowColor: 'rgba(46, 196, 182, 0.25)',
-        glowWidth: 1.5,
-        heartbeatInfluence: 0.6
-      },
-    ];
-
     // ECG line pulses
     const ecgPulses = [];
     const maxEcgPulses = 3;
@@ -132,24 +84,6 @@ export default function AnimatedMedicalBackground() {
           opacity: 0.8,
           width: width,
           phase: 0
-        });
-      }
-    };
-
-    // Light pulses
-    const pulses = [];
-    const maxPulses = 10;
-
-    const createPulse = (width) => {
-      if (pulses.length < maxPulses) {
-        pulses.push({
-          x: -30,
-          waveIndex: Math.floor(Math.random() * waves.length),
-          speed: 0.5 + Math.random() * 0.3,
-          size: 2 + Math.random() * 2,
-          opacity: 0.4 + Math.random() * 0.4,
-          tail: [],
-          maxTail: 12
         });
       }
     };
@@ -167,80 +101,8 @@ export default function AnimatedMedicalBackground() {
       ctx.fillRect(0, 0, width, height);
     };
 
-    // Calculate wave Y with heartbeat rhythm
-    const getWaveY = (x, wave, t, width, height, heartbeat) => {
-      const baseY = height * wave.yOffset;
-      const phase = t * wave.speed * 1000;
-      
-      // Apply heartbeat multiplier to amplitude
-      const hbMultiplier = 1 + (heartbeat - 1) * wave.heartbeatInfluence;
-      const adjustedAmplitude = wave.amplitude * hbMultiplier;
-      
-      const y = baseY + 
-        Math.sin(x * wave.frequency + phase) * adjustedAmplitude +
-        Math.sin(x * wave.frequency * 0.6 + phase * 0.8) * (adjustedAmplitude * 0.4) +
-        Math.sin(x * wave.frequency * 1.5 + phase * 1.2) * (adjustedAmplitude * 0.15);
-      return y;
-    };
-
-    // Draw wave with volumetric depth
-    const drawWave = (wave, t, width, height, heartbeat) => {
-      ctx.beginPath();
-      ctx.moveTo(0, height);
-
-      const points = [];
-      for (let x = 0; x <= width; x += 3) {
-        const y = getWaveY(x, wave, t, width, height, heartbeat);
-        points.push({ x, y });
-        ctx.lineTo(x, y);
-      }
-
-      ctx.lineTo(width, height);
-      ctx.closePath();
-
-      // Gradient fill
-      const gradient = ctx.createLinearGradient(0, height * wave.yOffset - wave.amplitude, 0, height);
-      gradient.addColorStop(0, wave.colorStart);
-      gradient.addColorStop(1, wave.colorEnd);
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      // Rim light with heartbeat glow intensity
-      const glowIntensity = 0.7 + (heartbeat - 1) * 0.5;
-      
-      ctx.beginPath();
-      for (let i = 0; i < points.length; i++) {
-        if (i === 0) {
-          ctx.moveTo(points[i].x, points[i].y);
-        } else {
-          ctx.lineTo(points[i].x, points[i].y);
-        }
-      }
-
-      ctx.save();
-      ctx.shadowColor = wave.glowColor;
-      ctx.shadowBlur = 12 * glowIntensity;
-      ctx.strokeStyle = wave.glowColor.replace('0.', `${0.3 * glowIntensity}.`);
-      ctx.lineWidth = wave.glowWidth * glowIntensity;
-      ctx.stroke();
-      ctx.restore();
-
-      // Sharp rim line
-      ctx.beginPath();
-      for (let i = 0; i < points.length; i++) {
-        if (i === 0) {
-          ctx.moveTo(points[i].x, points[i].y);
-        } else {
-          ctx.lineTo(points[i].x, points[i].y);
-        }
-      }
-      ctx.strokeStyle = `rgba(46, 196, 182, ${0.15 * glowIntensity})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    };
-
     // Draw ECG line across screen
-    const drawEcgLine = (pulse, width, height, heartbeat) => {
+    const drawEcgLine = (pulse, width, height) => {
       const y = height * 0.35;
       const ecgHeight = 40;
       
@@ -275,72 +137,6 @@ export default function AnimatedMedicalBackground() {
       ctx.stroke();
     };
 
-    // Draw traveling light pulses
-    const drawPulses = (t, width, height, heartbeat) => {
-      pulses.forEach((pulse, index) => {
-        const wave = waves[pulse.waveIndex];
-        const y = getWaveY(pulse.x, wave, t, width, height, heartbeat);
-
-        pulse.tail.unshift({ x: pulse.x, y });
-        if (pulse.tail.length > pulse.maxTail) {
-          pulse.tail.pop();
-        }
-
-        // Draw tail
-        if (pulse.tail.length > 1) {
-          ctx.beginPath();
-          ctx.moveTo(pulse.tail[0].x, pulse.tail[0].y);
-          
-          for (let i = 1; i < pulse.tail.length; i++) {
-            ctx.lineTo(pulse.tail[i].x, pulse.tail[i].y);
-          }
-          
-          const tailGradient = ctx.createLinearGradient(
-            pulse.tail[0].x, pulse.tail[0].y,
-            pulse.tail[pulse.tail.length - 1].x, pulse.tail[pulse.tail.length - 1].y
-          );
-          tailGradient.addColorStop(0, `rgba(46, 196, 182, ${pulse.opacity * 0.5})`);
-          tailGradient.addColorStop(1, 'rgba(46, 196, 182, 0)');
-          
-          ctx.strokeStyle = tailGradient;
-          ctx.lineWidth = pulse.size;
-          ctx.lineCap = 'round';
-          ctx.stroke();
-        }
-
-        // Pulse head with heartbeat-synced glow
-        const pulseGlow = 0.8 + (heartbeat - 1) * 0.4;
-        
-        ctx.save();
-        ctx.shadowColor = colors.teal;
-        ctx.shadowBlur = 15 * pulseGlow;
-        
-        const headGradient = ctx.createRadialGradient(pulse.x, y, 0, pulse.x, y, pulse.size * 3);
-        headGradient.addColorStop(0, `rgba(46, 196, 182, ${pulse.opacity * pulseGlow})`);
-        headGradient.addColorStop(0.5, `rgba(46, 196, 182, ${pulse.opacity * 0.3 * pulseGlow})`);
-        headGradient.addColorStop(1, 'rgba(46, 196, 182, 0)');
-
-        ctx.beginPath();
-        ctx.arc(pulse.x, y, pulse.size * 3, 0, Math.PI * 2);
-        ctx.fillStyle = headGradient;
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(pulse.x, y, pulse.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(46, 196, 182, ${pulse.opacity * pulseGlow})`;
-        ctx.fill();
-        
-        ctx.restore();
-
-        // Update position with slight heartbeat influence on speed
-        pulse.x += pulse.speed * (0.8 + heartbeat * 0.2);
-
-        if (pulse.x > width + 50) {
-          pulses.splice(index, 1);
-        }
-      });
-    };
-
     // Draw subtle medical grid with heartbeat pulse
     const drawGrid = (width, height, heartbeat) => {
       const gridOpacity = 0.03 + (heartbeat - 1) * 0.02;
@@ -364,6 +160,41 @@ export default function AnimatedMedicalBackground() {
       }
     };
 
+    // Floating particles
+    const particles = [];
+    const maxParticles = 20;
+
+    const createParticle = (width, height) => {
+      if (particles.length < maxParticles) {
+        particles.push({
+          x: Math.random() * width,
+          y: Math.random() * height,
+          size: 1 + Math.random() * 2,
+          opacity: 0.1 + Math.random() * 0.2,
+          speedX: (Math.random() - 0.5) * 0.2,
+          speedY: (Math.random() - 0.5) * 0.2,
+        });
+      }
+    };
+
+    const drawParticles = (width, height, heartbeat) => {
+      const pulseGlow = 0.8 + (heartbeat - 1) * 0.3;
+      
+      particles.forEach((p, index) => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * pulseGlow, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(46, 196, 182, ${p.opacity * pulseGlow})`;
+        ctx.fill();
+
+        p.x += p.speedX;
+        p.y += p.speedY;
+
+        if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
+          particles.splice(index, 1);
+        }
+      });
+    };
+
     // Main animation loop
     const animate = () => {
       const width = canvas.offsetWidth;
@@ -379,14 +210,12 @@ export default function AnimatedMedicalBackground() {
       drawBackground(width, height);
       drawGrid(width, height, heartbeat);
 
-      // Draw waves with heartbeat
-      for (let i = waves.length - 1; i >= 0; i--) {
-        drawWave(waves[i], time, width, height, heartbeat);
-      }
+      // Draw particles
+      drawParticles(width, height, heartbeat);
 
       // Draw ECG pulses
       ecgPulses.forEach((pulse, index) => {
-        drawEcgLine(pulse, width, height, heartbeat);
+        drawEcgLine(pulse, width, height);
         pulse.x += pulse.speed;
         pulse.phase += 0.012;
         
@@ -395,20 +224,14 @@ export default function AnimatedMedicalBackground() {
         }
       });
 
-      // Draw light pulses
-      drawPulses(time, width, height, heartbeat);
-
       // Create new elements
-      if (Math.random() < 0.02) createPulse(width);
+      if (Math.random() < 0.03) createParticle(width, height);
       if (Math.random() < 0.005) createEcgPulse(width);
 
       animationFrameId = requestAnimationFrame(animate);
     };
 
     // Initialize
-    for (let i = 0; i < 3; i++) {
-      createPulse(canvas.offsetWidth);
-    }
     createEcgPulse(canvas.offsetWidth);
 
     animate();
