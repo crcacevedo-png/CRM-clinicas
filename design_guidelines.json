@@ -1,0 +1,101 @@
+{
+  "theme": "light",
+  "archetype": "4 (Swiss & High-Contrast) - Modified with Deep Violet Tech Sidebar",
+  "typography": {
+    "primary_font": "IBM Plex Sans",
+    "secondary_font": "IBM Plex Mono",
+    "scale": {
+      "h1": "text-3xl sm:text-4xl tracking-tight font-semibold text-zinc-950",
+      "h2": "text-2xl tracking-tight font-medium text-zinc-900",
+      "h3": "text-lg tracking-tight font-medium text-zinc-900",
+      "body": "text-sm text-zinc-600 leading-relaxed",
+      "small": "text-xs tracking-wider uppercase text-zinc-500",
+      "metric": "font-mono text-3xl sm:text-4xl tracking-tighter text-zinc-950"
+    }
+  },
+  "colors": {
+    "background": "#FAFAFA",
+    "surface": "#FFFFFF",
+    "border": "#E4E4E7",
+    "text_primary": "#09090B",
+    "text_secondary": "#52525B",
+    "sidebar": {
+      "background": "#120B29",
+      "text_default": "#A19EB1",
+      "text_active": "#FFFFFF",
+      "accent": "#7C3AED",
+      "border": "#2D2640"
+    },
+    "primary": "#09090B",
+    "primary_foreground": "#FFFFFF",
+    "danger": "#DC2626",
+    "success": "#16A34A",
+    "warning": "#D97706"
+  },
+  "layout": {
+    "spacing_scale": "Tailwind standard, prioritize dense packing for dashboard (p-4, p-6)",
+    "grid_system": "Control Room Grid (grid-cols-1 md:grid-cols-2 lg:grid-cols-4) with tight gap-4",
+    "sidebar_width": "w-64",
+    "container_padding": "p-6 sm:p-8",
+    "surface_strategy": "Grid Borders (The 'Technical' Look). Expose the skeleton with 1px borders and sharp corners."
+  },
+  "components": {
+    "cards": {
+      "style": "Flat, 1px solid border-zinc-200, rounded-none or rounded-sm, no drop shadow",
+      "hover": "Subtle border darken, no lift"
+    },
+    "buttons": {
+      "primary": "bg-zinc-950 text-white hover:bg-zinc-800 rounded-sm px-4 py-2 font-medium transition-colors",
+      "secondary": "bg-white text-zinc-900 border border-zinc-200 hover:bg-zinc-100 rounded-sm px-4 py-2 font-medium transition-colors"
+    },
+    "tables": {
+      "style": "Dense tabular layout, sticky headers, 1px bottom border on rows, hover:bg-zinc-50",
+      "typography": "text-sm text-zinc-700"
+    },
+    "tabs": {
+      "style": "Underline style or solid technical blocks, no pill-shaped tabs."
+    },
+    "modals": {
+      "style": "Sharp corners, backdrop-blur-sm bg-black/40, stark white surface",
+      "layout": "Grid-based forms inside modals (2 columns for desktop to separate Clinic Data and Admin Data)"
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "style": "Stroke width 1.5, sharp and technical"
+  },
+  "media": {
+    "images": {
+      "login_background": {
+        "url": "https://images.unsplash.com/photo-1754738381772-897447d10eb6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTN8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMHRlY2hub2xvZ2ljYWwlMjBiYWNrZ3JvdW5kJTIwcHVycGxlJTIwZGFya3xlbnwwfHx8fDE3NzU3ODYwMjB8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract flowing shape with purple and blue highlights - Use as subtle blend mode background for login screen.",
+        "category": "background"
+      }
+    }
+  },
+  "motion": {
+    "transitions": "Fast and snappy. transition-all duration-150 ease-out",
+    "hover": "Color and border shifts only, avoid heavy transforms in the dashboard"
+  },
+  "accessibility": {
+    "contrast": "Strict APCA/WCAG AA compliance. Dark purple sidebar requires white text for active states.",
+    "focus": "focus:ring-2 focus:ring-zinc-950 focus:ring-offset-2",
+    "data_testid_requirement": "All buttons, tabs, modal triggers, and form inputs MUST have data-testid attributes."
+  },
+  "key_views": {
+    "dashboard": "4 KPI Cards (grid-cols-4), Recent Clinics Table spanning full width below.",
+    "clinic_management": "List view with filters. Create Clinic action opens a large Dialog or navigates to a split-screen creation form (Clinic Details | Admin Details).",
+    "catalogs": "Tabs interface (Medicamentos, Estudios, CIE-10). Each tab contains a datatable with inline edit or rapid-add rows.",
+    "user_management": "Datatable of users. Row actions via dropdown (Role, Deactivate, Reset Password)."
+  },
+  "instructions_to_main_agent": [
+    "Use IBM Plex Sans for all text. Install via Google Fonts.",
+    "Sidebar MUST be dark purple (#120B29) to satisfy the 'Aspecto tecnológico / Sidebar oscuro/morado' requirement. Content area must be light (#FAFAFA) for dashboard readability.",
+    "Implement Shadcn UI for standard components (Table, Dialog, Tabs, DropdownMenu).",
+    "Keep border-radius tight (rounded-sm or rounded-none) for a technical 'Control Room' feel.",
+    "Ensure the Create Clinic flow explicitly collects both Clinic Data and Initial Admin Data in a single robust form/modal.",
+    "Use Lucide-React for all iconography.",
+    "Apply `data-testid` to all interactive elements for testing.",
+    "Remember to output React code using .js/.jsx extensions as requested, not .tsx."
+  ]
+}
