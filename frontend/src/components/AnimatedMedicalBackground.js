@@ -8,6 +8,7 @@ export default function AnimatedMedicalBackground() {
     const ctx = canvas.getContext('2d');
     let animationFrameId;
     let time = 0;
+    let heartbeatPhase = 0;
 
     const resize = () => {
       canvas.width = canvas.offsetWidth * window.devicePixelRatio;
@@ -27,7 +28,51 @@ export default function AnimatedMedicalBackground() {
       tealDim: '#1A7A70',
     };
 
-    // Wave layers - more defined waves
+    // Heartbeat rhythm pattern (normalized 0-1)
+    // Simulates P-QRS-T wave pattern
+    const getHeartbeatMultiplier = (phase) => {
+      const p = phase % 1;
+      
+      // P wave (small bump)
+      if (p < 0.1) {
+        return 1 + Math.sin(p * Math.PI / 0.1) * 0.15;
+      }
+      // PR segment (flat)
+      else if (p < 0.15) {
+        return 1;
+      }
+      // Q dip
+      else if (p < 0.18) {
+        return 1 - (p - 0.15) / 0.03 * 0.1;
+      }
+      // R spike (main peak)
+      else if (p < 0.25) {
+        const rPhase = (p - 0.18) / 0.07;
+        if (rPhase < 0.5) {
+          return 0.9 + rPhase * 2 * 0.8; // Up to 1.7
+        } else {
+          return 1.7 - (rPhase - 0.5) * 2 * 0.9; // Down to 0.8
+        }
+      }
+      // S dip
+      else if (p < 0.30) {
+        return 0.8 + (p - 0.25) / 0.05 * 0.2;
+      }
+      // ST segment (flat)
+      else if (p < 0.45) {
+        return 1;
+      }
+      // T wave (medium bump)
+      else if (p < 0.65) {
+        return 1 + Math.sin((p - 0.45) * Math.PI / 0.2) * 0.25;
+      }
+      // Rest (flat until next beat)
+      else {
+        return 1;
+      }
+    };
+
+    // Wave layers with heartbeat influence
     const waves = [
       { 
         amplitude: 80, 
@@ -36,8 +81,9 @@ export default function AnimatedMedicalBackground() {
         yOffset: 0.85, 
         colorStart: 'rgba(15, 42, 68, 0.95)',
         colorEnd: 'rgba(15, 42, 68, 0.98)',
-        glowColor: 'rgba(46, 196, 182, 0.4)',
-        glowWidth: 3
+        glowColor: 'rgba(46, 196, 182, 0.5)',
+        glowWidth: 3,
+        heartbeatInfluence: 0.3
       },
       { 
         amplitude: 60, 
@@ -46,8 +92,9 @@ export default function AnimatedMedicalBackground() {
         yOffset: 0.72, 
         colorStart: 'rgba(19, 59, 92, 0.85)',
         colorEnd: 'rgba(19, 59, 92, 0.9)',
-        glowColor: 'rgba(46, 196, 182, 0.35)',
-        glowWidth: 2.5
+        glowColor: 'rgba(46, 196, 182, 0.4)',
+        glowWidth: 2.5,
+        heartbeatInfluence: 0.4
       },
       { 
         amplitude: 45, 
@@ -56,8 +103,9 @@ export default function AnimatedMedicalBackground() {
         yOffset: 0.58, 
         colorStart: 'rgba(26, 73, 113, 0.7)',
         colorEnd: 'rgba(26, 73, 113, 0.75)',
-        glowColor: 'rgba(46, 196, 182, 0.3)',
-        glowWidth: 2
+        glowColor: 'rgba(46, 196, 182, 0.35)',
+        glowWidth: 2,
+        heartbeatInfluence: 0.5
       },
       { 
         amplitude: 30, 
@@ -66,25 +114,42 @@ export default function AnimatedMedicalBackground() {
         yOffset: 0.45, 
         colorStart: 'rgba(31, 90, 135, 0.5)',
         colorEnd: 'rgba(31, 90, 135, 0.55)',
-        glowColor: 'rgba(46, 196, 182, 0.2)',
-        glowWidth: 1.5
+        glowColor: 'rgba(46, 196, 182, 0.25)',
+        glowWidth: 1.5,
+        heartbeatInfluence: 0.6
       },
     ];
 
+    // ECG line pulses
+    const ecgPulses = [];
+    const maxEcgPulses = 3;
+
+    const createEcgPulse = (width) => {
+      if (ecgPulses.length < maxEcgPulses) {
+        ecgPulses.push({
+          x: -100,
+          speed: 2.5,
+          opacity: 0.8,
+          width: width,
+          phase: 0
+        });
+      }
+    };
+
     // Light pulses
     const pulses = [];
-    const maxPulses = 12;
+    const maxPulses = 10;
 
-    const createPulse = () => {
+    const createPulse = (width) => {
       if (pulses.length < maxPulses) {
         pulses.push({
-          x: Math.random() < 0.5 ? -30 : canvas.offsetWidth + 30,
+          x: -30,
           waveIndex: Math.floor(Math.random() * waves.length),
-          speed: (Math.random() < 0.5 ? 1 : -1) * (0.4 + Math.random() * 0.4),
-          size: 2 + Math.random() * 3,
-          opacity: 0.5 + Math.random() * 0.5,
+          speed: 0.5 + Math.random() * 0.3,
+          size: 2 + Math.random() * 2,
+          opacity: 0.4 + Math.random() * 0.4,
           tail: [],
-          maxTail: 15
+          maxTail: 12
         });
       }
     };
@@ -102,26 +167,30 @@ export default function AnimatedMedicalBackground() {
       ctx.fillRect(0, 0, width, height);
     };
 
-    // Calculate wave Y with multiple harmonics
-    const getWaveY = (x, wave, t, width, height) => {
+    // Calculate wave Y with heartbeat rhythm
+    const getWaveY = (x, wave, t, width, height, heartbeat) => {
       const baseY = height * wave.yOffset;
       const phase = t * wave.speed * 1000;
+      
+      // Apply heartbeat multiplier to amplitude
+      const hbMultiplier = 1 + (heartbeat - 1) * wave.heartbeatInfluence;
+      const adjustedAmplitude = wave.amplitude * hbMultiplier;
+      
       const y = baseY + 
-        Math.sin(x * wave.frequency + phase) * wave.amplitude +
-        Math.sin(x * wave.frequency * 0.6 + phase * 0.8) * (wave.amplitude * 0.4) +
-        Math.sin(x * wave.frequency * 1.5 + phase * 1.2) * (wave.amplitude * 0.15);
+        Math.sin(x * wave.frequency + phase) * adjustedAmplitude +
+        Math.sin(x * wave.frequency * 0.6 + phase * 0.8) * (adjustedAmplitude * 0.4) +
+        Math.sin(x * wave.frequency * 1.5 + phase * 1.2) * (adjustedAmplitude * 0.15);
       return y;
     };
 
     // Draw wave with volumetric depth
-    const drawWave = (wave, t, width, height) => {
-      // Main wave fill
+    const drawWave = (wave, t, width, height, heartbeat) => {
       ctx.beginPath();
       ctx.moveTo(0, height);
 
       const points = [];
       for (let x = 0; x <= width; x += 3) {
-        const y = getWaveY(x, wave, t, width, height);
+        const y = getWaveY(x, wave, t, width, height, heartbeat);
         points.push({ x, y });
         ctx.lineTo(x, y);
       }
@@ -136,7 +205,9 @@ export default function AnimatedMedicalBackground() {
       ctx.fillStyle = gradient;
       ctx.fill();
 
-      // Rim light (teal glow on edge)
+      // Rim light with heartbeat glow intensity
+      const glowIntensity = 0.7 + (heartbeat - 1) * 0.5;
+      
       ctx.beginPath();
       for (let i = 0; i < points.length; i++) {
         if (i === 0) {
@@ -146,12 +217,11 @@ export default function AnimatedMedicalBackground() {
         }
       }
 
-      // Glow effect with blur
       ctx.save();
       ctx.shadowColor = wave.glowColor;
-      ctx.shadowBlur = 12;
-      ctx.strokeStyle = wave.glowColor;
-      ctx.lineWidth = wave.glowWidth;
+      ctx.shadowBlur = 12 * glowIntensity;
+      ctx.strokeStyle = wave.glowColor.replace('0.', `${0.3 * glowIntensity}.`);
+      ctx.lineWidth = wave.glowWidth * glowIntensity;
       ctx.stroke();
       ctx.restore();
 
@@ -164,18 +234,53 @@ export default function AnimatedMedicalBackground() {
           ctx.lineTo(points[i].x, points[i].y);
         }
       }
-      ctx.strokeStyle = `rgba(46, 196, 182, ${wave.glowWidth * 0.15})`;
+      ctx.strokeStyle = `rgba(46, 196, 182, ${0.15 * glowIntensity})`;
       ctx.lineWidth = 1;
       ctx.stroke();
     };
 
+    // Draw ECG line across screen
+    const drawEcgLine = (pulse, width, height, heartbeat) => {
+      const y = height * 0.35;
+      const ecgHeight = 40;
+      
+      ctx.beginPath();
+      
+      for (let i = 0; i < 200; i++) {
+        const x = pulse.x + i * 2;
+        if (x < 0 || x > width) continue;
+        
+        const localPhase = (pulse.phase + i * 0.008) % 1;
+        const ecgY = y - (getHeartbeatMultiplier(localPhase) - 1) * ecgHeight * 2;
+        
+        if (i === 0 || x - 2 < 0) {
+          ctx.moveTo(x, ecgY);
+        } else {
+          ctx.lineTo(x, ecgY);
+        }
+      }
+      
+      // Glow effect
+      ctx.save();
+      ctx.shadowColor = colors.teal;
+      ctx.shadowBlur = 15;
+      ctx.strokeStyle = `rgba(46, 196, 182, ${pulse.opacity * 0.6})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+      
+      // Core line
+      ctx.strokeStyle = `rgba(46, 196, 182, ${pulse.opacity})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    };
+
     // Draw traveling light pulses
-    const drawPulses = (t, width, height) => {
+    const drawPulses = (t, width, height, heartbeat) => {
       pulses.forEach((pulse, index) => {
         const wave = waves[pulse.waveIndex];
-        const y = getWaveY(pulse.x, wave, t, width, height);
+        const y = getWaveY(pulse.x, wave, t, width, height, heartbeat);
 
-        // Add to tail
         pulse.tail.unshift({ x: pulse.x, y });
         if (pulse.tail.length > pulse.maxTail) {
           pulse.tail.pop();
@@ -194,7 +299,7 @@ export default function AnimatedMedicalBackground() {
             pulse.tail[0].x, pulse.tail[0].y,
             pulse.tail[pulse.tail.length - 1].x, pulse.tail[pulse.tail.length - 1].y
           );
-          tailGradient.addColorStop(0, `rgba(46, 196, 182, ${pulse.opacity * 0.6})`);
+          tailGradient.addColorStop(0, `rgba(46, 196, 182, ${pulse.opacity * 0.5})`);
           tailGradient.addColorStop(1, 'rgba(46, 196, 182, 0)');
           
           ctx.strokeStyle = tailGradient;
@@ -203,14 +308,16 @@ export default function AnimatedMedicalBackground() {
           ctx.stroke();
         }
 
-        // Draw pulse head with glow
+        // Pulse head with heartbeat-synced glow
+        const pulseGlow = 0.8 + (heartbeat - 1) * 0.4;
+        
         ctx.save();
         ctx.shadowColor = colors.teal;
-        ctx.shadowBlur = 15;
+        ctx.shadowBlur = 15 * pulseGlow;
         
         const headGradient = ctx.createRadialGradient(pulse.x, y, 0, pulse.x, y, pulse.size * 3);
-        headGradient.addColorStop(0, `rgba(46, 196, 182, ${pulse.opacity})`);
-        headGradient.addColorStop(0.5, `rgba(46, 196, 182, ${pulse.opacity * 0.4})`);
+        headGradient.addColorStop(0, `rgba(46, 196, 182, ${pulse.opacity * pulseGlow})`);
+        headGradient.addColorStop(0.5, `rgba(46, 196, 182, ${pulse.opacity * 0.3 * pulseGlow})`);
         headGradient.addColorStop(1, 'rgba(46, 196, 182, 0)');
 
         ctx.beginPath();
@@ -218,32 +325,30 @@ export default function AnimatedMedicalBackground() {
         ctx.fillStyle = headGradient;
         ctx.fill();
 
-        // Core
         ctx.beginPath();
         ctx.arc(pulse.x, y, pulse.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(46, 196, 182, ${pulse.opacity})`;
+        ctx.fillStyle = `rgba(46, 196, 182, ${pulse.opacity * pulseGlow})`;
         ctx.fill();
         
         ctx.restore();
 
-        // Update position
-        pulse.x += pulse.speed;
+        // Update position with slight heartbeat influence on speed
+        pulse.x += pulse.speed * (0.8 + heartbeat * 0.2);
 
-        // Remove if off screen
-        if (pulse.x < -50 || pulse.x > width + 50) {
+        if (pulse.x > width + 50) {
           pulses.splice(index, 1);
         }
       });
     };
 
-    // Draw subtle medical grid
-    const drawGrid = (width, height) => {
-      ctx.strokeStyle = 'rgba(46, 196, 182, 0.04)';
+    // Draw subtle medical grid with heartbeat pulse
+    const drawGrid = (width, height, heartbeat) => {
+      const gridOpacity = 0.03 + (heartbeat - 1) * 0.02;
+      ctx.strokeStyle = `rgba(46, 196, 182, ${gridOpacity})`;
       ctx.lineWidth = 1;
 
       const gridSize = 50;
 
-      // Horizontal lines
       for (let y = 0; y < height; y += gridSize) {
         ctx.beginPath();
         ctx.moveTo(0, y);
@@ -251,7 +356,6 @@ export default function AnimatedMedicalBackground() {
         ctx.stroke();
       }
 
-      // Vertical lines
       for (let x = 0; x < width; x += gridSize) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
@@ -260,75 +364,52 @@ export default function AnimatedMedicalBackground() {
       }
     };
 
-    // Draw subtle "data flow" particles
-    const particles = [];
-    const maxParticles = 30;
-
-    const createParticle = () => {
-      if (particles.length < maxParticles) {
-        particles.push({
-          x: Math.random() * canvas.offsetWidth,
-          y: Math.random() * canvas.offsetHeight,
-          size: 1 + Math.random() * 1.5,
-          opacity: 0.1 + Math.random() * 0.2,
-          speedX: (Math.random() - 0.5) * 0.3,
-          speedY: (Math.random() - 0.5) * 0.3,
-        });
-      }
-    };
-
-    const drawParticles = (width, height) => {
-      particles.forEach((p, index) => {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(46, 196, 182, ${p.opacity})`;
-        ctx.fill();
-
-        p.x += p.speedX;
-        p.y += p.speedY;
-
-        if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) {
-          particles.splice(index, 1);
-        }
-      });
-    };
-
     // Main animation loop
     const animate = () => {
       const width = canvas.offsetWidth;
       const height = canvas.offsetHeight;
 
       time += 16;
+      
+      // Heartbeat timing: ~60 BPM = 1 beat per second
+      heartbeatPhase += 0.016; // Increment phase
+      const heartbeat = getHeartbeatMultiplier(heartbeatPhase);
 
-      // Clear and draw background
       ctx.clearRect(0, 0, width, height);
       drawBackground(width, height);
+      drawGrid(width, height, heartbeat);
 
-      // Draw grid
-      drawGrid(width, height);
-
-      // Draw particles
-      drawParticles(width, height);
-
-      // Draw waves (back to front)
+      // Draw waves with heartbeat
       for (let i = waves.length - 1; i >= 0; i--) {
-        drawWave(waves[i], time, width, height);
+        drawWave(waves[i], time, width, height, heartbeat);
       }
 
-      // Draw pulses on top
-      drawPulses(time, width, height);
+      // Draw ECG pulses
+      ecgPulses.forEach((pulse, index) => {
+        drawEcgLine(pulse, width, height, heartbeat);
+        pulse.x += pulse.speed;
+        pulse.phase += 0.012;
+        
+        if (pulse.x > width + 400) {
+          ecgPulses.splice(index, 1);
+        }
+      });
 
-      // Create new pulses and particles
-      if (Math.random() < 0.015) createPulse();
-      if (Math.random() < 0.05) createParticle();
+      // Draw light pulses
+      drawPulses(time, width, height, heartbeat);
+
+      // Create new elements
+      if (Math.random() < 0.02) createPulse(width);
+      if (Math.random() < 0.005) createEcgPulse(width);
 
       animationFrameId = requestAnimationFrame(animate);
     };
 
-    // Initialize some pulses
-    for (let i = 0; i < 4; i++) {
-      createPulse();
+    // Initialize
+    for (let i = 0; i < 3; i++) {
+      createPulse(canvas.offsetWidth);
     }
+    createEcgPulse(canvas.offsetWidth);
 
     animate();
 
