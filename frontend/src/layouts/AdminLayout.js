@@ -1,0 +1,93 @@
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { 
+  LayoutDashboard, 
+  Building2, 
+  Users, 
+  BookOpen, 
+  Settings, 
+  LogOut,
+  ChevronRight
+} from 'lucide-react';
+import { Button } from '../components/ui/button';
+
+const navItems = [
+  { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
+  { to: '/admin/clinicas', icon: Building2, label: 'Clínicas' },
+  { to: '/admin/usuarios', icon: Users, label: 'Usuarios' },
+  { to: '/admin/catalogos', icon: BookOpen, label: 'Catálogos' },
+  { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
+];
+
+export default function AdminLayout() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
+  return (
+    <div className="flex min-h-screen bg-[#FAFAFA]">
+      {/* Sidebar */}
+      <aside className="w-64 admin-sidebar flex flex-col fixed h-full">
+        {/* Logo */}
+        <div className="p-6 border-b" style={{ borderColor: 'var(--sidebar-border)' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-violet-600 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-white" strokeWidth={1.5} />
+            </div>
+            <div>
+              <span className="text-lg font-semibold text-white tracking-tight">ClinicCRM</span>
+              <p className="text-xs text-zinc-400">Super Admin</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 py-4 px-3 space-y-1">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `admin-sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm font-medium transition-all ${
+                  isActive ? 'active' : ''
+                }`
+              }
+              data-testid={`nav-${item.label.toLowerCase()}`}
+            >
+              <item.icon className="w-5 h-5" strokeWidth={1.5} />
+              <span>{item.label}</span>
+              <ChevronRight className="w-4 h-4 ml-auto opacity-50" strokeWidth={1.5} />
+            </NavLink>
+          ))}
+        </nav>
+
+        {/* User Info & Logout */}
+        <div className="p-4 border-t" style={{ borderColor: 'var(--sidebar-border)' }}>
+          <div className="mb-3">
+            <p className="text-sm font-medium text-white truncate">{user?.email}</p>
+            <p className="text-xs text-zinc-400">Administrador</p>
+          </div>
+          <Button
+            variant="ghost"
+            className="w-full justify-start text-zinc-400 hover:text-white hover:bg-white/10"
+            onClick={handleLogout}
+            data-testid="logout-btn"
+          >
+            <LogOut className="w-4 h-4 mr-2" strokeWidth={1.5} />
+            Cerrar sesión
+          </Button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 ml-64">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
