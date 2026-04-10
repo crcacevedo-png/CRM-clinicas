@@ -450,7 +450,10 @@ async def create_clinic(data: ClinicCreate, user=Depends(require_super_admin)):
 @api_router.get("/admin/clinics/{clinic_id}")
 async def get_clinic(clinic_id: str, user=Depends(require_super_admin)):
     try:
-        result = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
+        try:
+            result = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
+        except Exception:
+            raise HTTPException(status_code=404, detail="Clinica no encontrada")
         if not result.data:
             raise HTTPException(status_code=404, detail="Clinica no encontrada")
 
