@@ -62,9 +62,11 @@ Panel de Super Administrador para plataforma de CRM de clínicas médicas. El su
   - [x] Resetear contraseña
   - [x] Mover a otra clínica
 - [x] Gestión de Catálogos
-  - [x] Tab Medicamentos (CRUD)
-  - [x] Tab Estudios de Laboratorio (CRUD)
-  - [x] Tab Códigos CIE-10 (CRUD + toggle común)
+  - [x] Tab Medicamentos (CRUD + importación masiva por texto)
+  - [x] Tab Estudios de Laboratorio (CRUD + importación masiva por texto)
+  - [x] Tab Códigos CIE-10 (CRUD + toggle común + importación masiva)
+  - [x] Precarga de 660 códigos CIE-10 comunes (endpoint /api/admin/catalogs/icd10/seed)
+- [x] Login UI personalizado (branding Cortexia Medical, fondo navy, grid teal animado)
 - [x] Logout funcional
 - [x] Super admin se crea automáticamente al iniciar backend
 
