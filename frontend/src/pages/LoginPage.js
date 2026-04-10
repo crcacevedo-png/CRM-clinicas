@@ -42,37 +42,15 @@ export default function LoginPage() {
         <div className="w-full max-w-md">
           {/* Logo */}
           <div className="mb-10">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="relative w-11 h-11">
-                {/* Cortexia Logo Mark */}
-                <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-                  <rect width="44" height="44" rx="8" fill="#0A2540"/>
-                  <path 
-                    d="M22 8C14.268 8 8 14.268 8 22s6.268 14 14 14 14-6.268 14-14S29.732 8 22 8zm0 24c-5.523 0-10-4.477-10-10s4.477-10 10-10 10 4.477 10 10-4.477 10-10 10z" 
-                    fill="#2EC4B6" 
-                    opacity="0.3"
-                  />
-                  <path 
-                    d="M22 14c-4.418 0-8 3.582-8 8s3.582 8 8 8 8-3.582 8-8-3.582-8-8-8zm0 12c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z" 
-                    fill="#2EC4B6"
-                  />
-                  <circle cx="22" cy="22" r="2" fill="#2EC4B6"/>
-                  {/* Neural connections */}
-                  <line x1="22" y1="12" x2="22" y2="16" stroke="#2EC4B6" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="22" y1="28" x2="22" y2="32" stroke="#2EC4B6" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="12" y1="22" x2="16" y2="22" stroke="#2EC4B6" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="28" y1="22" x2="32" y2="22" stroke="#2EC4B6" strokeWidth="1.5" strokeLinecap="round"/>
-                </svg>
-              </div>
-              <div>
-                <span className="text-2xl font-semibold tracking-tight" style={{ color: '#0A2540' }}>
-                  Cortexia
-                </span>
-                <span className="text-2xl font-light tracking-tight ml-1" style={{ color: '#2EC4B6' }}>
-                  Medical
-                </span>
-              </div>
-            </div>
+            <img 
+              src="/logo-cortexia-cropped.png" 
+              alt="Cortexia Medical" 
+              style={{ 
+                height: '52px',
+                width: 'auto',
+                objectFit: 'contain'
+              }}
+            />
             <p className="text-sm text-zinc-500 mt-4">
               Sistema de gestión para clínicas médicas
             </p>
