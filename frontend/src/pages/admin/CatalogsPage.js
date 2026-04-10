@@ -19,7 +19,11 @@ import {
   FlaskConical,
   FileCode,
   Edit2,
-  Trash2
+  Trash2,
+  Upload,
+  FileUp,
+  CheckCircle,
+  AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -33,13 +37,16 @@ export default function CatalogsPage() {
   const [loading, setLoading] = useState(true);
   
   const [showModal, setShowModal] = useState(false);
+  const [showBulkModal, setShowBulkModal] = useState(false);
   const [modalType, setModalType] = useState('');
   const [editingItem, setEditingItem] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
 
   const [medForm, setMedForm] = useState({ generic_name: '', brand_name: '', presentations: '', category: '' });
   const [labForm, setLabForm] = useState({ name: '', category: '', preparation: '' });
   const [icdForm, setIcdForm] = useState({ code: '', description_es: '', category: '', is_common: false });
+  const [bulkText, setBulkText] = useState('');
 
   const { getAuthHeaders } = useAuth();
 
@@ -92,6 +99,13 @@ export default function CatalogsPage() {
       setIcdForm({ code: item.code || '', description_es: item.description_es || '', category: item.category || '', is_common: item.is_common || false });
     }
     setShowModal(true);
+  };
+
+  const openBulkModal = (type) => {
+    setModalType(type);
+    setBulkText('');
+    setBulkResult(null);
+    setShowBulkModal(true);
   };
 
   const handleSubmitMedication = async (e) => {
@@ -158,6 +172,75 @@ export default function CatalogsPage() {
     }
   };
 
+  const handleBulkImport = async () => {
+    setSubmitting(true);
+    setBulkResult(null);
+    
+    try {
+      let data;
+      let endpoint;
+      
+      // Parse the bulk text based on type
+      const lines = bulkText.trim().split('\n').filter(line => line.trim());
+      
+      if (modalType === 'medication') {
+        // Format: generic_name | brand_name | presentations | category
+        const medications = lines.map(line => {
+          const parts = line.split('|').map(p => p.trim());
+          return {
+            generic_name: parts[0] || '',
+            brand_name: parts[1] || null,
+            presentations: parts[2] ? parts[2].split(',').map(p => p.trim()) : [],
+            category: parts[3] || null
+          };
+        }).filter(m => m.generic_name);
+        
+        data = { medications };
+        endpoint = `${API}/admin/catalogs/medications/bulk`;
+      } else if (modalType === 'lab') {
+        // Format: name | category | preparation
+        const studies = lines.map(line => {
+          const parts = line.split('|').map(p => p.trim());
+          return {
+            name: parts[0] || '',
+            category: parts[1] || null,
+            preparation: parts[2] || null
+          };
+        }).filter(s => s.name);
+        
+        data = { studies };
+        endpoint = `${API}/admin/catalogs/lab-studies/bulk`;
+      } else if (modalType === 'icd10') {
+        // Format: code | description_es | category | is_common (1/0)
+        const codes = lines.map(line => {
+          const parts = line.split('|').map(p => p.trim());
+          return {
+            code: parts[0] || '',
+            description_es: parts[1] || '',
+            category: parts[2] || null,
+            is_common: parts[3] === '1' || parts[3]?.toLowerCase() === 'true'
+          };
+        }).filter(c => c.code && c.description_es);
+        
+        data = { codes };
+        endpoint = `${API}/admin/catalogs/icd10/bulk`;
+      }
+      
+      const response = await axios.post(endpoint, data, { headers: getAuthHeaders() });
+      setBulkResult(response.data);
+      
+      if (response.data.imported > 0) {
+        toast.success(`${response.data.imported} registros importados`);
+        fetchData();
+      }
+    } catch (error) {
+      toast.error('Error en la importación');
+      setBulkResult({ imported: 0, errors: [error.message], total: 0 });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleDeactivateMed = async (id) => {
     if (!window.confirm('¿Desactivar este medicamento?')) return;
     try {
@@ -189,6 +272,39 @@ export default function CatalogsPage() {
     }
   };
 
+  const getBulkPlaceholder = () => {
+    if (modalType === 'medication') {
+      return `Formato: nombre_genérico | marca | presentaciones | categoría
+Ejemplo:
+Paracetamol | Tylenol | 500mg tabletas, 120mg/5ml jarabe | Analgésicos
+Ibuprofeno | Advil | 400mg tabletas, 200mg cápsulas | Antiinflamatorios
+Amoxicilina | Amoxil | 500mg cápsulas, 250mg/5ml suspensión | Antibióticos`;
+    } else if (modalType === 'lab') {
+      return `Formato: nombre | categoría | preparación
+Ejemplo:
+Hemograma completo | Hematología | Ayuno no requerido
+Glucosa en ayunas | Química sanguínea | Ayuno de 8-12 horas
+Perfil lipídico | Química sanguínea | Ayuno de 12 horas
+TSH | Hormonas | Sin preparación especial`;
+    } else if (modalType === 'icd10') {
+      return `Formato: código | descripción | categoría | común (1/0)
+Ejemplo:
+J00 | Rinofaringitis aguda (resfriado común) | Respiratorias | 1
+A09 | Diarrea y gastroenteritis de presunto origen infeccioso | Digestivas | 1
+I10 | Hipertensión esencial (primaria) | Cardiovasculares | 1
+E11 | Diabetes mellitus tipo 2 | Endocrinas | 1
+M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
+    }
+    return '';
+  };
+
+  const getBulkTitle = () => {
+    if (modalType === 'medication') return 'Importar Medicamentos';
+    if (modalType === 'lab') return 'Importar Estudios de Laboratorio';
+    if (modalType === 'icd10') return 'Importar Códigos CIE-10';
+    return 'Importar';
+  };
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -203,7 +319,7 @@ export default function CatalogsPage() {
             <TabsList className="bg-transparent border-0 p-0 h-auto">
               <TabsTrigger 
                 value="medications" 
-                className="data-[state=active]:border-b-2 data-[state=active]:border-violet-600 data-[state=active]:text-violet-600 rounded-none px-4 py-3"
+                className="data-[state=active]:border-b-2 data-[state=active]:border-[#2EC4B6] data-[state=active]:text-[#2EC4B6] rounded-none px-4 py-3"
                 data-testid="tab-medications"
               >
                 <Pill className="w-4 h-4 mr-2" strokeWidth={1.5} />
@@ -211,7 +327,7 @@ export default function CatalogsPage() {
               </TabsTrigger>
               <TabsTrigger 
                 value="lab-studies" 
-                className="data-[state=active]:border-b-2 data-[state=active]:border-violet-600 data-[state=active]:text-violet-600 rounded-none px-4 py-3"
+                className="data-[state=active]:border-b-2 data-[state=active]:border-[#2EC4B6] data-[state=active]:text-[#2EC4B6] rounded-none px-4 py-3"
                 data-testid="tab-lab-studies"
               >
                 <FlaskConical className="w-4 h-4 mr-2" strokeWidth={1.5} />
@@ -219,7 +335,7 @@ export default function CatalogsPage() {
               </TabsTrigger>
               <TabsTrigger 
                 value="icd10" 
-                className="data-[state=active]:border-b-2 data-[state=active]:border-violet-600 data-[state=active]:text-violet-600 rounded-none px-4 py-3"
+                className="data-[state=active]:border-b-2 data-[state=active]:border-[#2EC4B6] data-[state=active]:text-[#2EC4B6] rounded-none px-4 py-3"
                 data-testid="tab-icd10"
               >
                 <FileCode className="w-4 h-4 mr-2" strokeWidth={1.5} />
@@ -230,10 +346,19 @@ export default function CatalogsPage() {
 
           {/* Medications Tab */}
           <TabsContent value="medications" className="m-0">
-            <div className="p-4 border-b border-zinc-200 flex justify-end">
-              <Button onClick={() => openAddModal('medication')} className="btn-primary" data-testid="add-medication-btn">
+            <div className="p-4 border-b border-zinc-200 flex justify-end gap-2">
+              <Button 
+                onClick={() => openBulkModal('medication')} 
+                variant="outline"
+                className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10"
+                data-testid="bulk-import-medications-btn"
+              >
+                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                Importar varios
+              </Button>
+              <Button onClick={() => openAddModal('medication')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-medication-btn">
                 <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Agregar medicamento
+                Agregar uno
               </Button>
             </div>
             <div className="overflow-x-auto">
@@ -287,10 +412,19 @@ export default function CatalogsPage() {
 
           {/* Lab Studies Tab */}
           <TabsContent value="lab-studies" className="m-0">
-            <div className="p-4 border-b border-zinc-200 flex justify-end">
-              <Button onClick={() => openAddModal('lab')} className="btn-primary" data-testid="add-lab-btn">
+            <div className="p-4 border-b border-zinc-200 flex justify-end gap-2">
+              <Button 
+                onClick={() => openBulkModal('lab')} 
+                variant="outline"
+                className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10"
+                data-testid="bulk-import-lab-btn"
+              >
+                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                Importar varios
+              </Button>
+              <Button onClick={() => openAddModal('lab')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-lab-btn">
                 <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Agregar estudio
+                Agregar uno
               </Button>
             </div>
             <div className="overflow-x-auto">
@@ -342,10 +476,19 @@ export default function CatalogsPage() {
 
           {/* ICD-10 Tab */}
           <TabsContent value="icd10" className="m-0">
-            <div className="p-4 border-b border-zinc-200 flex justify-end">
-              <Button onClick={() => openAddModal('icd10')} className="btn-primary" data-testid="add-icd10-btn">
+            <div className="p-4 border-b border-zinc-200 flex justify-end gap-2">
+              <Button 
+                onClick={() => openBulkModal('icd10')} 
+                variant="outline"
+                className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10"
+                data-testid="bulk-import-icd10-btn"
+              >
+                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                Importar varios
+              </Button>
+              <Button onClick={() => openAddModal('icd10')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-icd10-btn">
                 <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Agregar código
+                Agregar uno
               </Button>
             </div>
             <div className="overflow-x-auto">
@@ -392,7 +535,7 @@ export default function CatalogsPage() {
         </Tabs>
       </div>
 
-      {/* Modal */}
+      {/* Single Item Modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -443,8 +586,8 @@ export default function CatalogsPage() {
                 />
               </div>
               <div className="flex justify-end gap-3 pt-4">
-                <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="btn-secondary">Cancelar</Button>
-                <Button type="submit" className="btn-primary" disabled={submitting} data-testid="submit-med-btn">
+                <Button type="button" variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
+                <Button type="submit" className="bg-[#0A2540] hover:bg-[#0A2540]/90" disabled={submitting} data-testid="submit-med-btn">
                   {submitting ? 'Guardando...' : 'Guardar'}
                 </Button>
               </div>
@@ -484,8 +627,8 @@ export default function CatalogsPage() {
                 />
               </div>
               <div className="flex justify-end gap-3 pt-4">
-                <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="btn-secondary">Cancelar</Button>
-                <Button type="submit" className="btn-primary" disabled={submitting} data-testid="submit-lab-btn">
+                <Button type="button" variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
+                <Button type="submit" className="bg-[#0A2540] hover:bg-[#0A2540]/90" disabled={submitting} data-testid="submit-lab-btn">
                   {submitting ? 'Guardando...' : 'Guardar'}
                 </Button>
               </div>
@@ -534,13 +677,82 @@ export default function CatalogsPage() {
                 <Label className="text-sm">Marcar como código común</Label>
               </div>
               <div className="flex justify-end gap-3 pt-4">
-                <Button type="button" variant="outline" onClick={() => setShowModal(false)} className="btn-secondary">Cancelar</Button>
-                <Button type="submit" className="btn-primary" disabled={submitting} data-testid="submit-icd-btn">
+                <Button type="button" variant="outline" onClick={() => setShowModal(false)}>Cancelar</Button>
+                <Button type="submit" className="bg-[#0A2540] hover:bg-[#0A2540]/90" disabled={submitting} data-testid="submit-icd-btn">
                   {submitting ? 'Guardando...' : 'Guardar'}
                 </Button>
               </div>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Import Modal */}
+      <Dialog open={showBulkModal} onOpenChange={setShowBulkModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold text-zinc-950 flex items-center gap-2">
+              <FileUp className="w-5 h-5 text-[#2EC4B6]" strokeWidth={1.5} />
+              {getBulkTitle()}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="mt-4 space-y-4">
+            <div>
+              <Label className="form-label">Pega los datos (un registro por línea)</Label>
+              <Textarea
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                className="form-input min-h-[200px] font-mono text-sm"
+                placeholder={getBulkPlaceholder()}
+                data-testid="bulk-textarea"
+              />
+              <p className="text-xs text-zinc-500 mt-2">
+                Separa los campos con el caracter <code className="bg-zinc-100 px-1 rounded">|</code> (pipe)
+              </p>
+            </div>
+
+            {bulkResult && (
+              <div className={`p-4 rounded-lg ${bulkResult.imported > 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                <div className="flex items-start gap-3">
+                  {bulkResult.imported > 0 ? (
+                    <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" strokeWidth={1.5} />
+                  )}
+                  <div>
+                    <p className={`font-medium ${bulkResult.imported > 0 ? 'text-green-800' : 'text-red-800'}`}>
+                      {bulkResult.imported} de {bulkResult.total} registros importados
+                    </p>
+                    {bulkResult.errors && bulkResult.errors.length > 0 && (
+                      <ul className="mt-2 text-sm text-red-700 list-disc list-inside">
+                        {bulkResult.errors.slice(0, 5).map((err, i) => (
+                          <li key={i}>{err}</li>
+                        ))}
+                        {bulkResult.errors.length > 5 && (
+                          <li>...y {bulkResult.errors.length - 5} errores más</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4">
+              <Button type="button" variant="outline" onClick={() => setShowBulkModal(false)}>
+                Cerrar
+              </Button>
+              <Button 
+                onClick={handleBulkImport} 
+                className="bg-[#2EC4B6] hover:bg-[#2EC4B6]/90" 
+                disabled={submitting || !bulkText.trim()}
+                data-testid="submit-bulk-btn"
+              >
+                {submitting ? 'Importando...' : 'Importar'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

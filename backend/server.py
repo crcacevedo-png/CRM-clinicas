@@ -129,16 +129,25 @@ class MedicationCreate(BaseModel):
     presentations: Optional[List[str]] = []
     category: Optional[str] = None
 
+class MedicationBulkImport(BaseModel):
+    medications: List[MedicationCreate]
+
 class LabStudyCreate(BaseModel):
     name: str
     category: Optional[str] = None
     preparation: Optional[str] = None
+
+class LabStudyBulkImport(BaseModel):
+    studies: List[LabStudyCreate]
 
 class ICD10CodeCreate(BaseModel):
     code: str
     description_es: str
     category: Optional[str] = None
     is_common: bool = False
+
+class ICD10BulkImport(BaseModel):
+    codes: List[ICD10CodeCreate]
 
 # ============== HELPERS ==============
 
@@ -645,6 +654,32 @@ async def deactivate_medication(med_id: str, user = Depends(require_super_admin)
     await db.medications.update_one({"id": med_id}, {"$set": {"is_active": False}})
     return {"message": "Medicamento desactivado"}
 
+@api_router.post("/admin/catalogs/medications/bulk")
+async def bulk_import_medications(data: MedicationBulkImport, user = Depends(require_super_admin)):
+    now = datetime.now(timezone.utc).isoformat()
+    imported = 0
+    errors = []
+    
+    for med in data.medications:
+        try:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "clinic_id": None,
+                "generic_name": med.generic_name,
+                "brand_name": med.brand_name,
+                "presentations": med.presentations or [],
+                "category": med.category,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now
+            }
+            await db.medications.insert_one(doc)
+            imported += 1
+        except Exception as e:
+            errors.append(f"{med.generic_name}: {str(e)}")
+    
+    return {"imported": imported, "errors": errors, "total": len(data.medications)}
+
 # Lab Studies
 @api_router.get("/admin/catalogs/lab-studies")
 async def list_lab_studies(user = Depends(require_super_admin)):
@@ -681,6 +716,31 @@ async def update_lab_study(study_id: str, data: LabStudyCreate, user = Depends(r
 async def deactivate_lab_study(study_id: str, user = Depends(require_super_admin)):
     await db.lab_studies.update_one({"id": study_id}, {"$set": {"is_active": False}})
     return {"message": "Estudio desactivado"}
+
+@api_router.post("/admin/catalogs/lab-studies/bulk")
+async def bulk_import_lab_studies(data: LabStudyBulkImport, user = Depends(require_super_admin)):
+    now = datetime.now(timezone.utc).isoformat()
+    imported = 0
+    errors = []
+    
+    for study in data.studies:
+        try:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "clinic_id": None,
+                "name": study.name,
+                "category": study.category,
+                "preparation": study.preparation,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now
+            }
+            await db.lab_studies.insert_one(doc)
+            imported += 1
+        except Exception as e:
+            errors.append(f"{study.name}: {str(e)}")
+    
+    return {"imported": imported, "errors": errors, "total": len(data.studies)}
 
 # ICD-10 Codes
 @api_router.get("/admin/catalogs/icd10")
@@ -722,6 +782,36 @@ async def toggle_icd10_common(code_id: str, user = Depends(require_super_admin))
     new_value = not code.get("is_common", False)
     await db.icd10_codes.update_one({"id": code_id}, {"$set": {"is_common": new_value}})
     return {"is_common": new_value}
+
+@api_router.post("/admin/catalogs/icd10/bulk")
+async def bulk_import_icd10(data: ICD10BulkImport, user = Depends(require_super_admin)):
+    now = datetime.now(timezone.utc).isoformat()
+    imported = 0
+    errors = []
+    
+    for code in data.codes:
+        try:
+            # Check if code already exists
+            existing = await db.icd10_codes.find_one({"code": code.code})
+            if existing:
+                errors.append(f"{code.code}: Ya existe")
+                continue
+                
+            doc = {
+                "id": str(uuid.uuid4()),
+                "code": code.code,
+                "description_es": code.description_es,
+                "category": code.category,
+                "is_common": code.is_common,
+                "created_at": now,
+                "updated_at": now
+            }
+            await db.icd10_codes.insert_one(doc)
+            imported += 1
+        except Exception as e:
+            errors.append(f"{code.code}: {str(e)}")
+    
+    return {"imported": imported, "errors": errors, "total": len(data.codes)}
 
 # ============== UTILITY ROUTES ==============
 
