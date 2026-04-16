@@ -4,6 +4,10 @@
 @tailwind components;
 @tailwind utilities;
 
+#emergent-badge {
+  display: none !important;
+}
+
 body {
     margin: 0;
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
