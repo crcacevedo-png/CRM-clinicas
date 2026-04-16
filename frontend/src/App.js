@@ -7,7 +7,6 @@ import { Toaster } from "./components/ui/sonner";
 // Pages
 import LoginPage from "./pages/LoginPage";
 import NoAccessPage from "./pages/NoAccessPage";
-import ClinicDashboard from "./pages/ClinicDashboard";
 
 // Admin Pages
 import AdminLayout from "./layouts/AdminLayout";
@@ -17,6 +16,12 @@ import ClinicDetailPage from "./pages/admin/ClinicDetailPage";
 import UsersPage from "./pages/admin/UsersPage";
 import CatalogsPage from "./pages/admin/CatalogsPage";
 import SettingsPage from "./pages/admin/SettingsPage";
+
+// Clinic Pages
+import ClinicLayout from "./layouts/ClinicLayout";
+import ClinicDashboardPage from "./pages/clinic/ClinicDashboardPage";
+import AgendaPage from "./pages/clinic/AgendaPage";
+import PatientsPage from "./pages/clinic/PatientsPage";
 
 function App() {
   return (
@@ -49,10 +54,14 @@ function App() {
             path="/dashboard"
             element={
               <ProtectedRoute requiredType="clinic_member">
-                <ClinicDashboard />
+                <ClinicLayout />
               </ProtectedRoute>
             }
-          />
+          >
+            <Route index element={<ClinicDashboardPage />} />
+            <Route path="agenda" element={<AgendaPage />} />
+            <Route path="pacientes" element={<PatientsPage />} />
+          </Route>
 
           {/* Default Redirect */}
           <Route path="/" element={<Navigate to="/login" replace />} />

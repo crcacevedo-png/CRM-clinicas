@@ -911,6 +911,341 @@ async def seed_icd10_codes(user=Depends(require_super_admin)):
         "total_in_database": total.count or 0
     }
 
+# ============== CLINIC MEMBER AUTH ==============
+
+async def require_clinic_member(user=Depends(get_current_user)):
+    result = sdb.table('clinic_members').select('id,clinic_id,role,first_name,last_name').eq('user_id', user.id).eq('is_active', True).maybe_single().execute()
+    if not result.data:
+        raise HTTPException(status_code=403, detail="Acceso de miembro de clinica requerido")
+    return {"auth_user": user, "member": result.data}
+
+# ============== CLINIC MEMBER MODELS ==============
+
+class AppointmentCreate(BaseModel):
+    patient_id: str
+    doctor_id: str
+    starts_at: str
+    duration_minutes: int = 30
+    reason: Optional[str] = None
+    notes: Optional[str] = None
+
+class AppointmentUpdate(BaseModel):
+    starts_at: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    reason: Optional[str] = None
+    notes: Optional[str] = None
+    doctor_id: Optional[str] = None
+
+class AppointmentStatusUpdate(BaseModel):
+    status: str
+    cancellation_reason: Optional[str] = None
+
+class PatientQuickCreate(BaseModel):
+    first_name: str
+    last_name: str
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    national_id: Optional[str] = None
+
+# ============== CLINIC CONFIG ROUTES ==============
+
+@api_router.get("/clinic/config")
+async def get_clinic_config(ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        clinic = sdb.table('clinics').select('id,name,schedule_start,schedule_end,slot_duration,working_days,timezone').eq('id', clinic_id).single().execute()
+
+        members = sdb.table('clinic_members').select('id,first_name,last_name,role,specialty').eq('clinic_id', clinic_id).eq('is_active', True).execute()
+
+        doctors = [m for m in (members.data or []) if m["role"] in ("doctor", "clinic_admin")]
+
+        return {
+            "clinic": clinic.data,
+            "members": members.data or [],
+            "doctors": doctors,
+            "current_member": ctx["member"],
+        }
+    except Exception as e:
+        logger.error(f"Clinic config error: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener configuracion")
+
+# ============== APPOINTMENT ROUTES ==============
+
+@api_router.get("/clinic/appointments")
+async def list_appointments(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    doctor_id: Optional[str] = None,
+    status: Optional[str] = None,
+    patient_search: Optional[str] = None,
+    ctx=Depends(require_clinic_member)
+):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        query = sdb.table('appointments').select('*').eq('clinic_id', clinic_id)
+
+        if start_date:
+            query = query.gte('starts_at', start_date)
+        if end_date:
+            query = query.lte('starts_at', end_date)
+        if doctor_id:
+            query = query.eq('doctor_id', doctor_id)
+        if status:
+            query = query.eq('status', status)
+
+        result = query.order('starts_at').execute()
+        appointments = result.data or []
+
+        # Enrich with patient and doctor names
+        patient_ids = list({a["patient_id"] for a in appointments if a.get("patient_id")})
+        doctor_ids = list({a["doctor_id"] for a in appointments if a.get("doctor_id")})
+
+        patient_map = {}
+        if patient_ids:
+            for pid in patient_ids:
+                p = sdb.table('patients').select('id,first_name,last_name').eq('id', pid).maybe_single().execute()
+                if p.data:
+                    patient_map[pid] = f"{p.data['first_name']} {p.data['last_name']}"
+
+        doctor_map = {}
+        if doctor_ids:
+            for did in doctor_ids:
+                d = sdb.table('clinic_members').select('id,first_name,last_name').eq('id', did).maybe_single().execute()
+                if d.data:
+                    doctor_map[did] = f"{d.data['first_name']} {d.data['last_name']}"
+
+        for apt in appointments:
+            apt["patient_name"] = patient_map.get(apt.get("patient_id"), "Desconocido")
+            apt["doctor_name"] = doctor_map.get(apt.get("doctor_id"), "Desconocido")
+
+        # Filter by patient name if needed
+        if patient_search:
+            search_lower = patient_search.lower()
+            appointments = [a for a in appointments if search_lower in a.get("patient_name", "").lower()]
+
+        return appointments
+    except Exception as e:
+        logger.error(f"List appointments error: {e}")
+        raise HTTPException(status_code=500, detail="Error al listar citas")
+
+@api_router.post("/clinic/appointments")
+async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    member = ctx["member"]
+    try:
+        from datetime import datetime as dt, timedelta
+        import re
+
+        starts = dt.fromisoformat(data.starts_at.replace('Z', '+00:00'))
+        ends = starts + timedelta(minutes=data.duration_minutes)
+
+        # Validate clinic hours
+        clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,timezone').eq('id', clinic_id).single().execute()
+        c = clinic.data
+
+        start_time = starts.strftime("%H:%M:%S")
+        end_time = ends.strftime("%H:%M:%S")
+        day_of_week = starts.isoweekday()
+
+        if day_of_week not in (c.get("working_days") or [1,2,3,4,5]):
+            raise HTTPException(status_code=400, detail="La clinica no opera este dia")
+
+        if start_time < c["schedule_start"] or end_time > c["schedule_end"]:
+            raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({c['schedule_start']} - {c['schedule_end']})")
+
+        # Check conflicts for this doctor
+        conflicts = sdb.table('appointments').select('id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
+
+        if conflicts.data:
+            raise HTTPException(status_code=409, detail="El doctor ya tiene una cita en ese horario")
+
+        now = now_iso()
+        apt_id = str(uuid.uuid4())
+        doc = {
+            "id": apt_id,
+            "clinic_id": clinic_id,
+            "patient_id": data.patient_id,
+            "doctor_id": data.doctor_id,
+            "created_by": member["id"],
+            "starts_at": starts.isoformat(),
+            "ends_at": ends.isoformat(),
+            "duration_minutes": data.duration_minutes,
+            "reason": data.reason or "",
+            "notes": data.notes or "",
+            "status": "scheduled",
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        sdb.table('appointments').insert(doc).execute()
+
+        # Return enriched
+        patient = sdb.table('patients').select('first_name,last_name').eq('id', data.patient_id).maybe_single().execute()
+        doctor = sdb.table('clinic_members').select('first_name,last_name').eq('id', data.doctor_id).maybe_single().execute()
+        doc["patient_name"] = f"{patient.data['first_name']} {patient.data['last_name']}" if patient.data else ""
+        doc["doctor_name"] = f"{doctor.data['first_name']} {doctor.data['last_name']}" if doctor.data else ""
+
+        return doc
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create appointment error: {e}")
+        raise HTTPException(status_code=500, detail="Error al crear cita")
+
+@api_router.put("/clinic/appointments/{apt_id}")
+async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        existing = sdb.table('appointments').select('*').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+        update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+
+        if "starts_at" in update_data:
+            from datetime import datetime as dt, timedelta
+            starts = dt.fromisoformat(update_data["starts_at"].replace('Z', '+00:00'))
+            dur = update_data.get("duration_minutes", existing.data["duration_minutes"])
+            ends = starts + timedelta(minutes=dur)
+            update_data["ends_at"] = ends.isoformat()
+
+            doctor_id = update_data.get("doctor_id", existing.data["doctor_id"])
+            conflicts = sdb.table('appointments').select('id').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).neq('status', 'cancelled').neq('id', apt_id).lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
+            if conflicts.data:
+                raise HTTPException(status_code=409, detail="Conflicto de horario con otra cita")
+
+        update_data["updated_at"] = now_iso()
+        sdb.table('appointments').update(update_data).eq('id', apt_id).execute()
+
+        updated = sdb.table('appointments').select('*').eq('id', apt_id).single().execute()
+        apt = updated.data
+        patient = sdb.table('patients').select('first_name,last_name').eq('id', apt["patient_id"]).maybe_single().execute()
+        doctor = sdb.table('clinic_members').select('first_name,last_name').eq('id', apt["doctor_id"]).maybe_single().execute()
+        apt["patient_name"] = f"{patient.data['first_name']} {patient.data['last_name']}" if patient.data else ""
+        apt["doctor_name"] = f"{doctor.data['first_name']} {doctor.data['last_name']}" if doctor.data else ""
+        return apt
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update appointment error: {e}")
+        raise HTTPException(status_code=500, detail="Error al actualizar cita")
+
+@api_router.put("/clinic/appointments/{apt_id}/status")
+async def change_appointment_status(apt_id: str, data: AppointmentStatusUpdate, ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        existing = sdb.table('appointments').select('id').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+        valid_statuses = ["scheduled", "confirmed", "in_progress", "completed", "cancelled", "no_show"]
+        if data.status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Estado invalido. Opciones: {', '.join(valid_statuses)}")
+
+        update = {"status": data.status, "updated_at": now_iso()}
+        if data.status == "cancelled" and data.cancellation_reason:
+            update["cancellation_reason"] = data.cancellation_reason
+
+        sdb.table('appointments').update(update).eq('id', apt_id).execute()
+        return {"message": "Estado actualizado", "status": data.status}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Change status error: {e}")
+        raise HTTPException(status_code=500, detail="Error al cambiar estado")
+
+# ============== PATIENT ROUTES (CLINIC) ==============
+
+@api_router.get("/clinic/patients/search")
+async def search_patients(q: str = "", ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        if not q or len(q) < 2:
+            result = sdb.table('patients').select('id,first_name,last_name,phone,national_id').eq('clinic_id', clinic_id).eq('is_active', True).order('first_name').limit(20).execute()
+        else:
+            result = sdb.table('patients').select('id,first_name,last_name,phone,national_id').eq('clinic_id', clinic_id).eq('is_active', True).or_(f'first_name.ilike.%{q}%,last_name.ilike.%{q}%,national_id.ilike.%{q}%').limit(20).execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Search patients error: {e}")
+        raise HTTPException(status_code=500, detail="Error al buscar pacientes")
+
+@api_router.post("/clinic/patients")
+async def quick_create_patient(data: PatientQuickCreate, ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        now = now_iso()
+        patient_id = str(uuid.uuid4())
+        doc = {
+            "id": patient_id,
+            "clinic_id": clinic_id,
+            "first_name": data.first_name,
+            "last_name": data.last_name,
+            "phone": data.phone or "",
+            "email": data.email or "",
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        if data.date_of_birth:
+            doc["date_of_birth"] = data.date_of_birth
+        if data.gender:
+            doc["gender"] = data.gender
+        if data.national_id:
+            doc["national_id"] = data.national_id
+
+        sdb.table('patients').insert(doc).execute()
+        return {"id": patient_id, "first_name": data.first_name, "last_name": data.last_name}
+    except Exception as e:
+        logger.error(f"Create patient error: {e}")
+        raise HTTPException(status_code=500, detail="Error al crear paciente")
+
+@api_router.get("/clinic/patients")
+async def list_patients(q: str = "", ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        query = sdb.table('patients').select('id,first_name,last_name,phone,email,national_id,date_of_birth,gender,is_active,created_at').eq('clinic_id', clinic_id)
+        if q:
+            query = query.or_(f'first_name.ilike.%{q}%,last_name.ilike.%{q}%,national_id.ilike.%{q}%')
+        result = query.order('first_name').limit(100).execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"List patients error: {e}")
+        raise HTTPException(status_code=500, detail="Error al listar pacientes")
+
+@api_router.get("/clinic/dashboard")
+async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        from datetime import datetime as dt, timedelta
+        today_start = dt.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+
+        today_apts = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', today_start.isoformat()).lt('starts_at', today_end.isoformat()).neq('status', 'cancelled').order('starts_at').execute()
+
+        total_patients = sdb.table('patients').select('id', count='exact').eq('clinic_id', clinic_id).execute()
+        total_apts_month = sdb.table('appointments').select('id', count='exact').eq('clinic_id', clinic_id).gte('starts_at', today_start.replace(day=1).isoformat()).execute()
+
+        apts = today_apts.data or []
+        # Enrich
+        for apt in apts:
+            p = sdb.table('patients').select('first_name,last_name').eq('id', apt["patient_id"]).maybe_single().execute()
+            d = sdb.table('clinic_members').select('first_name,last_name').eq('id', apt["doctor_id"]).maybe_single().execute()
+            apt["patient_name"] = f"{p.data['first_name']} {p.data['last_name']}" if p.data else ""
+            apt["doctor_name"] = f"{d.data['first_name']} {d.data['last_name']}" if d.data else ""
+
+        return {
+            "today_appointments": apts,
+            "today_count": len(apts),
+            "total_patients": total_patients.count or 0,
+            "month_appointments": total_apts_month.count or 0,
+            "current_member": ctx["member"],
+        }
+    except Exception as e:
+        logger.error(f"Clinic dashboard error: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener dashboard")
+
 # ============== UTILITY ROUTES ==============
 
 @api_router.get("/")
