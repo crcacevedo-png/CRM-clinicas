@@ -1,54 +1,56 @@
-# Panel de Super Administrador - CRM Clinicas
+# Panel de Super Administrador + CRM Clinicas
 
 ## Problem Statement Original
-Panel de Super Administrador para plataforma de CRM de clinicas medicas. El super admin crea clinicas y asigna administradores iniciales. Las clinicas NO se registran solas.
+Panel de Super Administrador para plataforma de CRM de clinicas medicas. El super admin crea clinicas y asigna administradores iniciales. Modulo de Agenda completo para gestion de citas.
 
 ## Arquitectura
 
 ### Stack Tecnologico
 - **Frontend**: React 19 + Tailwind CSS + Shadcn UI
 - **Backend**: FastAPI (Python 3.11)
-- **Base de datos**: Supabase PostgreSQL (datos + autenticacion)
-- **Diseno**: Aspecto tecnologico con sidebar morado oscuro (#120B29)
+- **Base de datos**: Supabase PostgreSQL (datos + autenticacion + realtime)
 
 ### Estructura de Base de Datos (Supabase PostgreSQL)
-- `super_admins`: id(uuid), user_id(uuid), first_name, last_name, email, phone, is_active, created_at, updated_at
-- `clinics`: id(uuid), name, slug, country, city, address, phone, email, timezone, schedule_start, schedule_end, slot_duration, working_days, plan(enum), max_users, max_patients, max_storage_mb, is_active, created_at, updated_at
-- `clinic_members`: id(uuid), clinic_id(fk->clinics), user_id(fk->auth.users), role(enum), first_name, last_name, specialty, license_number, phone, is_active, created_at, updated_at
-- `patients`: id(uuid), clinic_id(fk), first_name, last_name, date_of_birth, gender, etc.
-- `medications`: id(uuid), clinic_id, generic_name, brand_name, presentations(text[]), category, is_active, search_vector, created_at
-- `lab_studies`: id(uuid), clinic_id, name, category, preparation, is_active, sort_order, created_at
-- `icd10_codes`: id(int auto-increment), code, description_en, description_es, category, is_common, search_vector
+- `super_admins`: id(uuid), user_id, first_name, last_name, email, is_active
+- `clinics`: id(uuid), name, slug, country, city, address, phone, email, timezone, schedule_start, schedule_end, slot_duration, working_days, plan(enum), max_users, max_patients, max_storage_mb, is_active
+- `clinic_members`: id(uuid), clinic_id(fk), user_id(fk->auth.users), role(enum), first_name, last_name, specialty, is_active
+- `patients`: id(uuid), clinic_id(fk), first_name, last_name, phone, email, date_of_birth, gender, national_id, is_active
+- `appointments`: id(uuid), clinic_id(fk), patient_id(fk), doctor_id(fk), starts_at, ends_at, duration_minutes, reason, notes, status(enum: scheduled/confirmed/in_progress/completed/cancelled/no_show), cancellation_reason
+- `medications`: id(uuid), clinic_id, generic_name, brand_name, presentations(text[]), category, is_active
+- `lab_studies`: id(uuid), clinic_id, name, category, preparation, is_active
+- `icd10_codes`: id(int), code, description_en, description_es, category, is_common
 
 ### Flujo de Autenticacion
-1. Login unico en `/login` para todos los usuarios
-2. Backend verifica en Supabase Auth
-3. Despues del login, verifica tipo de usuario:
-   - Si esta en `super_admins` -> Redirige a `/admin`
-   - Si esta en `clinic_members` -> Redirige a `/dashboard`
-   - Si no esta en ninguna -> Muestra error "Sin acceso"
+1. Login unico -> verifica tipo usuario (super_admin o clinic_member)
+2. Super admin -> /admin
+3. Clinic member -> /dashboard (agenda, pacientes)
 
-## Core Requirements
-
-### Implementados
+## Implementados
 - [x] Login unico con deteccion de tipo de usuario
-- [x] Panel de Super Admin con sidebar morado oscuro
-- [x] Dashboard con KPIs (clinicas activas/inactivas, usuarios, pacientes)
-- [x] Tabla de clinicas recientes en dashboard
-- [x] Gestion de Clinicas (CRUD completo)
-- [x] Gestion de Usuarios (cambiar rol, activar/desactivar, resetear password, mover clinica)
-- [x] Gestion de Catalogos (Medicamentos, Estudios Lab, CIE-10)
-- [x] Importacion masiva por texto para todos los catalogos
-- [x] Precarga de 672 codigos CIE-10 comunes
-- [x] Login UI personalizado (branding Cortexia Medical, fondo navy, grid teal animado)
-- [x] **MIGRACION DE MONGODB A SUPABASE POSTGRESQL** (completada 10 Abril 2026)
+- [x] Super Admin Panel (Dashboard, Clinicas CRUD, Usuarios, Catalogos)
+- [x] Catalogos con importacion masiva (Medicamentos, Lab, CIE-10)
+- [x] Precarga 672 codigos CIE-10
+- [x] Login UI con branding Cortexia Medical
+- [x] **MIGRACION MongoDB -> Supabase PostgreSQL** (10 Abril 2026)
+- [x] **MODULO DE AGENDA COMPLETO** (16 Abril 2026):
+  - [x] Dashboard clinica con KPIs y citas del dia
+  - [x] Vista semanal Lun-Sab configurable por clinica
+  - [x] Bloques de citas con colores por estado
+  - [x] Formulario de nueva cita con buscador autocomplete de pacientes
+  - [x] Creacion rapida de pacientes desde el formulario
+  - [x] Detalle de cita con cambio de estados
+  - [x] Filtros por medico, estado y nombre de paciente
+  - [x] Navegacion entre semanas + boton Hoy
+  - [x] Validacion de conflictos de horario
+  - [x] Validacion de horario de clinica
+  - [x] Supabase Realtime para actualizaciones en vivo
+  - [x] Pagina de Pacientes (CRUD basico)
 
-### Pendientes
-- [ ] Dashboard de Clinica (para clinic_members)
-- [ ] Gestion de pacientes dentro de clinica
-- [ ] Gestion de citas
-- [ ] Recetas medicas
+## Pendientes
+- [ ] Drag & drop para reprogramar citas
 - [ ] Importacion CSV para catalogos
+- [ ] Recetas medicas
+- [ ] Reportes y estadisticas avanzadas
 
-## Credenciales de Prueba
+## Credenciales
 Ver `/app/memory/test_credentials.md`
