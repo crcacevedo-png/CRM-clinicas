@@ -17,14 +17,32 @@ import {
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const STATUS_CONFIG = {
-  scheduled:   { label: 'Pendiente',   bg: 'bg-blue-500',   light: 'bg-blue-50 border-blue-200 text-blue-700',   dot: 'bg-blue-500' },
-  confirmed:   { label: 'Confirmada',  bg: 'bg-emerald-500', light: 'bg-emerald-50 border-emerald-200 text-emerald-700', dot: 'bg-emerald-500' },
-  in_progress: { label: 'En curso',    bg: 'bg-amber-500',   light: 'bg-amber-50 border-amber-200 text-amber-700',   dot: 'bg-amber-500' },
-  completed:   { label: 'Completada',  bg: 'bg-slate-400',   light: 'bg-slate-50 border-slate-200 text-slate-500',   dot: 'bg-slate-400' },
-  cancelled:   { label: 'Cancelada',   bg: 'bg-red-500',     light: 'bg-red-50 border-red-200 text-red-600',     dot: 'bg-red-500' },
-  no_show:     { label: 'No asistió',  bg: 'bg-orange-400',  light: 'bg-orange-50 border-orange-200 text-orange-600', dot: 'bg-orange-400' },
+  scheduled:   { label: 'Pendiente',   dot: 'bg-blue-500' },
+  confirmed:   { label: 'Confirmada',  dot: 'bg-emerald-500' },
+  in_progress: { label: 'En curso',    dot: 'bg-amber-500' },
+  completed:   { label: 'Completada',  dot: 'bg-slate-400' },
+  cancelled:   { label: 'Cancelada',   dot: 'bg-red-500' },
+  no_show:     { label: 'No asistió',  dot: 'bg-orange-400' },
 };
 const STATUS_OPTIONS = Object.entries(STATUS_CONFIG).map(([k, v]) => ({ value: k, label: v.label }));
+
+// Doctor color palette
+const DOCTOR_COLORS = [
+  { bg: 'bg-indigo-50',  border: 'border-indigo-300', text: 'text-indigo-800', accent: '#6366f1', label: 'bg-indigo-500' },
+  { bg: 'bg-rose-50',    border: 'border-rose-300',   text: 'text-rose-800',   accent: '#f43f5e', label: 'bg-rose-500' },
+  { bg: 'bg-amber-50',   border: 'border-amber-300',  text: 'text-amber-800',  accent: '#f59e0b', label: 'bg-amber-500' },
+  { bg: 'bg-cyan-50',    border: 'border-cyan-300',   text: 'text-cyan-800',   accent: '#06b6d4', label: 'bg-cyan-500' },
+  { bg: 'bg-violet-50',  border: 'border-violet-300', text: 'text-violet-800', accent: '#8b5cf6', label: 'bg-violet-500' },
+  { bg: 'bg-lime-50',    border: 'border-lime-300',   text: 'text-lime-800',   accent: '#84cc16', label: 'bg-lime-500' },
+  { bg: 'bg-pink-50',    border: 'border-pink-300',   text: 'text-pink-800',   accent: '#ec4899', label: 'bg-pink-500' },
+  { bg: 'bg-teal-50',    border: 'border-teal-300',   text: 'text-teal-800',   accent: '#14b8a6', label: 'bg-teal-500' },
+];
+
+function getDoctorColor(doctorId, doctorMap) {
+  const ids = Object.keys(doctorMap).sort();
+  const idx = ids.indexOf(doctorId);
+  return DOCTOR_COLORS[idx >= 0 ? idx % DOCTOR_COLORS.length : 0];
+}
 
 function getWeekDates(date) {
   const d = new Date(date);
@@ -103,6 +121,14 @@ export default function AgendaPage() {
 
   const weekDates = getWeekDates(weekStart);
   const headers = getAuthHeaders();
+
+  // Build doctor color map
+  const doctorMap = {};
+  if (config?.doctors) {
+    config.doctors.forEach(d => {
+      doctorMap[d.id] = { name: `${d.first_name} ${d.last_name}`, ...getDoctorColor(d.id, Object.fromEntries(config.doctors.map(x => [x.id, x]))) };
+    });
+  }
 
   // Load clinic config
   useEffect(() => {
@@ -397,6 +423,29 @@ export default function AgendaPage() {
         </div>
       </div>
 
+      {/* Doctor legend */}
+      {Object.keys(doctorMap).length > 0 && (
+        <div className="bg-white border-b border-slate-100 px-6 py-1.5 flex items-center gap-4 shrink-0">
+          {Object.entries(doctorMap).map(([id, d]) => (
+            <div key={id} className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: d.accent }} />
+              <span className="text-[11px] font-medium text-slate-600">{d.name}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-3 ml-auto text-[10px] text-slate-400">
+            {STATUS_OPTIONS.map(s => {
+              const cfg = STATUS_CONFIG[s.value];
+              return (
+                <div key={s.value} className="flex items-center gap-1">
+                  <div className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                  <span>{s.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Calendar View */}
       {viewMode === 'week' && (
       <div className="flex-1 overflow-auto">
@@ -425,6 +474,7 @@ export default function AgendaPage() {
                 const aptsInSlot = getAptsForSlot(date, slotMin);
                 const isT = isToday(date);
                 const isDragOver = dropTarget === `${dayIdx}-${slotMin}`;
+                const count = aptsInSlot.length;
                 return (
                   <div
                     key={`s-${slotMin}-${dayIdx}`}
@@ -435,28 +485,33 @@ export default function AgendaPage() {
                     onDrop={(e) => handleDrop(e, date, slotMin)}
                     data-testid={`slot-${dayIdx}-${slotMin}`}
                   >
-                    {aptsInSlot.map(apt => {
-                      const cfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
-                      const isDraggable = apt.status !== 'completed' && apt.status !== 'cancelled';
-                      return (
-                        <div
-                          key={apt.id}
-                          draggable={isDraggable}
-                          onDragStart={(e) => handleDragStart(e, apt)}
-                          onDragEnd={handleDragEnd}
-                          className={`absolute inset-x-0.5 inset-y-0.5 rounded-md border px-1.5 py-0.5 overflow-hidden transition-all hover:shadow-md ${cfg.light} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
-                          onClick={(e) => { e.stopPropagation(); setShowDetail(apt); }}
-                          data-testid={`apt-block-${apt.id}`}
-                        >
-                          <div className="flex items-center gap-1">
-                            {isDraggable && <GripVertical className="w-2.5 h-2.5 shrink-0 opacity-40" />}
-                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
-                            <span className="text-[10px] font-semibold truncate">{apt.patient_name}</span>
-                          </div>
-                          <p className="text-[9px] opacity-75 truncate">{apt.reason || 'Sin motivo'}</p>
-                        </div>
-                      );
-                    })}
+                    {count > 0 && (
+                      <div className="absolute inset-0.5 flex gap-0.5">
+                        {aptsInSlot.map((apt, aptIdx) => {
+                          const stCfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
+                          const drColor = doctorMap[apt.doctor_id] || DOCTOR_COLORS[0];
+                          const isDraggable = apt.status !== 'completed' && apt.status !== 'cancelled';
+                          return (
+                            <div
+                              key={apt.id}
+                              draggable={isDraggable}
+                              onDragStart={(e) => handleDragStart(e, apt)}
+                              onDragEnd={handleDragEnd}
+                              className={`flex-1 min-w-0 rounded-md border-l-[3px] px-1 py-0.5 overflow-hidden transition-all hover:shadow-md ${drColor.bg} ${drColor.text} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+                              style={{ borderLeftColor: drColor.accent }}
+                              onClick={(e) => { e.stopPropagation(); setShowDetail(apt); }}
+                              data-testid={`apt-block-${apt.id}`}
+                            >
+                              <div className="flex items-center gap-0.5">
+                                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${stCfg.dot}`} />
+                                <span className="text-[10px] font-semibold truncate">{apt.patient_name}</span>
+                              </div>
+                              <p className="text-[9px] opacity-70 truncate">{apt.reason || 'Sin motivo'}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -474,6 +529,7 @@ export default function AgendaPage() {
           slot={slot}
           appointments={appointments}
           isToday={isToday}
+          doctorMap={doctorMap}
           draggingApt={draggingApt}
           dropTarget={dropTarget}
           onSlotClick={handleSlotClick}
@@ -491,6 +547,7 @@ export default function AgendaPage() {
         <MonthView
           currentDate={currentDate}
           appointments={appointments}
+          doctorMap={doctorMap}
           onDayClick={(date) => { setCurrentDate(date); setViewMode('day'); }}
           onAptClick={(apt) => setShowDetail(apt)}
         />
@@ -512,6 +569,7 @@ export default function AgendaPage() {
         <AppointmentDetailModal
           appointment={showDetail}
           config={config}
+          doctorMap={doctorMap}
           headers={headers}
           onClose={() => setShowDetail(null)}
           onUpdated={() => { setShowDetail(null); fetchAppointments(); }}
@@ -522,7 +580,7 @@ export default function AgendaPage() {
 }
 
 // ============ DAY VIEW ============
-function DayView({ date, slots, slot, appointments, isToday: isTodayFn, draggingApt, dropTarget, onSlotClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onAptClick }) {
+function DayView({ date, slots, slot, appointments, isToday: isTodayFn, doctorMap, draggingApt, dropTarget, onSlotClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onAptClick }) {
   const isT = isTodayFn(date);
 
   const getAptsForSlot = (slotMin) => {
@@ -570,32 +628,38 @@ function DayView({ date, slots, slot, appointments, isToday: isTodayFn, dragging
                 onDrop={(e) => onDrop(e, slotMin)}
                 data-testid={`day-slot-${slotMin}`}
               >
-                {aptsInSlot.map(apt => {
-                  const cfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
-                  const isDraggable = apt.status !== 'completed' && apt.status !== 'cancelled';
-                  return (
-                    <div
-                      key={apt.id}
-                      draggable={isDraggable}
-                      onDragStart={(e) => onDragStart(e, apt)}
-                      onDragEnd={onDragEnd}
-                      className={`absolute left-1 right-4 top-1 bottom-1 rounded-lg border px-3 py-1.5 overflow-hidden transition-all hover:shadow-md ${cfg.light} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
-                      onClick={(e) => { e.stopPropagation(); onAptClick(apt); }}
-                      data-testid={`day-apt-${apt.id}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {isDraggable && <GripVertical className="w-3 h-3 shrink-0 opacity-40" />}
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
-                        <span className="text-sm font-semibold truncate">{apt.patient_name}</span>
-                        <span className="text-xs opacity-60 ml-auto">{apt.duration_minutes} min</span>
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs opacity-75">{apt.reason || 'Sin motivo'}</span>
-                        <span className="text-xs opacity-50">Dr. {apt.doctor_name}</span>
-                      </div>
-                    </div>
-                  );
-                })}
+                {aptsInSlot.length > 0 && (
+                  <div className="absolute inset-1 flex gap-1">
+                    {aptsInSlot.map(apt => {
+                      const stCfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
+                      const drColor = doctorMap[apt.doctor_id] || DOCTOR_COLORS[0];
+                      const isDraggable = apt.status !== 'completed' && apt.status !== 'cancelled';
+                      return (
+                        <div
+                          key={apt.id}
+                          draggable={isDraggable}
+                          onDragStart={(e) => onDragStart(e, apt)}
+                          onDragEnd={onDragEnd}
+                          className={`flex-1 min-w-0 rounded-lg border-l-4 px-3 py-1.5 overflow-hidden transition-all hover:shadow-md ${drColor.bg} ${drColor.text} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+                          style={{ borderLeftColor: drColor.accent }}
+                          onClick={(e) => { e.stopPropagation(); onAptClick(apt); }}
+                          data-testid={`day-apt-${apt.id}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isDraggable && <GripVertical className="w-3 h-3 shrink-0 opacity-40" />}
+                            <div className={`w-2 h-2 rounded-full shrink-0 ${stCfg.dot}`} />
+                            <span className="text-sm font-semibold truncate">{apt.patient_name}</span>
+                            <span className="text-xs opacity-60 ml-auto">{apt.duration_minutes} min</span>
+                          </div>
+                          <div className="flex items-center gap-3 mt-0.5">
+                            <span className="text-xs opacity-75">{apt.reason || 'Sin motivo'}</span>
+                            <span className="text-xs opacity-50">Dr. {apt.doctor_name}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -606,7 +670,7 @@ function DayView({ date, slots, slot, appointments, isToday: isTodayFn, dragging
 }
 
 // ============ MONTH VIEW ============
-function MonthView({ currentDate, appointments, onDayClick, onAptClick }) {
+function MonthView({ currentDate, appointments, doctorMap, onDayClick, onAptClick }) {
   const days = getMonthDays(currentDate.getFullYear(), currentDate.getMonth());
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -652,15 +716,18 @@ function MonthView({ currentDate, appointments, onDayClick, onAptClick }) {
               </div>
               <div className="space-y-0.5">
                 {dayApts.slice(0, maxShow).map(apt => {
-                  const cfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
+                  const drColor = doctorMap[apt.doctor_id] || DOCTOR_COLORS[0];
+                  const stCfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
                   const time = new Date(apt.starts_at).toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit', hour12: false });
                   return (
                     <div
                       key={apt.id}
-                      className={`text-[9px] px-1 py-0.5 rounded truncate border ${cfg.light} cursor-pointer hover:shadow-sm`}
+                      className={`text-[9px] px-1 py-0.5 rounded truncate border-l-2 ${drColor.bg} ${drColor.text} cursor-pointer hover:shadow-sm`}
+                      style={{ borderLeftColor: drColor.accent }}
                       onClick={(e) => { e.stopPropagation(); onAptClick(apt); }}
                       data-testid={`month-apt-${apt.id}`}
                     >
+                      <div className={`w-1.5 h-1.5 rounded-full inline-block mr-0.5 ${stCfg.dot}`} />
                       <span className="font-semibold">{time}</span> {apt.patient_name}
                     </div>
                   );
@@ -920,7 +987,7 @@ function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated 
 }
 
 // ============ APPOINTMENT DETAIL MODAL ============
-function AppointmentDetailModal({ appointment, config, headers, onClose, onUpdated }) {
+function AppointmentDetailModal({ appointment, config, doctorMap, headers, onClose, onUpdated }) {
   const [status, setStatus] = useState(appointment.status);
   const [cancellationReason, setCancellationReason] = useState('');
   const [showEdit, setShowEdit] = useState(false);
@@ -934,6 +1001,7 @@ function AppointmentDetailModal({ appointment, config, headers, onClose, onUpdat
   const [saving, setSaving] = useState(false);
 
   const cfg = STATUS_CONFIG[appointment.status] || STATUS_CONFIG.scheduled;
+  const drColor = doctorMap[appointment.doctor_id] || DOCTOR_COLORS[0];
 
   const changeStatus = async (newStatus) => {
     if (newStatus === 'cancelled' && !cancellationReason) {
@@ -982,8 +1050,11 @@ function AppointmentDetailModal({ appointment, config, headers, onClose, onUpdat
       <DialogContent className="max-w-md" data-testid="apt-detail-modal">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base pr-6">
+            <div className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: drColor.accent }} />
             Detalle de cita
-            <Badge variant="outline" className={`text-xs ${cfg.light}`}>{cfg.label}</Badge>
+            <Badge variant="outline" className={`text-xs`}>
+              <div className={`w-2 h-2 rounded-full mr-1 ${cfg.dot}`} />{cfg.label}
+            </Badge>
           </DialogTitle>
         </DialogHeader>
 
