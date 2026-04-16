@@ -45,9 +45,9 @@ Panel de Super Administrador para plataforma de CRM de clinicas medicas. El supe
   - [x] Validacion de horario de clinica
   - [x] Supabase Realtime para actualizaciones en vivo
   - [x] Pagina de Pacientes (CRUD basico)
+  - [x] **DRAG & DROP para reprogramar citas** (16 Abril 2026)
 
 ## Pendientes
-- [ ] Drag & drop para reprogramar citas
 - [ ] Importacion CSV para catalogos
 - [ ] Recetas medicas
 - [ ] Reportes y estadisticas avanzadas

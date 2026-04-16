@@ -1111,6 +1111,17 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
             ends = starts + timedelta(minutes=dur)
             update_data["ends_at"] = ends.isoformat()
 
+            # Validate clinic hours
+            clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days').eq('id', clinic_id).single().execute()
+            c = clinic.data
+            start_time = starts.strftime("%H:%M:%S")
+            end_time = ends.strftime("%H:%M:%S")
+            day_of_week = starts.isoweekday()
+            if day_of_week not in (c.get("working_days") or [1,2,3,4,5]):
+                raise HTTPException(status_code=400, detail="La clinica no opera este dia")
+            if start_time < c["schedule_start"] or end_time > c["schedule_end"]:
+                raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({c['schedule_start']} - {c['schedule_end']})")
+
             doctor_id = update_data.get("doctor_id", existing.data["doctor_id"])
             conflicts = sdb.table('appointments').select('id').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).neq('status', 'cancelled').neq('id', apt_id).lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
             if conflicts.data:

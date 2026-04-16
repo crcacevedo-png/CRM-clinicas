@@ -11,7 +11,7 @@ import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { toast } from 'sonner';
 import {
-  ChevronLeft, ChevronRight, Plus, Search, Clock, User, X, CalendarDays, Filter, Edit, Ban
+  ChevronLeft, ChevronRight, Plus, Search, Clock, User, X, CalendarDays, Filter, Edit, Ban, GripVertical
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -73,6 +73,10 @@ export default function AgendaPage() {
   const [showDetail, setShowDetail] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
 
+  // Drag & drop state
+  const [draggingApt, setDraggingApt] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+
   const weekDates = getWeekDates(weekStart);
   const headers = getAuthHeaders();
 
@@ -131,6 +135,67 @@ export default function AgendaPage() {
   };
 
   const goToday = () => setWeekStart(getWeekDates(new Date())[0]);
+
+  // Drag & drop handlers
+  const handleDragStart = (e, apt) => {
+    if (apt.status === 'completed' || apt.status === 'cancelled') return;
+    setDraggingApt(apt);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', apt.id);
+    e.currentTarget.style.opacity = '0.4';
+  };
+
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    setDraggingApt(null);
+    setDropTarget(null);
+  };
+
+  const handleDragOver = (e, dayIdx, slotMin) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const key = `${dayIdx}-${slotMin}`;
+    if (dropTarget !== key) setDropTarget(key);
+  };
+
+  const handleDragLeave = () => {
+    setDropTarget(null);
+  };
+
+  const handleDrop = async (e, date, slotMin) => {
+    e.preventDefault();
+    setDropTarget(null);
+    if (!draggingApt) return;
+
+    const h = Math.floor(slotMin / 60);
+    const m = slotMin % 60;
+    const newDate = new Date(date);
+    newDate.setHours(h, m, 0, 0);
+    const newStartsAt = newDate.toISOString();
+
+    // Check if same slot — skip
+    const oldDate = new Date(draggingApt.starts_at);
+    if (oldDate.getFullYear() === newDate.getFullYear() &&
+        oldDate.getMonth() === newDate.getMonth() &&
+        oldDate.getDate() === newDate.getDate() &&
+        oldDate.getHours() === newDate.getHours() &&
+        oldDate.getMinutes() === newDate.getMinutes()) {
+      setDraggingApt(null);
+      return;
+    }
+
+    try {
+      await axios.put(`${API}/clinic/appointments/${draggingApt.id}`, {
+        starts_at: newStartsAt,
+        duration_minutes: draggingApt.duration_minutes,
+      }, { headers });
+      toast.success(`Cita reprogramada a ${formatTime(slotMin)} del ${newDate.toLocaleDateString('es-GT', { weekday: 'short', day: 'numeric', month: 'short' })}`);
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al reprogramar cita');
+    }
+    setDraggingApt(null);
+  };
 
   if (!config) {
     return (
@@ -262,23 +327,32 @@ export default function AgendaPage() {
               {weekDates.map((date, dayIdx) => {
                 const aptsInSlot = getAptsForSlot(date, slotMin);
                 const isT = isToday(date);
+                const isDragOver = dropTarget === `${dayIdx}-${slotMin}`;
                 return (
                   <div
                     key={`s-${slotMin}-${dayIdx}`}
-                    className={`border-r border-b border-slate-100 h-16 relative cursor-pointer hover:bg-slate-50/80 transition-colors ${isT ? 'bg-teal-50/30' : ''}`}
+                    className={`border-r border-b border-slate-100 h-16 relative cursor-pointer transition-colors ${isT ? 'bg-teal-50/30' : ''} ${isDragOver ? 'bg-teal-100/60 ring-2 ring-inset ring-teal-400/50' : 'hover:bg-slate-50/80'}`}
                     onClick={() => !aptsInSlot.length && handleSlotClick(date, slotMin)}
+                    onDragOver={(e) => handleDragOver(e, dayIdx, slotMin)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, date, slotMin)}
                     data-testid={`slot-${dayIdx}-${slotMin}`}
                   >
                     {aptsInSlot.map(apt => {
                       const cfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
+                      const isDraggable = apt.status !== 'completed' && apt.status !== 'cancelled';
                       return (
                         <div
                           key={apt.id}
-                          className={`absolute inset-x-0.5 inset-y-0.5 rounded-md border px-1.5 py-0.5 cursor-pointer overflow-hidden transition-all hover:shadow-md ${cfg.light}`}
+                          draggable={isDraggable}
+                          onDragStart={(e) => handleDragStart(e, apt)}
+                          onDragEnd={handleDragEnd}
+                          className={`absolute inset-x-0.5 inset-y-0.5 rounded-md border px-1.5 py-0.5 overflow-hidden transition-all hover:shadow-md ${cfg.light} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
                           onClick={(e) => { e.stopPropagation(); setShowDetail(apt); }}
                           data-testid={`apt-block-${apt.id}`}
                         >
                           <div className="flex items-center gap-1">
+                            {isDraggable && <GripVertical className="w-2.5 h-2.5 shrink-0 opacity-40" />}
                             <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
                             <span className="text-[10px] font-semibold truncate">{apt.patient_name}</span>
                           </div>
