@@ -11,7 +11,7 @@ import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { toast } from 'sonner';
 import {
-  ChevronLeft, ChevronRight, Plus, Search, Clock, User, X, CalendarDays, Filter, Edit, Ban, GripVertical
+  ChevronLeft, ChevronRight, Plus, Search, Clock, User, X, CalendarDays, Filter, Edit, Ban, GripVertical, Calendar, LayoutGrid
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -54,11 +54,35 @@ function formatTime(minutes) {
 
 const DAY_NAMES = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const DAY_FULL = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const DAY_NAMES_FULL_WEEK = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+function getMonthDays(year, month) {
+  const first = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  let startDow = first.getDay();
+  startDow = startDow === 0 ? 6 : startDow - 1;
+  const days = [];
+  for (let i = 0; i < startDow; i++) {
+    const d = new Date(year, month, -startDow + i + 1);
+    days.push({ date: d, inMonth: false });
+  }
+  for (let i = 1; i <= lastDay; i++) {
+    days.push({ date: new Date(year, month, i), inMonth: true });
+  }
+  while (days.length % 7 !== 0) {
+    const d = new Date(year, month + 1, days.length - startDow - lastDay + 1);
+    days.push({ date: d, inMonth: false });
+  }
+  return days;
+}
 
 export default function AgendaPage() {
   const { getAuthHeaders, clinicId } = useAuth();
   const [config, setConfig] = useState(null);
   const [appointments, setAppointments] = useState([]);
+  const [viewMode, setViewMode] = useState('week'); // 'day' | 'week' | 'month'
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [weekStart, setWeekStart] = useState(() => {
     const dates = getWeekDates(new Date());
     return dates[0];
@@ -87,15 +111,26 @@ export default function AgendaPage() {
       .catch(err => console.error('Config error:', err));
   }, []);
 
-  // Load appointments for current week
+  // Load appointments based on current view
   const fetchAppointments = useCallback(async () => {
-    if (!weekDates.length) return;
     setLoading(true);
     try {
-      const start = weekDates[0].toISOString();
-      const end = new Date(weekDates[5]);
-      end.setDate(end.getDate() + 1);
-      const params = new URLSearchParams({ start_date: start, end_date: end.toISOString() });
+      let start, end;
+      if (viewMode === 'day') {
+        start = new Date(currentDate);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(start);
+        end.setDate(end.getDate() + 1);
+      } else if (viewMode === 'week') {
+        if (!weekDates.length) return;
+        start = weekDates[0];
+        end = new Date(weekDates[5]);
+        end.setDate(end.getDate() + 1);
+      } else {
+        start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1);
+      }
+      const params = new URLSearchParams({ start_date: start.toISOString(), end_date: end.toISOString() });
       if (filterDoctor !== 'all') params.append('doctor_id', filterDoctor);
       if (filterStatus !== 'all') params.append('status', filterStatus);
       if (patientSearch) params.append('patient_search', patientSearch);
@@ -107,7 +142,7 @@ export default function AgendaPage() {
     } finally {
       setLoading(false);
     }
-  }, [weekStart, filterDoctor, filterStatus, patientSearch]);
+  }, [viewMode, weekStart, currentDate, filterDoctor, filterStatus, patientSearch]);
 
   useEffect(() => { fetchAppointments(); }, [fetchAppointments]);
 
@@ -134,7 +169,36 @@ export default function AgendaPage() {
     setWeekStart(next);
   };
 
-  const goToday = () => setWeekStart(getWeekDates(new Date())[0]);
+  const goToday = () => {
+    const now = new Date();
+    setCurrentDate(now);
+    setWeekStart(getWeekDates(now)[0]);
+  };
+
+  const navigate = (dir) => {
+    if (viewMode === 'day') {
+      const next = new Date(currentDate);
+      next.setDate(next.getDate() + dir);
+      setCurrentDate(next);
+    } else if (viewMode === 'week') {
+      navigateWeek(dir);
+    } else {
+      const next = new Date(currentDate);
+      next.setMonth(next.getMonth() + dir);
+      setCurrentDate(next);
+    }
+  };
+
+  const switchView = (mode) => {
+    setViewMode(mode);
+    if (mode === 'day') {
+      setCurrentDate(new Date());
+    } else if (mode === 'week') {
+      setWeekStart(getWeekDates(new Date())[0]);
+    } else {
+      setCurrentDate(new Date());
+    }
+  };
 
   // Drag & drop handlers
   const handleDragStart = (e, apt) => {
@@ -239,7 +303,15 @@ export default function AgendaPage() {
     setShowNewApt(true);
   };
 
-  const weekLabel = `${weekDates[0].toLocaleDateString('es-GT', { month: 'short', day: 'numeric' })} - ${weekDates[5].toLocaleDateString('es-GT', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const getNavLabel = () => {
+    if (viewMode === 'day') {
+      return currentDate.toLocaleDateString('es-GT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    } else if (viewMode === 'week') {
+      return `${weekDates[0].toLocaleDateString('es-GT', { month: 'short', day: 'numeric' })} - ${weekDates[5].toLocaleDateString('es-GT', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    } else {
+      return `${MONTH_NAMES[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
+    }
+  };
 
   return (
     <div className="h-screen flex flex-col" data-testid="agenda-page">
@@ -248,14 +320,38 @@ export default function AgendaPage() {
         <div className="flex items-center gap-3">
           <CalendarDays className="w-5 h-5 text-teal-600" strokeWidth={1.5} />
           <h1 className="text-lg font-bold text-slate-900">Agenda</h1>
+          {/* View mode toggle */}
+          <div className="flex items-center bg-slate-100 rounded-md p-0.5 ml-2">
+            <button
+              onClick={() => switchView('day')}
+              className={`px-3 py-1 text-xs font-medium rounded transition-all ${viewMode === 'day' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              data-testid="view-day-btn"
+            >
+              Día
+            </button>
+            <button
+              onClick={() => switchView('week')}
+              className={`px-3 py-1 text-xs font-medium rounded transition-all ${viewMode === 'week' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              data-testid="view-week-btn"
+            >
+              Semana
+            </button>
+            <button
+              onClick={() => switchView('month')}
+              className={`px-3 py-1 text-xs font-medium rounded transition-all ${viewMode === 'month' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              data-testid="view-month-btn"
+            >
+              Mes
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigateWeek(-1)} data-testid="prev-week-btn">
+          <Button variant="outline" size="sm" onClick={() => navigate(-1)} data-testid="prev-btn">
             <ChevronLeft className="w-4 h-4" />
           </Button>
           <Button variant="outline" size="sm" onClick={goToday} data-testid="today-btn">Hoy</Button>
-          <span className="text-sm font-medium text-slate-700 min-w-[180px] text-center">{weekLabel}</span>
-          <Button variant="outline" size="sm" onClick={() => navigateWeek(1)} data-testid="next-week-btn">
+          <span className="text-sm font-medium text-slate-700 min-w-[200px] text-center capitalize">{getNavLabel()}</span>
+          <Button variant="outline" size="sm" onClick={() => navigate(1)} data-testid="next-btn">
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
@@ -301,7 +397,8 @@ export default function AgendaPage() {
         </div>
       </div>
 
-      {/* Calendar Grid */}
+      {/* Calendar View */}
+      {viewMode === 'week' && (
       <div className="flex-1 overflow-auto">
         <div className="grid min-w-[900px]" style={{ gridTemplateColumns: '64px repeat(6, 1fr)' }}>
           {/* Header */}
@@ -367,6 +464,37 @@ export default function AgendaPage() {
           ))}
         </div>
       </div>
+      )}
+
+      {/* Day View */}
+      {viewMode === 'day' && (
+        <DayView
+          date={currentDate}
+          slots={slots}
+          slot={slot}
+          appointments={appointments}
+          isToday={isToday}
+          draggingApt={draggingApt}
+          dropTarget={dropTarget}
+          onSlotClick={handleSlotClick}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e, slotMin) => handleDragOver(e, 0, slotMin)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e, slotMin) => handleDrop(e, currentDate, slotMin)}
+          onAptClick={(apt) => setShowDetail(apt)}
+        />
+      )}
+
+      {/* Month View */}
+      {viewMode === 'month' && (
+        <MonthView
+          currentDate={currentDate}
+          appointments={appointments}
+          onDayClick={(date) => { setCurrentDate(date); setViewMode('day'); }}
+          onAptClick={(apt) => setShowDetail(apt)}
+        />
+      )}
 
       {/* New Appointment Modal */}
       {showNewApt && (
@@ -389,6 +517,159 @@ export default function AgendaPage() {
           onUpdated={() => { setShowDetail(null); fetchAppointments(); }}
         />
       )}
+    </div>
+  );
+}
+
+// ============ DAY VIEW ============
+function DayView({ date, slots, slot, appointments, isToday: isTodayFn, draggingApt, dropTarget, onSlotClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onAptClick }) {
+  const isT = isTodayFn(date);
+
+  const getAptsForSlot = (slotMin) => {
+    return appointments.filter(apt => {
+      const ad = new Date(apt.starts_at);
+      if (ad.getFullYear() !== date.getFullYear() || ad.getMonth() !== date.getMonth() || ad.getDate() !== date.getDate()) return false;
+      const aptMin = ad.getHours() * 60 + ad.getMinutes();
+      return aptMin >= slotMin && aptMin < slotMin + slot;
+    });
+  };
+
+  return (
+    <div className="flex-1 overflow-auto" data-testid="day-view">
+      {/* Day header */}
+      <div className={`sticky top-0 z-10 border-b px-6 py-3 flex items-center gap-3 ${isT ? 'bg-teal-50' : 'bg-slate-50'}`}>
+        <span className={`text-2xl font-bold ${isT ? 'text-teal-700 bg-teal-200 w-10 h-10 rounded-full flex items-center justify-center' : 'text-slate-800'}`}>
+          {date.getDate()}
+        </span>
+        <div>
+          <p className={`text-sm font-semibold capitalize ${isT ? 'text-teal-700' : 'text-slate-700'}`}>
+            {date.toLocaleDateString('es-GT', { weekday: 'long' })}
+          </p>
+          <p className="text-xs text-slate-500 capitalize">
+            {date.toLocaleDateString('es-GT', { month: 'long', year: 'numeric' })}
+          </p>
+        </div>
+        {isT && <Badge className="bg-teal-100 text-teal-700 border-teal-200 text-xs ml-2">Hoy</Badge>}
+      </div>
+
+      {/* Time grid - single column */}
+      <div className="grid" style={{ gridTemplateColumns: '80px 1fr' }}>
+        {slots.map((slotMin) => {
+          const aptsInSlot = getAptsForSlot(slotMin);
+          const isDragOver = dropTarget === `0-${slotMin}`;
+          return (
+            <div key={slotMin} className="contents">
+              <div className="border-r border-b border-slate-100 h-20 flex items-start justify-end pr-3 pt-2">
+                <span className="text-xs font-medium text-slate-400">{formatTime(slotMin)}</span>
+              </div>
+              <div
+                className={`border-b border-slate-100 h-20 relative cursor-pointer transition-colors ${isDragOver ? 'bg-teal-100/60 ring-2 ring-inset ring-teal-400/50' : 'hover:bg-slate-50/80'}`}
+                onClick={() => !aptsInSlot.length && onSlotClick(date, slotMin)}
+                onDragOver={(e) => onDragOver(e, slotMin)}
+                onDragLeave={onDragLeave}
+                onDrop={(e) => onDrop(e, slotMin)}
+                data-testid={`day-slot-${slotMin}`}
+              >
+                {aptsInSlot.map(apt => {
+                  const cfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
+                  const isDraggable = apt.status !== 'completed' && apt.status !== 'cancelled';
+                  return (
+                    <div
+                      key={apt.id}
+                      draggable={isDraggable}
+                      onDragStart={(e) => onDragStart(e, apt)}
+                      onDragEnd={onDragEnd}
+                      className={`absolute left-1 right-4 top-1 bottom-1 rounded-lg border px-3 py-1.5 overflow-hidden transition-all hover:shadow-md ${cfg.light} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+                      onClick={(e) => { e.stopPropagation(); onAptClick(apt); }}
+                      data-testid={`day-apt-${apt.id}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isDraggable && <GripVertical className="w-3 h-3 shrink-0 opacity-40" />}
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+                        <span className="text-sm font-semibold truncate">{apt.patient_name}</span>
+                        <span className="text-xs opacity-60 ml-auto">{apt.duration_minutes} min</span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-xs opacity-75">{apt.reason || 'Sin motivo'}</span>
+                        <span className="text-xs opacity-50">Dr. {apt.doctor_name}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============ MONTH VIEW ============
+function MonthView({ currentDate, appointments, onDayClick, onAptClick }) {
+  const days = getMonthDays(currentDate.getFullYear(), currentDate.getMonth());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const getAptsForDay = (date) => {
+    return appointments.filter(apt => {
+      const ad = new Date(apt.starts_at);
+      return ad.getFullYear() === date.getFullYear() && ad.getMonth() === date.getMonth() && ad.getDate() === date.getDate();
+    });
+  };
+
+  const isSameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  return (
+    <div className="flex-1 overflow-auto p-4" data-testid="month-view">
+      {/* Day headers */}
+      <div className="grid grid-cols-7 mb-1">
+        {DAY_NAMES_FULL_WEEK.map(d => (
+          <div key={d} className="text-center text-xs font-semibold text-slate-500 py-2">{d}</div>
+        ))}
+      </div>
+
+      {/* Calendar grid */}
+      <div className="grid grid-cols-7 border-t border-l border-slate-200">
+        {days.map(({ date, inMonth }, idx) => {
+          const isT = isSameDay(date, today);
+          const dayApts = getAptsForDay(date);
+          const maxShow = 3;
+          return (
+            <div
+              key={idx}
+              className={`border-r border-b border-slate-200 min-h-[100px] p-1.5 cursor-pointer transition-colors ${!inMonth ? 'bg-slate-50/50' : 'hover:bg-slate-50'} ${isT ? 'bg-teal-50/60' : ''}`}
+              onClick={() => onDayClick(date)}
+              data-testid={`month-day-${date.getDate()}-${date.getMonth()}`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${isT ? 'bg-teal-500 text-white' : inMonth ? 'text-slate-700' : 'text-slate-300'}`}>
+                  {date.getDate()}
+                </span>
+                {dayApts.length > maxShow && (
+                  <span className="text-[9px] text-slate-400 font-medium">+{dayApts.length - maxShow}</span>
+                )}
+              </div>
+              <div className="space-y-0.5">
+                {dayApts.slice(0, maxShow).map(apt => {
+                  const cfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
+                  const time = new Date(apt.starts_at).toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit', hour12: false });
+                  return (
+                    <div
+                      key={apt.id}
+                      className={`text-[9px] px-1 py-0.5 rounded truncate border ${cfg.light} cursor-pointer hover:shadow-sm`}
+                      onClick={(e) => { e.stopPropagation(); onAptClick(apt); }}
+                      data-testid={`month-apt-${apt.id}`}
+                    >
+                      <span className="font-semibold">{time}</span> {apt.patient_name}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

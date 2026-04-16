@@ -46,6 +46,12 @@ Panel de Super Administrador para plataforma de CRM de clinicas medicas. El supe
   - [x] Supabase Realtime para actualizaciones en vivo
   - [x] Pagina de Pacientes (CRUD basico)
   - [x] **DRAG & DROP para reprogramar citas** (16 Abril 2026)
+  - [x] **VISTAS DIARIA Y MENSUAL** (16 Abril 2026):
+    - [x] Toggle Día/Semana/Mes con navegación adaptativa
+    - [x] Vista diaria: slots amplios con detalle completo (nombre, motivo, doctor, duración)
+    - [x] Vista mensual: calendario grid con mini-bloques de citas por día
+    - [x] Click en día del mes navega a vista diaria
+    - [x] DnD funcional en vista diaria
 
 ## Pendientes
 - [ ] Importacion CSV para catalogos
