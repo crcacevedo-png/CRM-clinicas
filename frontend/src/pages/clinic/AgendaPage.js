@@ -981,9 +981,9 @@ function AppointmentDetailModal({ appointment, config, headers, onClose, onUpdat
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-md" data-testid="apt-detail-modal">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-base pr-6">
             Detalle de cita
-            <Badge variant="outline" className={`text-xs ml-auto ${cfg.light}`}>{cfg.label}</Badge>
+            <Badge variant="outline" className={`text-xs ${cfg.light}`}>{cfg.label}</Badge>
           </DialogTitle>
         </DialogHeader>
 
