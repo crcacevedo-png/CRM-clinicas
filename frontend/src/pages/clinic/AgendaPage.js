@@ -735,7 +735,7 @@ function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated 
     if (!form.doctor_id) { toast.error('Selecciona un médico'); return; }
     setSaving(true);
     try {
-      const startsAt = `${form.date}T${form.time}:00`;
+      const startsAt = new Date(`${form.date}T${form.time}:00`).toISOString();
       await axios.post(`${API}/clinic/appointments`, {
         patient_id: form.patient_id,
         doctor_id: form.doctor_id,

@@ -1039,15 +1039,24 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         import re
 
         starts = dt.fromisoformat(data.starts_at.replace('Z', '+00:00'))
+        if starts.tzinfo is None:
+            from zoneinfo import ZoneInfo
+            starts = starts.replace(tzinfo=ZoneInfo('UTC'))
         ends = starts + timedelta(minutes=data.duration_minutes)
 
         # Validate clinic hours
         clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,timezone').eq('id', clinic_id).single().execute()
         c = clinic.data
 
-        start_time = starts.strftime("%H:%M:%S")
-        end_time = ends.strftime("%H:%M:%S")
-        day_of_week = starts.isoweekday()
+        # Convert to clinic local time for validation
+        from zoneinfo import ZoneInfo
+        clinic_tz = ZoneInfo(c.get('timezone') or 'America/Guatemala')
+        local_start = starts.astimezone(clinic_tz)
+        local_end = ends.astimezone(clinic_tz)
+
+        start_time = local_start.strftime("%H:%M:%S")
+        end_time = local_end.strftime("%H:%M:%S")
+        day_of_week = local_start.isoweekday()
 
         if day_of_week not in (c.get("working_days") or [1,2,3,4,5]):
             raise HTTPException(status_code=400, detail="La clinica no opera este dia")
@@ -1106,17 +1115,23 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
 
         if "starts_at" in update_data:
             from datetime import datetime as dt, timedelta
+            from zoneinfo import ZoneInfo
             starts = dt.fromisoformat(update_data["starts_at"].replace('Z', '+00:00'))
+            if starts.tzinfo is None:
+                starts = starts.replace(tzinfo=ZoneInfo('UTC'))
             dur = update_data.get("duration_minutes", existing.data["duration_minutes"])
             ends = starts + timedelta(minutes=dur)
             update_data["ends_at"] = ends.isoformat()
 
-            # Validate clinic hours
-            clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days').eq('id', clinic_id).single().execute()
+            # Validate clinic hours in clinic timezone
+            clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,timezone').eq('id', clinic_id).single().execute()
             c = clinic.data
-            start_time = starts.strftime("%H:%M:%S")
-            end_time = ends.strftime("%H:%M:%S")
-            day_of_week = starts.isoweekday()
+            clinic_tz = ZoneInfo(c.get('timezone') or 'America/Guatemala')
+            local_start = starts.astimezone(clinic_tz)
+            local_end = ends.astimezone(clinic_tz)
+            start_time = local_start.strftime("%H:%M:%S")
+            end_time = local_end.strftime("%H:%M:%S")
+            day_of_week = local_start.isoweekday()
             if day_of_week not in (c.get("working_days") or [1,2,3,4,5]):
                 raise HTTPException(status_code=400, detail="La clinica no opera este dia")
             if start_time < c["schedule_start"] or end_time > c["schedule_end"]:
