@@ -22,6 +22,7 @@ import ClinicLayout from "./layouts/ClinicLayout";
 import ClinicDashboardPage from "./pages/clinic/ClinicDashboardPage";
 import AgendaPage from "./pages/clinic/AgendaPage";
 import PatientsPage from "./pages/clinic/PatientsPage";
+import PatientProfilePage from "./pages/clinic/PatientProfilePage";
 
 function App() {
   return (
@@ -61,6 +62,7 @@ function App() {
             <Route index element={<ClinicDashboardPage />} />
             <Route path="agenda" element={<AgendaPage />} />
             <Route path="pacientes" element={<PatientsPage />} />
+            <Route path="pacientes/:id" element={<PatientProfilePage />} />
           </Route>
 
           {/* Default Redirect */}
