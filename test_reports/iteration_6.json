@@ -1,0 +1,78 @@
+{
+  "summary": "Comprehensive testing of Consultation Templates feature. All 10 backend tests passed. Frontend UI verified: template selector with 10 templates organized by 5 categories (General, Especialidades, Urgencia, Crónicas, Procedimientos), template application pre-fills form correctly, template selector only appears for NEW consultations (not when editing existing records).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/clinic/templates returns 10 global templates with correct structure - PASSED",
+    "Templates organized by 5 categories: general, especialidad, urgencia, cronica, procedimiento - PASSED",
+    "'Consulta general adulto' template has NO chief_complaint pre-filled, has physical_exam sections - PASSED",
+    "'Control de diabetes' template has chief_complaint='Control de diabetes', E11 diagnosis as Primary, HbA1c in notes - PASSED",
+    "'Control de hipertensión' template has chief_complaint='Control de hipertensión arterial', I10 diagnosis as Primary - PASSED",
+    "POST /api/clinic/templates creates clinic-specific template - PASSED",
+    "Created clinic template appears in templates list with clinic_id set - PASSED",
+    "DELETE /api/clinic/templates/:id deactivates clinic template - PASSED",
+    "Cannot delete global templates (returns 403 Forbidden) - PASSED",
+    "All 10 expected global templates exist - PASSED",
+    "Frontend: Login as clinic admin and navigate to new consultation form - PASSED",
+    "Frontend: Template selector card visible with 10 templates in 5 categories - PASSED",
+    "Frontend: Click 'Consulta general adulto' - chief_complaint NOT pre-filled - PASSED",
+    "Frontend: Click 'Control de diabetes' - motivo pre-filled, E11 diagnosis appears as Principal - PASSED",
+    "Frontend: Click 'Control de hipertensión' - motivo pre-filled, I10 diagnosis appears as Principal - PASSED",
+    "Frontend: Template selector does NOT appear when editing existing record - PASSED"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_consultation_templates.py",
+    "/app/test_reports/pytest/pytest_templates.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (10/10 tests passed)",
+    "frontend": "100% (6/6 features verified)"
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!",
+    "patient_id_maria": "dffcbc90-407b-4e3a-b032-b831b20b524b"
+  },
+  "seed_data_creation": "Created TEST_ prefixed templates during backend testing (auto-cleaned)",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Consultation Templates feature fully functional. 10 global templates seeded in consultation_templates table (clinic_id=null). Categories: general, especialidad, urgencia, cronica, procedimiento. Template selector only shows for NEW consultations (!recordId && !isFinalized). applyTemplate() function pre-fills: chief_complaint, present_illness, review_of_systems, physical_exam, diagnoses, treatment_plan, procedures, notes. Backend endpoints: GET/POST/PUT/DELETE /api/clinic/templates. Global templates cannot be edited/deleted by clinic users (returns 403).",
+  "features_verified": {
+    "templates_api": {
+      "get_templates": "Returns global (clinic_id=null) + clinic-specific templates",
+      "create_template": "Creates clinic-specific template with clinic_id set",
+      "delete_template": "Soft-deletes by setting is_active=false",
+      "global_protection": "Cannot edit/delete global templates (403)"
+    },
+    "template_selector_ui": {
+      "visibility": "Only shows for NEW consultations (no record_id)",
+      "categories": ["General", "Especialidades", "Urgencia", "Crónicas", "Procedimientos"],
+      "template_count": 10,
+      "apply_behavior": "Pre-fills form fields from template_data JSONB"
+    },
+    "template_data_structure": {
+      "consulta_general_adulto": {
+        "chief_complaint": "NOT pre-filled (empty)",
+        "physical_exam": "Pre-filled with head, neck, chest, abdomen, extremities, neurological"
+      },
+      "control_diabetes": {
+        "chief_complaint": "Control de diabetes",
+        "diagnoses": "[{code:'E11', type:'primary', description:'Diabetes mellitus tipo 2'}]",
+        "notes": "Contains HbA1c fields"
+      },
+      "control_hipertension": {
+        "chief_complaint": "Control de hipertensión arterial",
+        "diagnoses": "[{code:'I10', type:'primary', description:'Hipertensión esencial (primaria)'}]"
+      }
+    }
+  }
+}

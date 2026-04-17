@@ -1391,6 +1391,95 @@ async def toggle_patient_active(patient_id: str, ctx=Depends(require_clinic_memb
         logger.error(f"Toggle patient error: {e}")
         raise HTTPException(status_code=500, detail="Error")
 
+# ============== CONSULTATION TEMPLATES ROUTES ==============
+
+class TemplateCreate(BaseModel):
+    name: str
+    category: str = "general"
+    description: Optional[str] = None
+    template_data: dict = {}
+    sort_order: int = 0
+
+@api_router.get("/clinic/templates")
+async def list_templates(ctx=Depends(require_clinic_member)):
+    """List templates: global (clinic_id=null) + clinic-specific"""
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        global_t = sdb.table('consultation_templates').select('*').is_('clinic_id', 'null').eq('is_active', True).order('sort_order').execute()
+        clinic_t = sdb.table('consultation_templates').select('*').eq('clinic_id', clinic_id).eq('is_active', True).order('sort_order').execute()
+        templates = (global_t.data or []) + (clinic_t.data or [])
+        return templates
+    except Exception as e:
+        logger.error(f"List templates error: {e}")
+        raise HTTPException(status_code=500, detail="Error al listar plantillas")
+
+@api_router.post("/clinic/templates")
+async def create_template(data: TemplateCreate, ctx=Depends(require_clinic_member)):
+    """Create a clinic-specific template"""
+    require_clinical_role(ctx)
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        doc = {
+            "id": str(uuid.uuid4()),
+            "clinic_id": clinic_id,
+            "name": data.name,
+            "category": data.category,
+            "description": data.description,
+            "template_data": data.template_data,
+            "is_active": True,
+            "sort_order": data.sort_order,
+        }
+        sdb.table('consultation_templates').insert(doc).execute()
+        return {"id": doc["id"], "message": "Plantilla creada"}
+    except Exception as e:
+        logger.error(f"Create template error: {e}")
+        raise HTTPException(status_code=500, detail="Error al crear plantilla")
+
+@api_router.put("/clinic/templates/{template_id}")
+async def update_template(template_id: str, data: TemplateCreate, ctx=Depends(require_clinic_member)):
+    """Update a clinic-specific template (cannot edit global templates)"""
+    require_clinical_role(ctx)
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        existing = sdb.table('consultation_templates').select('id,clinic_id').eq('id', template_id).maybe_single().execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+        if existing.data.get('clinic_id') is None:
+            raise HTTPException(status_code=403, detail="No se pueden editar plantillas globales")
+        if existing.data.get('clinic_id') != clinic_id:
+            raise HTTPException(status_code=403, detail="No tiene permiso para editar esta plantilla")
+
+        update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+        update_data["updated_at"] = now_iso()
+        sdb.table('consultation_templates').update(update_data).eq('id', template_id).execute()
+        return {"message": "Plantilla actualizada"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update template error: {e}")
+        raise HTTPException(status_code=500, detail="Error al actualizar plantilla")
+
+@api_router.delete("/clinic/templates/{template_id}")
+async def delete_template(template_id: str, ctx=Depends(require_clinic_member)):
+    """Deactivate a clinic-specific template"""
+    require_clinical_role(ctx)
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        existing = sdb.table('consultation_templates').select('id,clinic_id').eq('id', template_id).maybe_single().execute()
+        if not existing.data:
+            raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+        if existing.data.get('clinic_id') is None:
+            raise HTTPException(status_code=403, detail="No se pueden eliminar plantillas globales")
+        if existing.data.get('clinic_id') != clinic_id:
+            raise HTTPException(status_code=403, detail="No tiene permiso")
+        sdb.table('consultation_templates').update({"is_active": False, "updated_at": now_iso()}).eq('id', template_id).execute()
+        return {"message": "Plantilla eliminada"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete template error: {e}")
+        raise HTTPException(status_code=500, detail="Error al eliminar plantilla")
+
 # ============== MEDICAL RECORDS ROUTES ==============
 
 class MedicalRecordCreate(BaseModel):
