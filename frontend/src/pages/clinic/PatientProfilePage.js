@@ -13,6 +13,8 @@ import { Separator } from '../../components/ui/separator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/collapsible';
 import { Textarea } from '../../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
+import { Label } from '../../components/ui/label';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, Heart, Shield, User,
@@ -276,7 +278,9 @@ export default function PatientProfilePage() {
   const [doctors, setDoctors] = useState([]);
   const [showAddendum, setShowAddendum] = useState(null);
   const [addendumText, setAddendumText] = useState('');
-
+  const [showEdit, setShowEdit] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [savingEdit, setSavingEdit] = useState(false);
   const fetchPatient = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/clinic/patients/${id}`, { headers });
@@ -333,6 +337,60 @@ export default function PatientProfilePage() {
       toast.error('Error al cambiar estado');
     }
   };
+
+  const openEditForm = () => {
+    if (!patient) return;
+    setEditForm({
+      first_name: patient.first_name || '',
+      last_name: patient.last_name || '',
+      date_of_birth: patient.date_of_birth || '',
+      gender: patient.gender || '',
+      national_id: patient.national_id || '',
+      nationality: patient.nationality || '',
+      phone: patient.phone || '',
+      phone_secondary: patient.phone_secondary || '',
+      email: patient.email || '',
+      address: patient.address || '',
+      city: patient.city || '',
+      state: patient.state || '',
+      country: patient.country || '',
+      emergency_contact_name: patient.emergency_contact_name || '',
+      emergency_contact_relation: patient.emergency_contact_relation || '',
+      emergency_contact_phone: patient.emergency_contact_phone || '',
+      blood_type: patient.blood_type || '',
+      allergies: (patient.allergies || []).join(', '),
+      chronic_conditions: (patient.chronic_conditions || []).join(', '),
+      current_medications: (patient.current_medications || []).join(', '),
+      insurance_provider: patient.insurance_provider || '',
+      insurance_policy_number: patient.insurance_policy_number || '',
+      insurance_expiry: patient.insurance_expiry || '',
+      notes: patient.notes || '',
+    });
+    setShowEdit(true);
+  };
+
+  const saveEditForm = async () => {
+    if (!editForm.first_name || !editForm.last_name) { toast.error('Nombre y apellido son requeridos'); return; }
+    setSavingEdit(true);
+    try {
+      const payload = { ...editForm };
+      payload.allergies = editForm.allergies ? editForm.allergies.split(',').map(s => s.trim()).filter(Boolean) : [];
+      payload.chronic_conditions = editForm.chronic_conditions ? editForm.chronic_conditions.split(',').map(s => s.trim()).filter(Boolean) : [];
+      payload.current_medications = editForm.current_medications ? editForm.current_medications.split(',').map(s => s.trim()).filter(Boolean) : [];
+      Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
+
+      await axios.put(`${API}/clinic/patients/${id}`, payload, { headers });
+      toast.success('Paciente actualizado');
+      setShowEdit(false);
+      fetchPatient();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al actualizar');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const updateField = (field, value) => setEditForm(prev => ({ ...prev, [field]: value }));
 
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -466,7 +524,7 @@ export default function PatientProfilePage() {
               <Button variant="outline" size="sm" onClick={toggleActive} data-testid="toggle-active-btn">
                 {patient.is_active ? 'Desactivar' : 'Activar'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => navigate('/dashboard/pacientes', { state: { editId: patient.id } })} data-testid="edit-patient-btn">
+              <Button variant="outline" size="sm" onClick={openEditForm} data-testid="edit-patient-btn">
                 <Edit className="w-4 h-4 mr-1.5" /> Editar
               </Button>
             </div>
@@ -891,6 +949,93 @@ export default function PatientProfilePage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Edit Patient Sheet */}
+      <Sheet open={showEdit} onOpenChange={setShowEdit}>
+        <SheetContent className="sm:max-w-xl overflow-y-auto" data-testid="edit-patient-sheet">
+          <SheetHeader className="mb-4">
+            <SheetTitle>Editar paciente</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase">Datos personales</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Nombre *</Label><Input className="mt-1 text-sm" value={editForm.first_name || ''} onChange={e => updateField('first_name', e.target.value)} data-testid="edit-first-name" /></div>
+              <div><Label className="text-xs">Apellido *</Label><Input className="mt-1 text-sm" value={editForm.last_name || ''} onChange={e => updateField('last_name', e.target.value)} data-testid="edit-last-name" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Fecha de nacimiento</Label><Input type="date" className="mt-1 text-sm" value={editForm.date_of_birth || ''} onChange={e => updateField('date_of_birth', e.target.value)} /></div>
+              <div>
+                <Label className="text-xs">Género</Label>
+                <Select value={editForm.gender || ''} onValueChange={v => updateField('gender', v)}>
+                  <SelectTrigger className="mt-1 text-sm"><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="male">Masculino</SelectItem>
+                    <SelectItem value="female">Femenino</SelectItem>
+                    <SelectItem value="other">Otro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">DPI</Label><Input className="mt-1 text-sm" value={editForm.national_id || ''} onChange={e => updateField('national_id', e.target.value)} /></div>
+              <div><Label className="text-xs">Nacionalidad</Label><Input className="mt-1 text-sm" value={editForm.nationality || ''} onChange={e => updateField('nationality', e.target.value)} /></div>
+            </div>
+
+            <Separator />
+            <p className="text-xs font-semibold text-slate-500 uppercase">Contacto</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Teléfono</Label><Input className="mt-1 text-sm" value={editForm.phone || ''} onChange={e => updateField('phone', e.target.value)} data-testid="edit-phone" /></div>
+              <div><Label className="text-xs">Teléfono secundario</Label><Input className="mt-1 text-sm" value={editForm.phone_secondary || ''} onChange={e => updateField('phone_secondary', e.target.value)} /></div>
+            </div>
+            <div><Label className="text-xs">Email</Label><Input type="email" className="mt-1 text-sm" value={editForm.email || ''} onChange={e => updateField('email', e.target.value)} /></div>
+            <div><Label className="text-xs">Dirección</Label><Input className="mt-1 text-sm" value={editForm.address || ''} onChange={e => updateField('address', e.target.value)} /></div>
+            <div className="grid grid-cols-3 gap-3">
+              <div><Label className="text-xs">Ciudad</Label><Input className="mt-1 text-sm" value={editForm.city || ''} onChange={e => updateField('city', e.target.value)} /></div>
+              <div><Label className="text-xs">Departamento</Label><Input className="mt-1 text-sm" value={editForm.state || ''} onChange={e => updateField('state', e.target.value)} /></div>
+              <div><Label className="text-xs">País</Label><Input className="mt-1 text-sm" value={editForm.country || ''} onChange={e => updateField('country', e.target.value)} /></div>
+            </div>
+
+            <Separator />
+            <p className="text-xs font-semibold text-slate-500 uppercase">Contacto de emergencia</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div><Label className="text-xs">Nombre</Label><Input className="mt-1 text-sm" value={editForm.emergency_contact_name || ''} onChange={e => updateField('emergency_contact_name', e.target.value)} /></div>
+              <div><Label className="text-xs">Relación</Label><Input className="mt-1 text-sm" value={editForm.emergency_contact_relation || ''} onChange={e => updateField('emergency_contact_relation', e.target.value)} /></div>
+              <div><Label className="text-xs">Teléfono</Label><Input className="mt-1 text-sm" value={editForm.emergency_contact_phone || ''} onChange={e => updateField('emergency_contact_phone', e.target.value)} /></div>
+            </div>
+
+            <Separator />
+            <p className="text-xs font-semibold text-slate-500 uppercase">Información médica</p>
+            <div>
+              <Label className="text-xs">Tipo de sangre</Label>
+              <Select value={editForm.blood_type || ''} onValueChange={v => updateField('blood_type', v)}>
+                <SelectTrigger className="mt-1 text-sm"><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                <SelectContent>
+                  {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(bt => <SelectItem key={bt} value={bt}>{bt}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label className="text-xs">Alergias (separadas por coma)</Label><Input className="mt-1 text-sm" value={editForm.allergies || ''} onChange={e => updateField('allergies', e.target.value)} /></div>
+            <div><Label className="text-xs">Condiciones crónicas (separadas por coma)</Label><Input className="mt-1 text-sm" value={editForm.chronic_conditions || ''} onChange={e => updateField('chronic_conditions', e.target.value)} /></div>
+            <div><Label className="text-xs">Medicamentos actuales (separados por coma)</Label><Input className="mt-1 text-sm" value={editForm.current_medications || ''} onChange={e => updateField('current_medications', e.target.value)} /></div>
+
+            <Separator />
+            <p className="text-xs font-semibold text-slate-500 uppercase">Seguro médico</p>
+            <div><Label className="text-xs">Proveedor de seguro</Label><Input className="mt-1 text-sm" value={editForm.insurance_provider || ''} onChange={e => updateField('insurance_provider', e.target.value)} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Número de póliza</Label><Input className="mt-1 text-sm" value={editForm.insurance_policy_number || ''} onChange={e => updateField('insurance_policy_number', e.target.value)} /></div>
+              <div><Label className="text-xs">Vencimiento</Label><Input type="date" className="mt-1 text-sm" value={editForm.insurance_expiry || ''} onChange={e => updateField('insurance_expiry', e.target.value)} /></div>
+            </div>
+            <div><Label className="text-xs">Notas clínicas</Label><Textarea className="mt-1 text-sm min-h-[60px]" value={editForm.notes || ''} onChange={e => updateField('notes', e.target.value)} /></div>
+          </div>
+
+          <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+            <Button variant="outline" onClick={() => setShowEdit(false)}>Cancelar</Button>
+            <Button className="bg-teal-600 hover:bg-teal-700" onClick={saveEditForm} disabled={savingEdit} data-testid="save-edit-btn">
+              {savingEdit ? 'Guardando...' : 'Guardar cambios'}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
