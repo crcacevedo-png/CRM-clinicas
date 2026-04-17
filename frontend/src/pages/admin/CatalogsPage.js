@@ -23,9 +23,11 @@ import {
   Upload,
   FileUp,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Search
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -47,6 +49,15 @@ export default function CatalogsPage() {
   const [labForm, setLabForm] = useState({ name: '', category: '', preparation: '' });
   const [icdForm, setIcdForm] = useState({ code: '', description_es: '', category: '', is_common: false });
   const [bulkText, setBulkText] = useState('');
+
+  // Search/filter states
+  const [medSearch, setMedSearch] = useState('');
+  const [medCategoryFilter, setMedCategoryFilter] = useState('all');
+  const [labSearch, setLabSearch] = useState('');
+  const [labCategoryFilter, setLabCategoryFilter] = useState('all');
+  const [icdSearch, setIcdSearch] = useState('');
+  const [icdCategoryFilter, setIcdCategoryFilter] = useState('all');
+  const [icdCommonFilter, setIcdCommonFilter] = useState('all');
 
   const { getAuthHeaders } = useAuth();
 
@@ -71,6 +82,42 @@ export default function CatalogsPage() {
       setLoading(false);
     }
   };
+
+  // Filtered data
+  const filteredMeds = medications.filter(m => {
+    const search = medSearch.toLowerCase();
+    const matchesSearch = !search || 
+      (m.generic_name || '').toLowerCase().includes(search) || 
+      (m.brand_name || '').toLowerCase().includes(search) ||
+      (m.category || '').toLowerCase().includes(search);
+    const matchesCat = medCategoryFilter === 'all' || m.category === medCategoryFilter;
+    return matchesSearch && matchesCat;
+  });
+
+  const filteredLabs = labStudies.filter(s => {
+    const search = labSearch.toLowerCase();
+    const matchesSearch = !search || 
+      (s.name || '').toLowerCase().includes(search) ||
+      (s.category || '').toLowerCase().includes(search) ||
+      (s.preparation || '').toLowerCase().includes(search);
+    const matchesCat = labCategoryFilter === 'all' || s.category === labCategoryFilter;
+    return matchesSearch && matchesCat;
+  });
+
+  const filteredIcd = icd10Codes.filter(c => {
+    const search = icdSearch.toLowerCase();
+    const matchesSearch = !search || 
+      (c.code || '').toLowerCase().includes(search) || 
+      (c.description_es || '').toLowerCase().includes(search) ||
+      (c.category || '').toLowerCase().includes(search);
+    const matchesCat = icdCategoryFilter === 'all' || c.category === icdCategoryFilter;
+    const matchesCommon = icdCommonFilter === 'all' || (icdCommonFilter === 'yes' ? c.is_common : !c.is_common);
+    return matchesSearch && matchesCat && matchesCommon;
+  });
+
+  const medCategories = [...new Set(medications.map(m => m.category).filter(Boolean))].sort();
+  const labCategories = [...new Set(labStudies.map(s => s.category).filter(Boolean))].sort();
+  const icdCategories = [...new Set(icd10Codes.map(c => c.category).filter(Boolean))].sort();
 
   const openAddModal = (type) => {
     setModalType(type);
@@ -346,20 +393,33 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
 
           {/* Medications Tab */}
           <TabsContent value="medications" className="m-0">
-            <div className="p-4 border-b border-zinc-200 flex justify-end gap-2">
-              <Button 
-                onClick={() => openBulkModal('medication')} 
-                variant="outline"
-                className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10"
-                data-testid="bulk-import-medications-btn"
-              >
-                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Importar varios
-              </Button>
-              <Button onClick={() => openAddModal('medication')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-medication-btn">
-                <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Agregar uno
-              </Button>
+            <div className="p-4 border-b border-zinc-200 flex items-center gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <Input className="pl-8 h-9 text-sm" placeholder="Buscar por nombre, marca..." value={medSearch} onChange={e => setMedSearch(e.target.value)} data-testid="med-search" />
+              </div>
+              <Select value={medCategoryFilter} onValueChange={setMedCategoryFilter}>
+                <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="med-category-filter">
+                  <SelectValue placeholder="Categoría" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las categorías</SelectItem>
+                  {medCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {(medSearch || medCategoryFilter !== 'all') && (
+                <span className="text-xs text-zinc-500">{filteredMeds.length} de {medications.filter(m => m.is_active !== false).length}</span>
+              )}
+              <div className="ml-auto flex gap-2">
+                <Button onClick={() => openBulkModal('medication')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="bulk-import-medications-btn">
+                  <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  Importar
+                </Button>
+                <Button onClick={() => openAddModal('medication')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-medication-btn">
+                  <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  Agregar
+                </Button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="data-table" data-testid="medications-table">
@@ -376,8 +436,8 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={6} className="text-center py-8 text-zinc-500">Cargando...</td></tr>
-                  ) : medications.length > 0 ? (
-                    medications.map((med) => (
+                  ) : filteredMeds.length > 0 ? (
+                    filteredMeds.map((med) => (
                       <tr key={med.id} data-testid={`med-row-${med.id}`}>
                         <td className="font-medium text-zinc-900">{med.generic_name}</td>
                         <td>{med.brand_name || '-'}</td>
@@ -412,20 +472,33 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
 
           {/* Lab Studies Tab */}
           <TabsContent value="lab-studies" className="m-0">
-            <div className="p-4 border-b border-zinc-200 flex justify-end gap-2">
-              <Button 
-                onClick={() => openBulkModal('lab')} 
-                variant="outline"
-                className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10"
-                data-testid="bulk-import-lab-btn"
-              >
-                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Importar varios
-              </Button>
-              <Button onClick={() => openAddModal('lab')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-lab-btn">
-                <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Agregar uno
-              </Button>
+            <div className="p-4 border-b border-zinc-200 flex items-center gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <Input className="pl-8 h-9 text-sm" placeholder="Buscar por nombre, preparación..." value={labSearch} onChange={e => setLabSearch(e.target.value)} data-testid="lab-search" />
+              </div>
+              <Select value={labCategoryFilter} onValueChange={setLabCategoryFilter}>
+                <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="lab-category-filter">
+                  <SelectValue placeholder="Categoría" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las categorías</SelectItem>
+                  {labCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {(labSearch || labCategoryFilter !== 'all') && (
+                <span className="text-xs text-zinc-500">{filteredLabs.length} de {labStudies.filter(s => s.is_active !== false).length}</span>
+              )}
+              <div className="ml-auto flex gap-2">
+                <Button onClick={() => openBulkModal('lab')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="bulk-import-lab-btn">
+                  <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  Importar
+                </Button>
+                <Button onClick={() => openAddModal('lab')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-lab-btn">
+                  <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  Agregar
+                </Button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="data-table" data-testid="lab-studies-table">
@@ -441,8 +514,8 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={5} className="text-center py-8 text-zinc-500">Cargando...</td></tr>
-                  ) : labStudies.length > 0 ? (
-                    labStudies.map((study) => (
+                  ) : filteredLabs.length > 0 ? (
+                    filteredLabs.map((study) => (
                       <tr key={study.id} data-testid={`lab-row-${study.id}`}>
                         <td className="font-medium text-zinc-900">{study.name}</td>
                         <td>{study.category || '-'}</td>
@@ -476,20 +549,43 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
 
           {/* ICD-10 Tab */}
           <TabsContent value="icd10" className="m-0">
-            <div className="p-4 border-b border-zinc-200 flex justify-end gap-2">
-              <Button 
-                onClick={() => openBulkModal('icd10')} 
-                variant="outline"
-                className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10"
-                data-testid="bulk-import-icd10-btn"
-              >
-                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Importar varios
-              </Button>
-              <Button onClick={() => openAddModal('icd10')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-icd10-btn">
-                <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Agregar uno
-              </Button>
+            <div className="p-4 border-b border-zinc-200 flex items-center gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <Input className="pl-8 h-9 text-sm" placeholder="Buscar por código o descripción..." value={icdSearch} onChange={e => setIcdSearch(e.target.value)} data-testid="icd-search" />
+              </div>
+              <Select value={icdCategoryFilter} onValueChange={setIcdCategoryFilter}>
+                <SelectTrigger className="w-[180px] h-9 text-sm" data-testid="icd-category-filter">
+                  <SelectValue placeholder="Categoría" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las categorías</SelectItem>
+                  {icdCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={icdCommonFilter} onValueChange={setIcdCommonFilter}>
+                <SelectTrigger className="w-[140px] h-9 text-sm" data-testid="icd-common-filter">
+                  <SelectValue placeholder="Común" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="yes">Solo comunes</SelectItem>
+                  <SelectItem value="no">No comunes</SelectItem>
+                </SelectContent>
+              </Select>
+              {(icdSearch || icdCategoryFilter !== 'all' || icdCommonFilter !== 'all') && (
+                <span className="text-xs text-zinc-500">{filteredIcd.length} de {icd10Codes.length}</span>
+              )}
+              <div className="ml-auto flex gap-2">
+                <Button onClick={() => openBulkModal('icd10')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="bulk-import-icd10-btn">
+                  <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  Importar
+                </Button>
+                <Button onClick={() => openAddModal('icd10')} className="bg-[#0A2540] hover:bg-[#0A2540]/90" data-testid="add-icd10-btn">
+                  <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  Agregar
+                </Button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="data-table" data-testid="icd10-table">
@@ -505,8 +601,8 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={5} className="text-center py-8 text-zinc-500">Cargando...</td></tr>
-                  ) : icd10Codes.length > 0 ? (
-                    icd10Codes.map((code) => (
+                  ) : filteredIcd.length > 0 ? (
+                    filteredIcd.map((code) => (
                       <tr key={code.id} data-testid={`icd-row-${code.id}`}>
                         <td className="font-mono font-medium text-zinc-900">{code.code}</td>
                         <td>{code.description_es}</td>
