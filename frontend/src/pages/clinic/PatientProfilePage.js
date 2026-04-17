@@ -5,14 +5,20 @@ import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
+import { Input } from '../../components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Separator } from '../../components/ui/separator';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/collapsible';
+import { Textarea } from '../../components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, Heart, Shield, User,
   FileText, Upload, Download, Trash2, Eye, Droplets, Pill, Activity,
-  Clock, CalendarPlus, ClipboardList, FlaskConical, AlertTriangle, Edit
+  Clock, CalendarPlus, ClipboardList, FlaskConical, AlertTriangle, Edit,
+  Plus, ChevronDown, ChevronUp, Stethoscope, AlertCircle, MessageSquarePlus
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -67,6 +73,185 @@ function formatFileSize(bytes) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+const VITAL_RANGES = {
+  blood_pressure_systolic: { min: 70, max: 180 },
+  blood_pressure_diastolic: { min: 40, max: 120 },
+  heart_rate: { min: 50, max: 120 },
+  respiratory_rate: { min: 10, max: 30 },
+  temperature: { min: 35.5, max: 38.0 },
+  oxygen_saturation: { min: 92, max: 100 },
+};
+
+function VitalBadge({ label, value, unit, rangeKey }) {
+  if (!value && value !== 0) return null;
+  const range = VITAL_RANGES[rangeKey];
+  const outOfRange = range && (value < range.min || value > range.max);
+  return (
+    <div className={`px-2.5 py-1.5 rounded-md text-center ${outOfRange ? 'bg-red-50 border border-red-200' : 'bg-slate-50 border border-slate-100'}`}>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className={`text-sm font-bold ${outOfRange ? 'text-red-600' : 'text-slate-800'}`}>
+        {value} <span className="text-xs font-normal">{unit}</span>
+      </p>
+      {outOfRange && <AlertCircle className="w-3 h-3 text-red-500 mx-auto mt-0.5" />}
+    </div>
+  );
+}
+
+function RecordDetail({ record, formatDate, onAddAddendum }) {
+  const ROS_LABELS = {
+    general: 'General', cardiovascular: 'Cardiovascular', respiratory: 'Respiratorio',
+    gastrointestinal: 'Gastrointestinal', genitourinary: 'Genitourinario',
+    musculoskeletal: 'Musculoesquelético', neurological: 'Neurológico',
+    skin: 'Piel', endocrine: 'Endocrino',
+  };
+  const EXAM_LABELS = {
+    head: 'Cabeza', neck: 'Cuello', chest: 'Tórax',
+    abdomen: 'Abdomen', extremities: 'Extremidades', neurological: 'Neurológico',
+  };
+
+  const ros = record.review_of_systems || {};
+  const hasROS = Object.values(ros).some(v => v && v.length > 0);
+  const exam = record.physical_exam || {};
+  const hasExam = Object.values(exam).some(v => v && v.trim());
+  const hasVitals = record.blood_pressure_systolic || record.heart_rate || record.temperature;
+
+  return (
+    <div className="space-y-4 text-sm">
+      {/* Chief complaint and present illness */}
+      {record.chief_complaint && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Motivo de consulta</p>
+          <p className="text-slate-700">{record.chief_complaint}</p>
+        </div>
+      )}
+      {record.present_illness && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Historia de enfermedad actual</p>
+          <p className="text-slate-700 whitespace-pre-wrap">{record.present_illness}</p>
+        </div>
+      )}
+
+      {/* Review of Systems */}
+      {hasROS && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Revisión por sistemas</p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(ros).filter(([_, items]) => items && items.length > 0).map(([sys, items]) => (
+              <div key={sys} className="bg-slate-50 rounded px-2 py-1">
+                <span className="text-xs font-medium text-slate-600">{ROS_LABELS[sys] || sys}: </span>
+                <span className="text-xs text-slate-500">{items.join(', ')}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Vital signs */}
+      {hasVitals && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Signos vitales</p>
+          <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
+            <VitalBadge label="PA Sist." value={record.blood_pressure_systolic} unit="mmHg" rangeKey="blood_pressure_systolic" />
+            <VitalBadge label="PA Diast." value={record.blood_pressure_diastolic} unit="mmHg" rangeKey="blood_pressure_diastolic" />
+            <VitalBadge label="FC" value={record.heart_rate} unit="lpm" rangeKey="heart_rate" />
+            <VitalBadge label="FR" value={record.respiratory_rate} unit="rpm" rangeKey="respiratory_rate" />
+            <VitalBadge label="Temp" value={record.temperature} unit="°C" rangeKey="temperature" />
+            <VitalBadge label="SpO2" value={record.oxygen_saturation} unit="%" rangeKey="oxygen_saturation" />
+            <VitalBadge label="Peso" value={record.weight_kg} unit="kg" />
+            <VitalBadge label="Talla" value={record.height_cm} unit="cm" />
+          </div>
+          {record.bmi && (
+            <p className="text-xs text-slate-500 mt-1">IMC: <span className="font-bold">{record.bmi}</span></p>
+          )}
+        </div>
+      )}
+
+      {/* Physical Exam */}
+      {hasExam && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Examen físico</p>
+          <div className="space-y-1">
+            {Object.entries(exam).filter(([_, v]) => v && v.trim()).map(([key, val]) => (
+              <div key={key} className="flex gap-2">
+                <span className="text-xs font-medium text-slate-600 min-w-[90px]">{EXAM_LABELS[key] || key}:</span>
+                <span className="text-xs text-slate-600">{val}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Diagnoses */}
+      {record.diagnoses?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Diagnósticos</p>
+          <div className="space-y-1">
+            {record.diagnoses.map((d, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Badge variant="outline" className={`text-xs font-mono ${d.type === 'primary' ? 'bg-teal-50 text-teal-700 border-teal-200' : ''}`}>{d.code}</Badge>
+                <span className="text-sm text-slate-700">{d.description}</span>
+                {d.type === 'primary' && <Badge className="bg-teal-600 text-white text-xs">Principal</Badge>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Treatment and Procedures */}
+      {record.treatment_plan && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Plan de tratamiento</p>
+          <p className="text-slate-700 whitespace-pre-wrap">{record.treatment_plan}</p>
+        </div>
+      )}
+      {record.procedures && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Procedimientos</p>
+          <p className="text-slate-700 whitespace-pre-wrap">{record.procedures}</p>
+        </div>
+      )}
+
+      {/* Notes */}
+      {record.notes && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Notas</p>
+          <p className="text-slate-700 whitespace-pre-wrap">{record.notes}</p>
+        </div>
+      )}
+      {record.private_notes && (
+        <div className="p-2 bg-amber-50 rounded-md border border-amber-200">
+          <p className="text-xs font-semibold text-amber-700 uppercase mb-1">Notas privadas del médico</p>
+          <p className="text-slate-700 whitespace-pre-wrap text-xs">{record.private_notes}</p>
+        </div>
+      )}
+
+      {/* Addenda */}
+      {record.addenda?.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Addendums</p>
+          <div className="space-y-2">
+            {record.addenda.map((a, i) => (
+              <div key={i} className="p-2 bg-blue-50 rounded border border-blue-100">
+                <p className="text-xs text-blue-600 mb-0.5">
+                  {a.doctor_name} — {new Date(a.created_at).toLocaleString('es-GT', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+                <p className="text-sm text-slate-700">{a.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Addendum button for finalized records */}
+      {record.status === 'finalized' && (
+        <Button variant="outline" size="sm" className="text-xs" onClick={onAddAddendum} data-testid={`add-addendum-${record.id}`}>
+          <MessageSquarePlus className="w-3.5 h-3.5 mr-1" /> Agregar addendum
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export default function PatientProfilePage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -82,6 +267,16 @@ export default function PatientProfilePage() {
   const [uploading, setUploading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
 
+  // Medical records state
+  const [medicalRecords, setMedicalRecords] = useState([]);
+  const [expandedRecord, setExpandedRecord] = useState(null);
+  const [doctorFilter, setDoctorFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [doctors, setDoctors] = useState([]);
+  const [showAddendum, setShowAddendum] = useState(null);
+  const [addendumText, setAddendumText] = useState('');
+
   const fetchPatient = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/clinic/patients/${id}`, { headers });
@@ -89,6 +284,11 @@ export default function PatientProfilePage() {
       setStats(res.data.stats || {});
       setAppointments(res.data.appointments || []);
       setFiles(res.data.files || []);
+      // Fetch doctors for filter
+      try {
+        const cfgRes = await axios.get(`${API}/clinic/config`, { headers });
+        setDoctors(cfgRes.data.doctors || []);
+      } catch {}
     } catch (err) {
       toast.error('Error al cargar paciente');
       navigate('/dashboard/pacientes');
@@ -97,7 +297,32 @@ export default function PatientProfilePage() {
     }
   }, [id]);
 
+  const fetchMedicalRecords = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (doctorFilter !== 'all') params.set('doctor_id', doctorFilter);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      const res = await axios.get(`${API}/clinic/patients/${id}/medical-records?${params}`, { headers });
+      setMedicalRecords(res.data || []);
+    } catch { /* role may not have access */ }
+  }, [id, doctorFilter, dateFrom, dateTo]);
+
   useEffect(() => { fetchPatient(); }, [fetchPatient]);
+  useEffect(() => { fetchMedicalRecords(); }, [fetchMedicalRecords]);
+
+  const handleAddAddendum = async (recordId) => {
+    if (!addendumText.trim()) return;
+    try {
+      await axios.post(`${API}/clinic/medical-records/${recordId}/addendum`, { text: addendumText }, { headers });
+      toast.success('Addendum agregado');
+      setShowAddendum(null);
+      setAddendumText('');
+      fetchMedicalRecords();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al agregar addendum');
+    }
+  };
 
   const toggleActive = async () => {
     try {
@@ -232,7 +457,10 @@ export default function PatientProfilePage() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Button variant="outline" size="sm" onClick={() => navigate(`/dashboard/agenda`)} data-testid="quick-appointment-btn">
+              <Button variant="outline" size="sm" onClick={() => navigate(`/dashboard/pacientes/${id}/consulta`)} data-testid="quick-appointment-btn">
+                <Stethoscope className="w-4 h-4 mr-1.5" /> Nueva consulta
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(`/dashboard/agenda`)} data-testid="new-appointment-btn">
                 <CalendarPlus className="w-4 h-4 mr-1.5" /> Nueva cita
               </Button>
               <Button variant="outline" size="sm" onClick={toggleActive} data-testid="toggle-active-btn">
@@ -386,47 +614,169 @@ export default function PatientProfilePage() {
           </div>
         </TabsContent>
 
-        {/* Clinical History */}
+        {/* Clinical History - Medical Records Timeline */}
         <TabsContent value="history">
-          <Card className="border border-slate-200">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-slate-700">Historial de citas</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {appointments.length === 0 ? (
-                <div className="text-center py-10">
-                  <Calendar className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No hay citas registradas</p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-slate-50/50">
-                      <TableHead className="text-xs font-semibold">Fecha</TableHead>
-                      <TableHead className="text-xs font-semibold">Doctor</TableHead>
-                      <TableHead className="text-xs font-semibold">Motivo</TableHead>
-                      <TableHead className="text-xs font-semibold text-center">Estado</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {appointments.map(apt => {
-                      const st = STATUS_MAP[apt.status] || { label: apt.status, class: 'bg-slate-50 text-slate-600' };
-                      return (
-                        <TableRow key={apt.id} data-testid={`appointment-row-${apt.id}`}>
-                          <TableCell className="text-sm">{formatDateTime(apt.starts_at)}</TableCell>
-                          <TableCell className="text-sm">{apt.doctor_name || '—'}</TableCell>
-                          <TableCell className="text-sm text-slate-600 max-w-xs truncate">{apt.reason || '—'}</TableCell>
-                          <TableCell className="text-center">
-                            <Badge variant="outline" className={`text-xs ${st.class}`}>{st.label}</Badge>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <div className="space-y-4">
+            {/* Filters and New consultation button */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={doctorFilter} onValueChange={setDoctorFilter}>
+                  <SelectTrigger className="w-44 text-sm" data-testid="filter-doctor">
+                    <SelectValue placeholder="Filtrar por médico" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los médicos</SelectItem>
+                    {doctors.map(d => (
+                      <SelectItem key={d.id} value={d.id}>{d.first_name} {d.last_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-36 text-sm" data-testid="filter-date-from" />
+                <span className="text-xs text-slate-400">a</span>
+                <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-36 text-sm" data-testid="filter-date-to" />
+                {(doctorFilter !== 'all' || dateFrom || dateTo) && (
+                  <Button variant="ghost" size="sm" onClick={() => { setDoctorFilter('all'); setDateFrom(''); setDateTo(''); }}>
+                    Limpiar
+                  </Button>
+                )}
+              </div>
+              <Button className="bg-teal-600 hover:bg-teal-700" size="sm" onClick={() => navigate(`/dashboard/pacientes/${id}/consulta`)} data-testid="new-consultation-btn">
+                <Plus className="w-4 h-4 mr-1.5" /> Nueva consulta
+              </Button>
+            </div>
+
+            {/* Medical Records List */}
+            {medicalRecords.length === 0 ? (
+              <Card className="border border-slate-200">
+                <CardContent className="p-12 text-center">
+                  <Stethoscope className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500 font-medium">No hay consultas registradas</p>
+                  <p className="text-xs text-slate-400 mt-1">Cree una nueva consulta médica para comenzar el historial</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {medicalRecords.map(record => {
+                  const isExpanded = expandedRecord === record.id;
+                  const primaryDx = (record.diagnoses || []).find(d => d.type === 'primary');
+                  const hasVitalAlert = record.blood_pressure_systolic > 180 || record.blood_pressure_systolic < 70 ||
+                    record.heart_rate > 120 || record.heart_rate < 50 ||
+                    record.temperature > 38.0 || record.oxygen_saturation < 92;
+
+                  return (
+                    <Card key={record.id} className={`border transition-all ${record.status === 'draft' ? 'border-amber-200 bg-amber-50/30' : 'border-slate-200'}`} data-testid={`record-card-${record.id}`}>
+                      <Collapsible open={isExpanded} onOpenChange={() => setExpandedRecord(isExpanded ? null : record.id)}>
+                        <CollapsibleTrigger asChild>
+                          <button className="w-full text-left p-4 hover:bg-slate-50/50 transition-colors">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-sm font-semibold text-slate-800">
+                                    {new Date(record.created_at).toLocaleDateString('es-GT', { day: '2-digit', month: 'long', year: 'numeric' })}
+                                  </span>
+                                  <Badge variant="outline" className={`text-xs ${record.status === 'finalized' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                                    {record.status === 'finalized' ? 'Finalizada' : 'Borrador'}
+                                  </Badge>
+                                  {hasVitalAlert && (
+                                    <Badge variant="outline" className="text-xs bg-red-50 text-red-600 border-red-200">
+                                      <AlertCircle className="w-3 h-3 mr-0.5" /> Signos vitales alterados
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500">Dr. {record.doctor_name}</p>
+                                {primaryDx && (
+                                  <p className="text-sm text-slate-700 mt-1">
+                                    <span className="font-mono text-xs text-teal-600 mr-1">{primaryDx.code}</span>
+                                    {primaryDx.description}
+                                  </p>
+                                )}
+                                {record.chief_complaint && (
+                                  <p className="text-xs text-slate-500 mt-0.5 truncate max-w-lg">Motivo: {record.chief_complaint}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {record.status === 'draft' && (
+                                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); navigate(`/dashboard/pacientes/${id}/consulta?record_id=${record.id}`); }}>
+                                    <Edit className="w-3 h-3 mr-1" /> Editar
+                                  </Button>
+                                )}
+                                {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                              </div>
+                            </div>
+                          </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <div className="px-4 pb-4 pt-1 border-t border-slate-100">
+                            <RecordDetail record={record} formatDate={formatDate} onAddAddendum={() => setShowAddendum(record.id)} />
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Appointments table */}
+            {appointments.length > 0 && (
+              <Card className="border border-slate-200 mt-4">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold text-slate-700">Historial de citas</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-slate-50/50">
+                        <TableHead className="text-xs font-semibold">Fecha</TableHead>
+                        <TableHead className="text-xs font-semibold">Doctor</TableHead>
+                        <TableHead className="text-xs font-semibold">Motivo</TableHead>
+                        <TableHead className="text-xs font-semibold text-center">Estado</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {appointments.map(apt => {
+                        const st = STATUS_MAP[apt.status] || { label: apt.status, class: 'bg-slate-50 text-slate-600' };
+                        return (
+                          <TableRow key={apt.id} data-testid={`appointment-row-${apt.id}`}>
+                            <TableCell className="text-sm">{formatDateTime(apt.starts_at)}</TableCell>
+                            <TableCell className="text-sm">{apt.doctor_name || '—'}</TableCell>
+                            <TableCell className="text-sm text-slate-600 max-w-xs truncate">{apt.reason || '—'}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="outline" className={`text-xs ${st.class}`}>{st.label}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Addendum Dialog */}
+          <Dialog open={!!showAddendum} onOpenChange={() => { setShowAddendum(null); setAddendumText(''); }}>
+            <DialogContent className="max-w-md" data-testid="addendum-dialog">
+              <DialogHeader>
+                <DialogTitle>Agregar addendum</DialogTitle>
+              </DialogHeader>
+              <div className="py-2">
+                <Textarea
+                  value={addendumText}
+                  onChange={e => setAddendumText(e.target.value)}
+                  placeholder="Escriba el addendum o nota adicional..."
+                  className="text-sm min-h-[100px]"
+                  data-testid="addendum-text"
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowAddendum(null)}>Cancelar</Button>
+                <Button className="bg-teal-600 hover:bg-teal-700" onClick={() => handleAddAddendum(showAddendum)} data-testid="save-addendum-btn">
+                  Guardar addendum
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* Prescriptions (placeholder) */}
