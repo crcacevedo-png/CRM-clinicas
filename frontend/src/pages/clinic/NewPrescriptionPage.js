@@ -161,6 +161,7 @@ export default function NewPrescriptionPage() {
   const headers = getAuthHeaders();
 
   const editId = searchParams.get('edit');
+  const duplicateId = searchParams.get('duplicate');
   const patientIdParam = searchParams.get('patient_id');
 
   const [patient, setPatient] = useState(null);
@@ -168,7 +169,7 @@ export default function NewPrescriptionPage() {
   const [generalInstructions, setGeneralInstructions] = useState('');
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(!!editId || !!patientIdParam);
+  const [loading, setLoading] = useState(!!editId || !!patientIdParam || !!duplicateId);
   const [showNewMed, setShowNewMed] = useState(false);
   const [newMedForm, setNewMedForm] = useState({ generic_name: '', brand_name: '', presentations: '', category: '' });
 
@@ -187,7 +188,25 @@ export default function NewPrescriptionPage() {
           })));
           if (p.items?.length === 0) setItems([emptyItem()]);
         }
-        if (patientIdParam && !editId) {
+        if (duplicateId) {
+          const res = await axios.get(`${API}/clinic/prescriptions/${duplicateId}`, { headers });
+          const p = res.data;
+          setPatient(p.patient);
+          setDiagnosis(p.diagnosis || '');
+          setGeneralInstructions(p.general_instructions || '');
+          setItems((p.items || []).map(it => ({
+            medication_name: it.medication_name || '',
+            presentation: it.presentation || '',
+            dosage: it.dosage || '',
+            frequency: it.frequency || '',
+            route: it.route || 'oral',
+            duration: it.duration || '',
+            instructions: it.instructions || '',
+            _presentations: [], _searchResults: [], _searchQuery: '', _showSearch: false,
+          })));
+          if (p.items?.length === 0) setItems([emptyItem()]);
+        }
+        if (patientIdParam && !editId && !duplicateId) {
           const res = await axios.get(`${API}/clinic/patients/${patientIdParam}`, { headers });
           setPatient(res.data.patient);
         }
@@ -197,8 +216,8 @@ export default function NewPrescriptionPage() {
         setLoading(false);
       }
     };
-    if (editId || patientIdParam) load();
-  }, [editId, patientIdParam]);
+    if (editId || patientIdParam || duplicateId) load();
+  }, [editId, patientIdParam, duplicateId]);
 
   const updateItem = useCallback((index, updates) => {
     setItems(prev => prev.map((it, i) => i === index ? { ...it, ...updates } : it));
@@ -320,7 +339,7 @@ export default function NewPrescriptionPage() {
       </Button>
 
       <h1 className="text-xl font-bold text-slate-900 mb-5" data-testid="form-title">
-        {editId ? 'Editar receta' : 'Nueva receta médica'}
+        {editId ? 'Editar receta' : duplicateId ? 'Duplicar receta' : 'Nueva receta médica'}
       </h1>
 
       {/* Patient & Diagnosis */}

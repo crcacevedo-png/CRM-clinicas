@@ -1,7 +1,7 @@
 # Panel de Super Administrador + CRM Clinicas
 
 ## Problem Statement Original
-Panel de Super Administrador para plataforma de CRM de clinicas medicas. El super admin crea clinicas y asigna administradores iniciales. Incluye: Agenda completa, Pacientes, Historia Clinica con plantillas, y Recetas Medicas con PDF.
+Panel de Super Administrador para plataforma de CRM de clinicas medicas. El super admin crea clinicas y asigna administradores iniciales. Incluye: Agenda completa, Pacientes, Historia Clinica con plantillas, y Recetas Medicas con PDF y recetas recurrentes.
 
 ## Arquitectura
 
@@ -28,19 +28,12 @@ Panel de Super Administrador para plataforma de CRM de clinicas medicas. El supe
 - [x] **MODULO DE PACIENTES COMPLETO** (17 Abril 2026)
 - [x] **MODULO DE HISTORIA CLINICA** (17 Abril 2026)
 - [x] **PLANTILLAS DE CONSULTA** (17 Abril 2026) - 10 plantillas globales
-- [x] **MODULO DE RECETAS MEDICAS CON PDF** (17 Abril 2026):
-  - [x] Lista paginada con filtro por estado (Borrador/Emitida)
-  - [x] Formulario con autocomplete de pacientes y medicamentos
-  - [x] Tabla dinamica de medicamentos (agregar/eliminar filas)
-  - [x] Campos: medicamento, presentacion, dosis, frecuencia, via, duracion, instrucciones
-  - [x] Dropdown de presentaciones desde tabla medications
-  - [x] Registrar nuevo medicamento desde el formulario
-  - [x] Guardar borrador / Emitir receta / Emitir y enviar (WhatsApp MOCKEADO)
-  - [x] Generacion de PDF con reportlab: header clinica, datos medico, Rx, medicamentos, firma
-  - [x] PDF almacenado en Supabase Storage
-  - [x] Descarga de PDF desde lista de recetas
-  - [x] Acceso desde perfil del paciente (tab Recetas)
-  - [x] Item "Recetas" en sidebar de navegacion clinica
+- [x] **MODULO DE RECETAS MEDICAS CON PDF** (17 Abril 2026)
+- [x] **RECETAS RECURRENTES** (17 Abril 2026):
+  - [x] Boton "Duplicar" en recetas emitidas en la lista
+  - [x] Pre-llena nueva receta con paciente, diagnostico, medicamentos y toda la info
+  - [x] Titulo "Duplicar receta" para distinguir del formulario nuevo
+  - [x] Permite modificar cualquier campo antes de emitir
 
 ## Pendientes
 - [ ] Importacion CSV para catalogos - P2

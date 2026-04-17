@@ -9,7 +9,7 @@ import { Badge } from '../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { toast } from 'sonner';
-import { Plus, Search, FileText, Download, ChevronLeft, ChevronRight, Send, Pill } from 'lucide-react';
+import { Plus, Search, FileText, Download, ChevronLeft, ChevronRight, Send, Pill, Copy } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -141,9 +141,14 @@ export default function PrescriptionsPage() {
                             </Button>
                           )}
                           {p.status === 'issued' && (
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => downloadPdf(p.id)} data-testid={`download-pdf-${p.id}`}>
-                              <Download className="w-3.5 h-3.5 text-teal-600" />
-                            </Button>
+                            <>
+                              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => navigate(`/dashboard/recetas/nueva?duplicate=${p.id}`)} data-testid={`duplicate-prescription-${p.id}`}>
+                                <Copy className="w-3 h-3 mr-1" /> Duplicar
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => downloadPdf(p.id)} data-testid={`download-pdf-${p.id}`}>
+                                <Download className="w-3.5 h-3.5 text-teal-600" />
+                              </Button>
+                            </>
                           )}
                         </div>
                       </TableCell>
