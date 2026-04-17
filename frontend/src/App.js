@@ -26,6 +26,8 @@ import PatientProfilePage from "./pages/clinic/PatientProfilePage";
 import MedicalRecordForm from "./pages/clinic/MedicalRecordForm";
 import PrescriptionsPage from "./pages/clinic/PrescriptionsPage";
 import NewPrescriptionPage from "./pages/clinic/NewPrescriptionPage";
+import LabOrdersPage from "./pages/clinic/LabOrdersPage";
+import NewLabOrderPage from "./pages/clinic/NewLabOrderPage";
 
 function App() {
   return (
@@ -69,6 +71,8 @@ function App() {
             <Route path="pacientes/:patientId/consulta" element={<MedicalRecordForm />} />
             <Route path="recetas" element={<PrescriptionsPage />} />
             <Route path="recetas/nueva" element={<NewPrescriptionPage />} />
+            <Route path="laboratorio" element={<LabOrdersPage />} />
+            <Route path="laboratorio/nueva" element={<NewLabOrderPage />} />
           </Route>
 
           {/* Default Redirect */}

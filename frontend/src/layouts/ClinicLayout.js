@@ -7,7 +7,8 @@ import {
   LogOut,
   ChevronRight,
   Building2,
-  Pill
+  Pill,
+  FlaskConical
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/dashboard/agenda', icon: CalendarDays, label: 'Agenda' },
   { to: '/dashboard/pacientes', icon: Users, label: 'Pacientes' },
   { to: '/dashboard/recetas', icon: Pill, label: 'Recetas' },
+  { to: '/dashboard/laboratorio', icon: FlaskConical, label: 'Laboratorio' },
 ];
 
 export default function ClinicLayout() {
