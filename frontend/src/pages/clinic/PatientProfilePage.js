@@ -281,6 +281,8 @@ export default function PatientProfilePage() {
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [savingEdit, setSavingEdit] = useState(false);
+  const [prescriptions, setPrescriptions] = useState([]);
+  const [labOrders, setLabOrders] = useState([]);
   const fetchPatient = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/clinic/patients/${id}`, { headers });
@@ -314,6 +316,23 @@ export default function PatientProfilePage() {
 
   useEffect(() => { fetchPatient(); }, [fetchPatient]);
   useEffect(() => { fetchMedicalRecords(); }, [fetchMedicalRecords]);
+
+  useEffect(() => {
+    const fetchPatientPrescriptions = async () => {
+      try {
+        const res = await axios.get(`${API}/clinic/prescriptions?patient_id=${id}&limit=50`, { headers });
+        setPrescriptions(res.data.prescriptions || []);
+      } catch {}
+    };
+    const fetchPatientLabOrders = async () => {
+      try {
+        const res = await axios.get(`${API}/clinic/lab-orders?patient_id=${id}&limit=50`, { headers });
+        setLabOrders(res.data.orders || []);
+      } catch {}
+    };
+    fetchPatientPrescriptions();
+    fetchPatientLabOrders();
+  }, [id]);
 
   const handleAddAddendum = async (recordId) => {
     if (!addendumText.trim()) return;
@@ -840,12 +859,60 @@ export default function PatientProfilePage() {
         {/* Prescriptions */}
         <TabsContent value="prescriptions">
           <Card className="border border-slate-200">
-            <CardContent className="p-8 text-center">
-              <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-500 font-medium mb-3">Recetas médicas del paciente</p>
-              <Button className="bg-teal-600 hover:bg-teal-700" size="sm" onClick={() => navigate(`/dashboard/recetas/nueva?patient_id=${id}`)} data-testid="new-prescription-from-profile">
-                <Plus className="w-4 h-4 mr-1.5" /> Nueva receta
-              </Button>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <Pill className="w-4 h-4 text-teal-500" /> Recetas médicas ({prescriptions.length})
+                </CardTitle>
+                <Button className="bg-teal-600 hover:bg-teal-700" size="sm" onClick={() => navigate(`/dashboard/recetas/nueva?patient_id=${id}`)} data-testid="new-prescription-from-profile">
+                  <Plus className="w-4 h-4 mr-1.5" /> Nueva receta
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {prescriptions.length === 0 ? (
+                <div className="text-center py-8">
+                  <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No hay recetas registradas</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50/50">
+                      <TableHead className="text-xs font-semibold">Fecha</TableHead>
+                      <TableHead className="text-xs font-semibold">Médico</TableHead>
+                      <TableHead className="text-xs font-semibold">Diagnóstico</TableHead>
+                      <TableHead className="text-xs font-semibold text-center">Medicamentos</TableHead>
+                      <TableHead className="text-xs font-semibold text-center">Estado</TableHead>
+                      <TableHead className="text-xs font-semibold text-right">PDF</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {prescriptions.map(p => (
+                      <TableRow key={p.id} data-testid={`profile-prescription-${p.id}`}>
+                        <TableCell className="text-sm">{formatDate(p.issued_at || p.created_at)}</TableCell>
+                        <TableCell className="text-sm">{p.doctor_name || '—'}</TableCell>
+                        <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{p.diagnosis || '—'}</TableCell>
+                        <TableCell className="text-center text-sm font-medium">{p.item_count ?? 0}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className={`text-xs ${p.status === 'issued' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {p.status === 'issued' ? 'Emitida' : 'Borrador'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {p.status === 'issued' && (
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={async () => {
+                              try { const r = await axios.get(`${API}/clinic/prescriptions/${p.id}/pdf-url`, { headers }); if (r.data.url) window.open(r.data.url, '_blank'); } catch { toast.error('Error al obtener PDF'); }
+                            }} data-testid={`profile-download-rx-${p.id}`}>
+                              <Download className="w-3.5 h-3.5 text-teal-600" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -853,12 +920,62 @@ export default function PatientProfilePage() {
         {/* Lab Orders */}
         <TabsContent value="labs">
           <Card className="border border-slate-200">
-            <CardContent className="p-8 text-center">
-              <FlaskConical className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-500 font-medium mb-3">Órdenes de laboratorio del paciente</p>
-              <Button className="bg-teal-600 hover:bg-teal-700" size="sm" onClick={() => navigate(`/dashboard/laboratorio/nueva?patient_id=${id}`)} data-testid="new-lab-order-from-profile">
-                <Plus className="w-4 h-4 mr-1.5" /> Nueva orden
-              </Button>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <FlaskConical className="w-4 h-4 text-teal-500" /> Órdenes de laboratorio ({labOrders.length})
+                </CardTitle>
+                <Button className="bg-teal-600 hover:bg-teal-700" size="sm" onClick={() => navigate(`/dashboard/laboratorio/nueva?patient_id=${id}`)} data-testid="new-lab-order-from-profile">
+                  <Plus className="w-4 h-4 mr-1.5" /> Nueva orden
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {labOrders.length === 0 ? (
+                <div className="text-center py-8">
+                  <FlaskConical className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No hay órdenes de laboratorio</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50/50">
+                      <TableHead className="text-xs font-semibold">Fecha</TableHead>
+                      <TableHead className="text-xs font-semibold">Médico</TableHead>
+                      <TableHead className="text-xs font-semibold">Estudios</TableHead>
+                      <TableHead className="text-xs font-semibold text-center">Prioridad</TableHead>
+                      <TableHead className="text-xs font-semibold text-center">Estado</TableHead>
+                      <TableHead className="text-xs font-semibold text-right">PDF</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {labOrders.map(o => (
+                      <TableRow key={o.id} data-testid={`profile-lab-order-${o.id}`}>
+                        <TableCell className="text-sm">{formatDate(o.ordered_at || o.created_at)}</TableCell>
+                        <TableCell className="text-sm">{o.doctor_name || '—'}</TableCell>
+                        <TableCell className="text-sm text-slate-600 max-w-[250px] truncate">{o.study_summary || `${o.item_count} estudio(s)`}</TableCell>
+                        <TableCell className="text-center">
+                          <span className={`text-xs ${o.priority === 'urgent' ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
+                            {o.priority === 'urgent' ? 'Urgente' : 'Rutina'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="outline" className={`text-xs ${o.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : o.status === 'cancelled' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {o.status === 'completed' ? 'Completada' : o.status === 'cancelled' ? 'Cancelada' : 'Pendiente'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={async () => {
+                            try { const r = await axios.get(`${API}/clinic/lab-orders/${o.id}/pdf-url`, { headers }); if (r.data.url) window.open(r.data.url, '_blank'); } catch { toast.error('Error al obtener PDF'); }
+                          }} data-testid={`profile-download-lab-${o.id}`}>
+                            <Download className="w-3.5 h-3.5 text-teal-600" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
