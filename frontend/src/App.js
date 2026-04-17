@@ -24,6 +24,8 @@ import AgendaPage from "./pages/clinic/AgendaPage";
 import PatientsPage from "./pages/clinic/PatientsPage";
 import PatientProfilePage from "./pages/clinic/PatientProfilePage";
 import MedicalRecordForm from "./pages/clinic/MedicalRecordForm";
+import PrescriptionsPage from "./pages/clinic/PrescriptionsPage";
+import NewPrescriptionPage from "./pages/clinic/NewPrescriptionPage";
 
 function App() {
   return (
@@ -65,6 +67,8 @@ function App() {
             <Route path="pacientes" element={<PatientsPage />} />
             <Route path="pacientes/:id" element={<PatientProfilePage />} />
             <Route path="pacientes/:patientId/consulta" element={<MedicalRecordForm />} />
+            <Route path="recetas" element={<PrescriptionsPage />} />
+            <Route path="recetas/nueva" element={<NewPrescriptionPage />} />
           </Route>
 
           {/* Default Redirect */}

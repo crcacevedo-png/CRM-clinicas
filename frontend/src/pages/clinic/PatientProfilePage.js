@@ -779,13 +779,15 @@ export default function PatientProfilePage() {
           </Dialog>
         </TabsContent>
 
-        {/* Prescriptions (placeholder) */}
+        {/* Prescriptions */}
         <TabsContent value="prescriptions">
           <Card className="border border-slate-200">
-            <CardContent className="p-12 text-center">
+            <CardContent className="p-8 text-center">
               <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-500 font-medium">Módulo de recetas médicas</p>
-              <p className="text-xs text-slate-400 mt-1">Próximamente disponible</p>
+              <p className="text-sm text-slate-500 font-medium mb-3">Recetas médicas del paciente</p>
+              <Button className="bg-teal-600 hover:bg-teal-700" size="sm" onClick={() => navigate(`/dashboard/recetas/nueva?patient_id=${id}`)} data-testid="new-prescription-from-profile">
+                <Plus className="w-4 h-4 mr-1.5" /> Nueva receta
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
