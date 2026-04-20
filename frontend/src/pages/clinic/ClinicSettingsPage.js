@@ -36,6 +36,7 @@ export default function ClinicSettingsPage() {
 
   const [activeTab, setActiveTab] = useState('clinic');
   const [loading, setLoading] = useState(true);
+  const [currentMemberId, setCurrentMemberId] = useState(null);
 
   // Clinic data
   const [clinic, setClinic] = useState({});
@@ -68,12 +69,14 @@ export default function ClinicSettingsPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [clinicRes, gcalRes] = await Promise.all([
+        const [clinicRes, gcalRes, configRes] = await Promise.all([
           axios.get(`${API}/clinic/settings`, { headers }),
           axios.get(`${API}/google-calendar/status`, { headers }).catch(() => ({ data: { connected: false } })),
+          axios.get(`${API}/clinic/config`, { headers }).catch(() => ({ data: {} })),
         ]);
         const c = clinicRes.data;
         setClinic(c);
+        if (configRes.data?.current_member?.id) setCurrentMemberId(configRes.data.current_member.id);
         setClinicForm({
           name: c.name || '', address: c.address || '', city: c.city || '', state: c.state || '',
           country: c.country || '', phone: c.phone || '', email: c.email || '', website: c.website || '',
@@ -383,15 +386,19 @@ export default function ClinicSettingsPage() {
                   <div><Label className="text-xs">Apellido</Label><Input className="mt-1 text-sm" value={editMemberForm.last_name} onChange={e => setEditMemberForm(p => ({ ...p, last_name: e.target.value }))} /></div>
                 </div>
                 <div><Label className="text-xs">Rol</Label>
-                  <Select value={editMemberForm.role} onValueChange={v => setEditMemberForm(p => ({ ...p, role: v }))}>
-                    <SelectTrigger className="mt-1 text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="clinic_admin">Administrador</SelectItem>
-                      <SelectItem value="doctor">Doctor</SelectItem>
-                      <SelectItem value="assistant">Asistente</SelectItem>
-                      <SelectItem value="receptionist">Recepcionista</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {editMember?.id === currentMemberId ? (
+                    <p className="text-xs text-amber-600 mt-1">No puedes cambiar tu propio rol</p>
+                  ) : (
+                    <Select value={editMemberForm.role} onValueChange={v => setEditMemberForm(p => ({ ...p, role: v }))}>
+                      <SelectTrigger className="mt-1 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="clinic_admin">Administrador</SelectItem>
+                        <SelectItem value="doctor">Doctor</SelectItem>
+                        <SelectItem value="assistant">Asistente</SelectItem>
+                        <SelectItem value="receptionist">Recepcionista</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
                 <div><Label className="text-xs">Especialidad</Label><Input className="mt-1 text-sm" value={editMemberForm.specialty} onChange={e => setEditMemberForm(p => ({ ...p, specialty: e.target.value }))} /></div>
                 <div><Label className="text-xs">No. Colegiado</Label><Input className="mt-1 text-sm" value={editMemberForm.license_number} onChange={e => setEditMemberForm(p => ({ ...p, license_number: e.target.value }))} data-testid="edit-license" /></div>
