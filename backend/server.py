@@ -2759,27 +2759,108 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         from datetime import datetime as dt, timedelta
-        today_start = dt.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        now = dt.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
+        month_start = today_start.replace(day=1)
 
+        # Today's appointments
         today_apts = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', today_start.isoformat()).lt('starts_at', today_end.isoformat()).neq('status', 'cancelled').order('starts_at').execute()
-
-        total_patients = sdb.table('patients').select('id', count='exact').eq('clinic_id', clinic_id).execute()
-        total_apts_month = sdb.table('appointments').select('id', count='exact').eq('clinic_id', clinic_id).gte('starts_at', today_start.replace(day=1).isoformat()).execute()
-
         apts = today_apts.data or []
-        # Enrich
+
+        pending_today = len([a for a in apts if a.get('status') in ('scheduled', 'confirmed')])
+
+        # Next upcoming appointment
+        next_apt = None
+        upcoming = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', now.isoformat()).neq('status', 'cancelled').order('starts_at').limit(1).execute()
+        if upcoming.data:
+            next_apt = upcoming.data[0]
+
+        # New patients this month
+        new_patients_month = sdb.table('patients').select('id', count='exact').eq('clinic_id', clinic_id).gte('created_at', month_start.isoformat()).execute()
+
+        # Prescriptions issued this month
+        rx_month = sdb.table('prescriptions').select('id', count='exact').eq('clinic_id', clinic_id).eq('status', 'issued').gte('issued_at', month_start.isoformat()).execute()
+
+        # Recent patients (last 5 with completed visits)
+        recent_apts = sdb.table('appointments').select('patient_id').eq('clinic_id', clinic_id).eq('status', 'completed').order('updated_at', desc=True).limit(10).execute()
+        seen_ids = []
+        recent_patients = []
+        for ra in (recent_apts.data or []):
+            pid = ra['patient_id']
+            if pid not in seen_ids and len(recent_patients) < 5:
+                seen_ids.append(pid)
+                p = sdb.table('patients').select('id,first_name,last_name,phone').eq('id', pid).maybe_single().execute()
+                if p.data:
+                    recent_patients.append(p.data)
+
+        # If not enough from completed, fill with recently created patients
+        if len(recent_patients) < 5:
+            extra = sdb.table('patients').select('id,first_name,last_name,phone').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
+            for p in (extra.data or []):
+                if p['id'] not in seen_ids and len(recent_patients) < 5:
+                    seen_ids.append(p['id'])
+                    recent_patients.append(p)
+
+        # Activity log (recent actions)
+        activity = []
+
+        # Recent appointments (created)
+        recent_created_apts = sdb.table('appointments').select('id,patient_id,created_at,starts_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
+        for a in (recent_created_apts.data or []):
+            p = sdb.table('patients').select('first_name,last_name').eq('id', a['patient_id']).maybe_single().execute()
+            pname = f"{p.data['first_name']} {p.data['last_name']}" if p.data else "Paciente"
+            activity.append({
+                "type": "appointment",
+                "message": f"Cita agendada para {pname}",
+                "timestamp": a['created_at'],
+            })
+
+        # Recent prescriptions
+        recent_rx = sdb.table('prescriptions').select('id,patient_id,created_at,status').eq('clinic_id', clinic_id).eq('status', 'issued').order('created_at', desc=True).limit(5).execute()
+        for r in (recent_rx.data or []):
+            p = sdb.table('patients').select('first_name,last_name').eq('id', r['patient_id']).maybe_single().execute()
+            pname = f"{p.data['first_name']} {p.data['last_name']}" if p.data else "Paciente"
+            activity.append({
+                "type": "prescription",
+                "message": f"Receta emitida para {pname}",
+                "timestamp": r['created_at'],
+            })
+
+        # Recent patients registered
+        recent_pats = sdb.table('patients').select('id,first_name,last_name,created_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
+        for p in (recent_pats.data or []):
+            activity.append({
+                "type": "patient",
+                "message": f"Paciente registrado: {p['first_name']} {p['last_name']}",
+                "timestamp": p['created_at'],
+            })
+
+        # Sort activity by timestamp desc, take top 10
+        activity.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        activity = activity[:10]
+
+        # Enrich today's appointments
         for apt in apts:
             p = sdb.table('patients').select('first_name,last_name').eq('id', apt["patient_id"]).maybe_single().execute()
             d = sdb.table('clinic_members').select('first_name,last_name').eq('id', apt["doctor_id"]).maybe_single().execute()
             apt["patient_name"] = f"{p.data['first_name']} {p.data['last_name']}" if p.data else ""
             apt["doctor_name"] = f"{d.data['first_name']} {d.data['last_name']}" if d.data else ""
 
+        # Enrich next appointment
+        if next_apt:
+            p = sdb.table('patients').select('first_name,last_name').eq('id', next_apt["patient_id"]).maybe_single().execute()
+            next_apt["patient_name"] = f"{p.data['first_name']} {p.data['last_name']}" if p.data else ""
+
         return {
             "today_appointments": apts,
             "today_count": len(apts),
-            "total_patients": total_patients.count or 0,
-            "month_appointments": total_apts_month.count or 0,
+            "pending_today": pending_today,
+            "new_patients_month": new_patients_month.count or 0,
+            "rx_issued_month": rx_month.count or 0,
+            "next_appointment": next_apt,
+            "recent_patients": recent_patients,
+            "activity": activity,
             "current_member": ctx["member"],
         }
     except Exception as e:

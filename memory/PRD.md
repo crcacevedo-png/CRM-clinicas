@@ -1,7 +1,7 @@
 # Panel de Super Administrador + CRM Clinicas
 
 ## Problem Statement Original
-CRM de clinicas medicas completo con Super Admin, Agenda, Pacientes, Historia Clinica, Recetas, Ordenes Lab, Google Calendar, y Panel de Configuracion.
+CRM de clinicas medicas completo con Super Admin, Agenda, Pacientes, Historia Clinica, Recetas, Ordenes Lab, Google Calendar, Configuracion, y Dashboard principal.
 
 ## Arquitectura
 - **Frontend**: React 19 + Tailwind CSS + Shadcn UI + React Hook Form + Zod
@@ -20,12 +20,15 @@ CRM de clinicas medicas completo con Super Admin, Agenda, Pacientes, Historia Cl
 - [x] **MODULO RECETAS** - Formulario, PDF, recetas recurrentes (duplicar)
 - [x] **MODULO ORDENES LAB** - Formulario, estudios por categoria, PDF
 - [x] **GOOGLE CALENDAR SYNC** - OAuth2, sync bidireccional
-- [x] **PANEL DE CONFIGURACION** (20 Abril 2026):
-  - [x] Tab Clinica: nombre, direccion, telefono, email, web, logo upload, timezone, horario, dias laborales, duracion citas
-  - [x] Tab Equipo: tabla miembros, invitar por email, editar rol/especialidad/colegiado, activar/desactivar
-  - [x] Tab Recetas: footer personalizado, validez en dias, vista previa
-  - [x] Tab Plan: plan actual (Professional), limites (usuarios, pacientes, almacenamiento), placeholder Stripe
-  - [x] Tab Integraciones: Google Calendar OAuth2
+- [x] **PANEL DE CONFIGURACION** - Clinica, Equipo, Recetas, Plan, Integraciones
+- [x] **DASHBOARD PRINCIPAL** (20 Abril 2026):
+  - [x] Saludo personalizado con nombre del medico y fecha
+  - [x] 4 cards de resumen: Citas hoy (pendientes), Pacientes nuevos mes, Recetas emitidas mes, Proxima cita
+  - [x] Agenda del dia: timeline compacta con estado visual, motivo, doctor, boton consulta rapida
+  - [x] Actividad reciente: log de ultimas acciones con filtro (Todo/Citas/Recetas/Pacientes)
+  - [x] Pacientes recientes: ultimos 5 con avatar y link al perfil
+  - [x] Acciones rapidas: 4 botones (Nueva cita, Nuevo paciente, Nueva receta, Orden lab)
+  - [x] Auto-refresh cada 60 segundos
 
 ## Pendientes
 - [ ] Importacion CSV para catalogos - P2
