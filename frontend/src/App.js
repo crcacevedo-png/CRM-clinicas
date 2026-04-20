@@ -28,6 +28,7 @@ import PrescriptionsPage from "./pages/clinic/PrescriptionsPage";
 import NewPrescriptionPage from "./pages/clinic/NewPrescriptionPage";
 import LabOrdersPage from "./pages/clinic/LabOrdersPage";
 import NewLabOrderPage from "./pages/clinic/NewLabOrderPage";
+import ClinicSettingsPage from "./pages/clinic/ClinicSettingsPage";
 
 function App() {
   return (
@@ -73,6 +74,7 @@ function App() {
             <Route path="recetas/nueva" element={<NewPrescriptionPage />} />
             <Route path="laboratorio" element={<LabOrdersPage />} />
             <Route path="laboratorio/nueva" element={<NewLabOrderPage />} />
+            <Route path="configuracion" element={<ClinicSettingsPage />} />
           </Route>
 
           {/* Default Redirect */}

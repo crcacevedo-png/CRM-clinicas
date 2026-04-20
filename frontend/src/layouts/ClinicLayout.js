@@ -8,7 +8,8 @@ import {
   ChevronRight,
   Building2,
   Pill,
-  FlaskConical
+  FlaskConical,
+  Settings
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -18,6 +19,7 @@ const navItems = [
   { to: '/dashboard/pacientes', icon: Users, label: 'Pacientes' },
   { to: '/dashboard/recetas', icon: Pill, label: 'Recetas' },
   { to: '/dashboard/laboratorio', icon: FlaskConical, label: 'Laboratorio' },
+  { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
 export default function ClinicLayout() {
