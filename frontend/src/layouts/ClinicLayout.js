@@ -1,25 +1,14 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useFeatures } from '../context/FeatureContext';
+import { useBranch } from '../context/BranchContext';
 import { 
-  LayoutDashboard, 
-  CalendarDays, 
-  Users, 
-  LogOut,
-  ChevronRight,
-  Building2,
-  Pill,
-  FlaskConical,
-  Settings,
-  Package,
-  ShoppingCart,
-  Receipt,
-  CreditCard,
-  BarChart3,
-  GitBranch,
-  Percent
+  LayoutDashboard, CalendarDays, Users, LogOut, ChevronRight,
+  Pill, FlaskConical, Settings, Package, ShoppingCart, Receipt,
+  CreditCard, BarChart3, GitBranch, MapPin
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
 const allNavItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -32,12 +21,14 @@ const allNavItems = [
   { to: '/dashboard/cuentas', icon: Receipt, label: 'Cuentas por cobrar', feature: 'accounts_receivable' },
   { to: '/dashboard/gastos', icon: CreditCard, label: 'Gastos', feature: 'expenses' },
   { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports' },
+  { to: '/dashboard/sucursales', icon: GitBranch, label: 'Sucursales', feature: 'multi_branch' },
   { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
 export default function ClinicLayout() {
   const { user, logout } = useAuth();
   const { hasFeature } = useFeatures();
+  const { branches, activeBranch, setActiveBranch, hasBranches } = useBranch();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -54,6 +45,27 @@ export default function ClinicLayout() {
           <h1 className="text-lg font-bold text-white">ClinicCRM</h1>
           <p className="text-xs text-teal-400">Panel Clínico</p>
         </div>
+
+        {hasBranches && (
+          <div className="px-3 pt-3 pb-1">
+            <Select value={activeBranch?.id || ''} onValueChange={id => {
+              const b = branches.find(br => br.id === id);
+              if (b) setActiveBranch(b);
+            }}>
+              <SelectTrigger className="bg-white/10 border-white/20 text-white text-xs h-8" data-testid="branch-selector">
+                <MapPin className="w-3 h-3 mr-1 text-teal-400 shrink-0" />
+                <SelectValue placeholder="Sucursal" />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.filter(b => b.is_active).map(b => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name} {b.is_main ? '(Principal)' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
           {navItems.map((item) => (

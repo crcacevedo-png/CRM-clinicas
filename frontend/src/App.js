@@ -2,6 +2,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { FeatureProvider } from "./context/FeatureContext";
+import { BranchProvider } from "./context/BranchContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Toaster } from "./components/ui/sonner";
 
@@ -31,11 +32,13 @@ import NewPrescriptionPage from "./pages/clinic/NewPrescriptionPage";
 import LabOrdersPage from "./pages/clinic/LabOrdersPage";
 import NewLabOrderPage from "./pages/clinic/NewLabOrderPage";
 import ClinicSettingsPage from "./pages/clinic/ClinicSettingsPage";
+import BranchesPage from "./pages/clinic/BranchesPage";
 
 function App() {
   return (
     <AuthProvider>
       <FeatureProvider>
+      <BranchProvider>
       <BrowserRouter>
         <Routes>
           {/* Public Routes */}
@@ -79,6 +82,7 @@ function App() {
             <Route path="laboratorio" element={<LabOrdersPage />} />
             <Route path="laboratorio/nueva" element={<NewLabOrderPage />} />
             <Route path="configuracion" element={<ClinicSettingsPage />} />
+            <Route path="sucursales" element={<BranchesPage />} />
           </Route>
 
           {/* Default Redirect */}
@@ -87,9 +91,11 @@ function App() {
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" />
+      </BranchProvider>
       </FeatureProvider>
     </AuthProvider>
   );
 }
 
 export default App;
+
