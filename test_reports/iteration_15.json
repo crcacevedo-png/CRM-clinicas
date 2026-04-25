@@ -1,0 +1,101 @@
+{
+  "summary": "Expenses module — Backend: 15/15 pytest pass (100%) covering all 9 expense endpoints (dashboard, list+filters, create with total math, 3 enum validations, missing-description 400, update with total recompute, delete cleanup, by-category sorted desc + Spanish labels, by-supplier with supplier_name resolution, attachment upload PNG to Supabase Storage, attachment-url signed). Frontend: full E2E via Playwright — login → /dashboard/gastos renders, sidebar entry 'Gastos' navigates correctly with feature gate 'expenses'. All 4 dashboard cards render with correct values from backend (Gastos del mes Q3136 / Mes anterior Q0 / Top categoría Alquiler Q3136 / Pendientes Q0). All 3 tabs switch and load. Form dialog (ExpenseFormDialog) opens with category dropdown showing all 10 Spanish-labeled options; supplier autocomplete from /clinic/inventory/suppliers works (typed 'TEST' → resolved to TEST_Supplier_1777156034); created a Suministros expense (amount 500 + IVA 60 = total Q560 visible live) and saw 'Gasto registrado' toast then row appeared in list with category 'Suministros', supplier name link 'TEST_Supplier_1777156034', total Q560, status 'Pagado'. Por categoría tab shows progress-bar visualization (Alquiler 100% Q3136 in default Apr range). Por proveedor tab shows TEST_Supplier_1777156034 1 transacción Q560.00 100% with Total: Q560.00 (after expanding date range to full year). Created E2E expense was cleaned up post-test.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/clinic/expenses/by-supplier",
+        "issue": "N+1 query: per supplier_id does an extra SELECT on suppliers table (line 4877). For clinics with many supplier-tagged expenses this scales poorly. Recommend a single PostgREST embed (e.g., select('total,supplier_id,suppliers(name)')) or RPC view."
+      },
+      {
+        "endpoint": "GET /api/clinic/expenses/dashboard",
+        "issue": "Recomputes everything in Python by fetching ALL expenses for the clinic on every dashboard hit (no date prefilter on the SELECT). Will become slow as expense table grows; recommend pre-filtering in SQL with month boundaries and grouping at DB layer."
+      },
+      {
+        "endpoint": "GET /api/clinic/expenses/by-category",
+        "issue": "label list iteration line 4852 has O(N*K) inner loop counting per category (sum(1 for x in rows if ...)). Trivial for current volumes but should aggregate in single pass."
+      },
+      {
+        "endpoint": "POST /api/clinic/expenses/{id}/attachment",
+        "issue": "No file-size cap on UploadFile.read(). Malicious or accidental upload of huge files would buffer into memory before storage. Recommend MAX_BYTES check (e.g., 10MB) before uploading to Supabase."
+      },
+      {
+        "endpoint": "PUT /api/clinic/expenses/{expense_id}",
+        "issue": "Does not validate payment_status enum on update (only payment_method + category are validated). Caller could PUT payment_status='BOGUS' and corrupt the row."
+      },
+      {
+        "endpoint": "DELETE /api/clinic/expenses/{expense_id}",
+        "issue": "Hard-deletes row but does NOT delete the attachment file from Supabase Storage. Orphan files accumulate in {clinic_id}/expenses/{expense_id}/."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "ExpensesPage — list filters + CategoryReportTab + SupplierReportTab",
+        "issues": [
+          "Date filter inputs use native <input type='date'> (mm/dd/yyyy) instead of shadcn Calendar popover — recurring carryover across modules.",
+          "CategoryReportTab defaults to current-month range (line ~390s) so newly-created expenses with custom past dates (e.g., 2026-01-15 while today is April) won't appear until user widens date range. Could be confusing; consider defaulting to a wider range or a quick date-range chooser (Mes/Trimestre/Año).",
+          "Form dialog: 'Total' field is read-only computed but visually styled as a regular form cell — could be slightly more prominent (e.g., a card or contrasting bg) to emphasize live recompute."
+        ]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: GET /clinic/expenses/dashboard → returns this_month/prev_month/delta_pct/top_category{key,label,amount}/pending{count,amount}",
+    "Backend: GET /clinic/expenses → list with pagination + category filter (verified eq returned only category=rent rows)",
+    "Backend: POST /clinic/expenses category='BOGUS' → 400; payment_method='BOGUS' → 400; payment_status='BOGUS' → 400; missing description → 400",
+    "Backend: POST /clinic/expenses with amount 1000 + tax 120 → total auto-computed = 1120 (verified via /list returning amount/tax/total fields)",
+    "Backend: PUT /clinic/expenses/{id} amount→2000 tax→240 → total recomputed to 2240 (verified via subsequent GET)",
+    "Backend: POST /clinic/expenses/{id}/attachment with PNG → returns {url, path} and persists attachment_url",
+    "Backend: GET /clinic/expenses/{id}/attachment-url → returns fresh signed URL",
+    "Backend: DELETE /clinic/expenses/{id} → 200 (clinic_admin role)",
+    "Backend: GET /clinic/expenses/by-category → list sorted desc by amount, each item has category/label(es)/amount/count plus grand 'total'",
+    "Backend: GET /clinic/expenses/by-supplier → resolves supplier_name from suppliers table; only includes supplier-tagged rows",
+    "Frontend: /dashboard/gastos renders with feature gate 'expenses' enabled; sidebar 'Gastos' active",
+    "Frontend: 4 dashboard cards (Gastos del mes Q3136, Mes anterior Q0, Top categoría Alquiler Q3136, Pendientes Q0)",
+    "Frontend: Form dialog opens via 'Nuevo gasto' btn with all fields (Fecha, Sucursal, Categoría 10 opciones es, Subcategoría, Proveedor autocomplete, Descripción, Amount, IVA, Total live, Método pago, Estado, Tipo doc, Número, Adjuntar archivo, Notas)",
+    "Frontend: Supplier autocomplete typing 'TEST' shows TEST_Supplier_1777156034 → click selects supplier_id; saving creates expense visible in list with supplier_name resolved",
+    "Frontend: Save creates expense, dialog closes, 'Gasto registrado' toast appears, row appears in table",
+    "Frontend: Por categoría tab — distribution bar with label 'Alquiler' Q3136 (100.0% · 1) renders",
+    "Frontend: Por proveedor tab — table row TEST_Supplier_1777156034 / 1 transacción / Q560.00 / 100.0% with footer Total: Q560.00"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_expenses.py",
+    "/app/test_reports/pytest/pytest_expenses.xml"
+  ],
+  "action_items": [
+    "RECOMMEND (LOW): add payment_status enum validation in PUT /clinic/expenses/{id} (currently can be set to any string).",
+    "RECOMMEND (LOW): cap upload file size in /attachment endpoint (e.g., 10MB) before reading into memory.",
+    "RECOMMEND (LOW): on DELETE /clinic/expenses/{id}, also remove storage file at {clinic_id}/expenses/{id}/ to avoid orphan files in the patient-files bucket.",
+    "RECOMMEND (LOW): replace native <input type='date'> in filter rows + form Fecha field with shadcn Calendar popover (consistent with sales/AR module recommendations).",
+    "RECOMMEND (LOW): collapse N+1 in /by-supplier into a single PostgREST embed (suppliers(name)) for performance.",
+    "RECOMMEND (LOW): widen default date range on Por categoría tab or add 'Mes/Trimestre/Año' presets — currently defaults to current month and hides cross-month data.",
+    "OPTIONAL: refactor server.py expenses endpoints (lines 4799-5064, 265 lines) into /app/backend/routers/expenses.py — server.py is now 5086 lines."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 5086 lines — every CRM module added monotonically. Strongly recommend extracting routers per resource (sales, ar, expenses, inventory, agenda).",
+    "expenses_dashboard fetches the entire expenses table for a clinic on every hit — for clinics with thousands of expense rows this is slow. Use SQL date filtering and group_by at DB layer.",
+    "PUT /expenses missing payment_status enum validation despite POST having it — inconsistency creates a path to corrupt enum values.",
+    "Hard-delete on /expenses with no soft-delete or audit log + orphans Supabase Storage files. For accounting data this is risky; consider soft-delete (is_deleted flag) or archived_at timestamp.",
+    "EXPENSE_CATEGORIES list and EXPENSE_CATEGORY_LABELS mapping live in server.py and CATEGORIES list lives in ExpensesPage.js — duplicated mapping. Consider exposing via /api/clinic/expenses/categories endpoint to keep frontend/backend in sync."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_expenses.py (NEW — 15 pytest cases covering all 9 expenses endpoints)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 passed)",
+    "frontend": "100% (E2E: nav + dashboard cards + create + supplier autocomplete + total math + list visibility + Por categoría + Por proveedor all working)"
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!"
+  },
+  "seed_data_creation": "Pytest TestExpensesFullFlow created+modified+deleted one TEST_supplies expense; cleanup OK. Frontend Playwright created one TEST_E2E supplies expense Q500+Q60=Q560 with TEST_Supplier_1777156034 and PNG receipt path; cleaned up via API DELETE post-run. State after this iteration is identical to pre-iteration: 1 expense (Renta mes abril Q3136 Alquiler, factura F-001) + 1 supplier (TEST_Supplier_1777156034). No leftover test data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Expenses module fully green. test_expenses.py is the regression source of truth (15 tests). All 9 endpoints (dashboard, list, create, update, delete, by-category, by-supplier, attachment upload, attachment signed URL) plus enum validations + total recompute + Supabase Storage upload all verified. Frontend E2E (3 tabs + form + autocomplete + file input + dashboard cards) all working. The 6 minor backend recommendations (PUT payment_status validation, file-size cap, storage cleanup on delete, N+1, dashboard prefilter, soft-delete) are NOT blockers and can ship as backlog. The recurring 'native date input vs shadcn Calendar' design issue persists (same as iterations 12-14).",
+  "rca_of_the_issue": "No bugs. All required scenarios from review request validated end-to-end: total = amount + tax_amount auto-computed on create AND on update; enum 400s for category/payment_method/payment_status; clinic_admin can DELETE; attachment upload to Supabase Storage path {clinic_id}/expenses/{expense_id}/receipt.{ext} works for PNG; signed URL returned; by-category sorted desc with Spanish labels and progress bars; by-supplier resolves supplier_name; supplier autocomplete pulls from /api/clinic/inventory/suppliers; create-then-attach flow uses returned id from POST.",
+  "mocked_apis": {"has_mocked_apis": false}
+}
