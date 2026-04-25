@@ -1,0 +1,92 @@
+{
+  "summary": "Inventory module end-to-end testing. Backend: 22/24 pytest cases passed (91.7%). Frontend: All 5 tabs (Productos, Stock, Compras, Movimientos, Proveedores) render correctly with real data, branch selector visible, sidebar 'Inventario' item works, route /dashboard/inventario loads OK, feature flag 'inventory' is active. TWO backend bugs found: (1) POST /api/clinic/inventory/adjust returns 500 when no inventory_stock row pre-exists for the (product, branch) pair; (2) POST /api/clinic/inventory/purchase-orders with status='received' DOUBLES the stock (qty=7 produced quantity=14) — strongly suggests an existing Postgres trigger on inventory_movements that already updates inventory_stock, while process_po_receive also updates it manually.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/clinic/inventory/adjust",
+        "issue": "Returns 500 'NoneType object has no attribute data' when adjusting stock for a (product_id, branch_id) pair that has no existing inventory_stock row. The line `existing = sdb.table('inventory_stock').select(...).maybe_single().execute()` returns None (not a response with data=None) in current supabase-py version, so `existing.data` raises AttributeError. server.py:3324. Same vulnerable pattern exists in process_po_receive() server.py:3488 and in product list server.py:3194 / stock list server.py:3265 / movement list server.py:3359.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/clinic/inventory/purchase-orders (status=received)",
+        "issue": "Stock is incremented TWICE when a PO is created with status='received'. Test created a fresh product (stock=0), submitted PO with qty=7, expected stock=7 but got stock=14. Most likely a pre-existing Postgres trigger on inventory_movements that auto-updates inventory_stock, combined with the manual update in process_po_receive() (server.py:3488-3492) — both run, double-counting. Same risk applies to /adjust if the trigger exists for movement_type='adjustment'.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Inventario page (all tabs)",
+        "issues": [
+          "No data-testid attributes on interactive elements (tabs, Nuevo producto, Nueva orden, Editar, Ajustar, filters). Hard to write robust E2E tests; recommend adding e.g. data-testid='inv-tab-productos', 'inv-new-product-btn', 'inv-product-row-{id}', 'inv-adjust-btn-{id}', etc."
+        ]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: GET /api/clinic/features includes 'inventory' - PASSED",
+    "Backend: GET /api/clinic/inventory/categories returns array - PASSED",
+    "Backend: POST /api/clinic/inventory/categories creates and persists - PASSED",
+    "Backend: GET /api/clinic/inventory/products paginated - PASSED",
+    "Backend: POST /api/clinic/inventory/products creates - PASSED",
+    "Backend: PUT /api/clinic/inventory/products/{id} updates persisted - PASSED",
+    "Backend: GET /api/clinic/inventory/products/search - PASSED",
+    "Backend: GET /api/clinic/inventory/stock returns list - PASSED",
+    "Backend: GET /api/clinic/inventory/stock?branch_id filters - PASSED",
+    "Backend: GET /api/clinic/inventory/alerts returns {low_stock:[],expiring:[]} - PASSED",
+    "Backend: GET /api/clinic/inventory/movements paginated - PASSED",
+    "Backend: GET /api/clinic/inventory/movements?movement_type=adjustment filters - PASSED",
+    "Backend: GET /api/clinic/inventory/movements?branch_id filters - PASSED",
+    "Backend: GET/POST/PUT /api/clinic/inventory/suppliers full CRUD - PASSED",
+    "Backend: POST /api/clinic/inventory/purchase-orders status=pending does NOT change stock - PASSED",
+    "Backend: GET /api/clinic/inventory/purchase-orders list + status=received filter - PASSED",
+    "Backend: Inventory endpoints require auth (401/403) - PASSED",
+    "Frontend: Sidebar Inventario item visible (feature flag) - PASSED",
+    "Frontend: /dashboard/inventario loads page with title 'Inventario' - PASSED",
+    "Frontend: All 5 tabs (Productos, Stock, Compras, Movimientos, Proveedores) visible and clickable - PASSED",
+    "Frontend: Productos tab shows table with Nuevo producto / +Categoria buttons and product rows - PASSED",
+    "Frontend: Stock tab shows Disponible/Mínimo/Estado columns with Ajustar action - PASSED",
+    "Frontend: Compras tab shows orders TEST-PO-RECV (Recibida, Q470.40) and TEST-PO-PEND (Pendiente, Q560) - PASSED",
+    "Frontend: Movimientos tab shows +7 Compra movement created by PO - PASSED",
+    "Frontend: Proveedores tab shows TEST_Supplier with updated phone (5555-9999) and contact (Jane Updated) - PASSED",
+    "Frontend: Branch selector visible at sidebar top ('Sede Central (Principal)') - PASSED"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_inventory.py",
+    "/app/test_reports/pytest/pytest_inventory.xml"
+  ],
+  "action_items": [
+    "FIX (HIGH): adjust_stock crashes when no prior inventory_stock row exists. Wrap maybe_single result safely: `existing = result if (result := sdb.table('inventory_stock')...maybe_single().execute()) and getattr(result,'data',None) else None` — or change to `.execute()` on a non-single query and check len(result.data). Same pattern needs fixing in process_po_receive (server.py:3488), list_products:3194, list_stock:3265, list_movements:3359 — any maybe_single() call that derefs `.data` without None-guard.",
+    "FIX (CRITICAL): PO with status='received' doubles inventory_stock. Investigate Supabase database for a trigger on inventory_movements that updates inventory_stock automatically. Either (a) remove the manual update in process_po_receive (lines 3488-3492) and rely on the trigger, or (b) drop the DB trigger if app handles it. Same risk: adjust_stock inserts a movement and updates stock — verify it's not double-counting in cases where stock row already exists.",
+    "RECOMMEND: Add data-testid attributes to InventoryPage interactive elements for robust E2E testing.",
+    "RECOMMEND: server.py is now 3813 lines — split inventory routes into /app/backend/routers/inventory.py (file >700 lines threshold)."
+  ],
+  "critical_code_review_comments": [
+    "server.py exceeds 3800 lines — must be split into routers (inventory, agenda, prescriptions, lab, etc.).",
+    "All maybe_single().execute() usages must defensively check the entire result, not just .data — supabase-py can return None when no rows match.",
+    "process_po_receive performs N+1 supabase queries inside a Python for-loop. For larger orders, batch inserts would be faster.",
+    "Movement creation is not transactional with stock update — if the second update fails, the movement is orphaned and stock is inconsistent.",
+    "Missing data-testid attributes throughout InventoryPage components."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_inventory.py (new)"
+  ],
+  "success_rate": {
+    "backend": "91.7% (22/24 tests passed)",
+    "frontend": "100% (all 5 tabs render, navigation works, real data shown)"
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!",
+    "clinic_id": "c0321ed8-97da-47a1-b601-3b94bffabdd7"
+  },
+  "seed_data_creation": "Created TEST_-prefixed product, supplier, category, two purchase orders (pending + received) and one inventory movement. Not cleaned up — useful for next agent's regression visualization. Stock=14 in Sede Central for TEST_Producto reflects the doubling bug.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After main agent fixes: (1) adjust_stock NoneType issue, (2) PO double-stock issue — re-run /app/backend/tests/test_inventory.py. Specifically verify TestStock::test_adjust_stock and TestPurchaseOrders::test_create_received_po_increases_stock pass. To reproduce double-stock: create a new product, no existing stock; create PO with status='received' qty=N → stock should equal N, not 2N. Currently it equals 2N. The bug is reproducible in UI: visit /dashboard/inventario → Stock tab → see TEST_Producto qty=14 from a PO of qty=7.",
+  "rca_of_the_issue": "Bug 1 (adjust_stock 500): supabase-py's `.maybe_single().execute()` returns None (not a wrapper with .data=None) when zero rows match, so `existing.data` raises AttributeError, caught by the broad except → 500. Bug 2 (PO double): process_po_receive both inserts an inventory_movements row AND directly updates inventory_stock. The doubled increment indicates a Postgres trigger (likely defined in a Supabase migration outside /app) is also incrementing inventory_stock on movement insert. Reproduction: clean product, POST /clinic/inventory/purchase-orders with status='received', items=[{qty:7}] → stock becomes 14. Mitigation: pick a single source of truth for stock updates — either remove the application-level update or drop the trigger. Until then, status='received' PO yields incorrect stock and any future stock-out movement (sale, dispense) will likely also double-decrement.",
+  "mocked_apis": {"has_mocked_apis": false}
+}
