@@ -1,0 +1,89 @@
+{
+  "summary": "Accounts Receivable module — Backend: 16/16 pytest pass (100%) covering all 7 AR endpoints + auto-AR-creation on sale with debt + payment_method enum 400 validation + plan validation 400. Frontend: smoke E2E via Playwright — sidebar 'Cuentas por cobrar' nav works, /dashboard/cuentas renders with feature-gate accounts_receivable, all 3 tabs (Cuentas/Cuotas/Antigüedad) load and render their data correctly. Cuotas tab shows 4 pending installments with patient names + days_to_due + traffic light. Antigüedad shows all 5 buckets with correct totals (Al día Q200=24.4%, d31_60 Q620=75.6%, total Q820 across 2 cuentas activas). End-to-end auto-AR-creation verified: created sale Q500 with Q200 cash → AR row auto-created with original_amount=500, paid_amount=200, balance=300, status=pending, due_date=+30d. Then registered Q100 abono → balance=200, status=partial, sale.amount_due synced to 200, sale.amount_paid=300, sale.payment_status=partial. Then created plan 3 monthly cuotas → installments_list returns 3 rows summing exactly to balance Q200, all status=pending. Listed via /installments — 3 new + existing 4 returned with patient_name + days_to_due.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/clinic/accounts-receivable/{id}",
+        "issue": "On exception returns generic 500 with detail='Error' (line 4683) — same pattern across all AR endpoints. Loses root cause for debugging in prod. Recommend logging + returning structured error message."
+      },
+      {
+        "endpoint": "GET /api/clinic/accounts-receivable/installments",
+        "issue": "N+1 query pattern: for each installment fetches AR + patient row separately. For clinics with many installments this is slow. Recommend a single Postgres view/RPC with join."
+      },
+      {
+        "endpoint": "POST /api/clinic/accounts-receivable/{id}/payment-plan",
+        "issue": "Frequency='monthly' uses fixed timedelta(days=30) instead of true calendar months — drifts ~5d/year. Also no upper bound on installments (could request 1000+ and DDOS DB)."
+      },
+      {
+        "endpoint": "POST /api/clinic/accounts-receivable/{id}/payment-plan",
+        "issue": "Non-transactional: deletes existing installments (line 4762) BEFORE inserting new ones in a loop — if any insert fails mid-loop, AR is left with partial plan and no rollback. Wrap in a Postgres function or insert all in one batch."
+      },
+      {
+        "endpoint": "POST /api/clinic/accounts-receivable/{id}/payment",
+        "issue": "Non-atomic with sale sync: payment row + AR update + sale update are 3 separate calls; if 2nd or 3rd fails the AR could show paid while sale still shows due. Wrap in a Postgres function."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "AccountsReceivablePage — CreatePlanDialog",
+        "issues": ["First-due-date input uses native HTML <input type='date'> instead of shadcn Calendar popover (recurring carryover from prior iterations)."]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: POST /api/clinic/sales with debt → auto-creates accounts_receivable row with correct schema (original_amount, paid_amount, balance, due_date +30d, status='pending')",
+    "Backend: GET /dashboard returns total_balance, patients_with_debt, overdue{count,amount}, upcoming_30d{count,amount}",
+    "Backend: GET /aging returns all 5 buckets (current/d1_30/d31_60/d61_90/d90_plus) with count+amount",
+    "Backend: GET / list with status=pending, only_overdue=true, q=search filters all return 200",
+    "Backend: GET /{id} returns AR with sale, sale.items, initial_payments, ar_payments, installments_list",
+    "Backend: POST /{id}/payment payment_method='card' → 400 (rejected)",
+    "Backend: POST /{id}/payment payment_method='BOGUS' → 400",
+    "Backend: POST /{id}/payment amount=0 → 400",
+    "Backend: POST /{id}/payment Q100 cash → balance drops 300→200, sale.amount_due syncs 300→200, sale.amount_paid 200→300, status partial",
+    "Backend: POST /{id}/payment-plan installments=1 → 400, missing first_due_date → 400",
+    "Backend: POST /{id}/payment-plan installments=3 monthly → 200, creates 3 rows summing to balance, all status=pending",
+    "Backend: GET /installments returns plan installments with patient_name + days_to_due",
+    "Frontend: Sidebar 'Cuentas por cobrar' nav → /dashboard/cuentas (feature flag accounts_receivable enabled)",
+    "Frontend: AR page renders 4 dashboard cards (Total por cobrar, Pacientes con deuda, Vencidas, Vencen 30 días)",
+    "Frontend: Cuotas tab renders pending installments table with patient_name, cuota#, monto, días traffic light, estado",
+    "Frontend: Antigüedad tab renders all 5 colored bucket cards + total card (Q820 across 2 cuentas, Pedro Q620 correctly in d31_60 = 36d overdue, Maria Q200 in Al día)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_accounts_receivable.py",
+    "/app/test_reports/pytest/pytest_ar.xml"
+  ],
+  "action_items": [
+    "RECOMMEND (LOW): wrap register_ar_payment + sale sync in a Postgres RPC for atomicity (3 sequential writes risk inconsistency on partial failure).",
+    "RECOMMEND (LOW): wrap create_payment_plan (delete-then-insert-loop) in a Postgres RPC; cap installments<=60 to prevent abuse.",
+    "RECOMMEND (LOW): replace fixed timedelta(days=30) with relativedelta(months=1) for true monthly frequency.",
+    "RECOMMEND (LOW): replace native <input type='date'> in CreatePlanDialog (line 375 AccountsReceivablePage.js) with shadcn Calendar popover for consistency with the rest of the app.",
+    "RECOMMEND (LOW): collapse N+1 query in /installments by using a single SQL view with patients join (or PostgREST embed)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 4804 lines — AR endpoints (lines 4521-4782) should be extracted to /app/backend/routers/accounts_receivable.py.",
+    "All AR endpoints catch broad Exception and return HTTPException(500, 'Error') — loses debugging info; at minimum include str(e) in non-prod or log a request_id.",
+    "register_ar_payment + create_payment_plan are not idempotent and have no transaction wrapper — Supabase Python client doesn't support transactions natively; consider Postgres RPC functions.",
+    "list_pending_installments has N+1 (per-installment AR + patient lookup) — same pattern as list_sales noted in iteration_13."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_accounts_receivable.py (NEW — 16 pytest cases covering all AR endpoints + auto-AR creation)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 passed)",
+    "frontend": "100% smoke (sidebar nav + 3 tabs render with correct data; integration with backend confirmed via aging totals matching backend computation)"
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!"
+  },
+  "seed_data_creation": "Created during pytest run: 1 sale (Q500, Q200 cash, Q300 due) which auto-created an AR for Maria Garcia. Then partial payment Q100 → balance Q200. Then 3-installment monthly plan starting +7d. After test run AR has Q200 balance + 3 cuotas Q66.67 each (visible as 'Maria Garcia' rows in Cuotas tab + 'Al día' Q200 bucket in Antigüedad). Pre-existing 'TEST_Pedro TEST_Martinez' Q620 vencida 36d (d31_60 bucket) plus its 3-cuota plan still present. Total system AR: Q820 across 2 patients with 4+3 installments outstanding. Safe to leave for next iteration.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Accounts Receivable module is fully green. test_accounts_receivable.py is the regression source of truth (16 tests). Every AR endpoint + auto-creation path + payment+sale-sync + plan creation tested and validated. The 4 minor backend recommendations (atomicity, calendar months, N+1, error messages) are NOT blockers — module ships as-is. Frontend renders all 3 tabs correctly with live backend data; only minor UX nit is the native date input in CreatePlanDialog.",
+  "rca_of_the_issue": "No bugs found. Both tested fixes from this cycle confirmed working: (1) create_sale → AR auto-insert uses correct schema {original_amount, paid_amount, balance, due_date=+30d, status='pending'} and the AR is queryable immediately after sale creation. (2) payment_method enum validation — both 'card' and 'BOGUS' cleanly return 400 from /accounts-receivable/{id}/payment without crashing or creating orphan payment rows. (3) plan validations — installments<2 and missing first_due_date both return 400.",
+  "mocked_apis": {"has_mocked_apis": false}
+}
