@@ -5120,6 +5120,8 @@ async def create_commission_setting(data: dict, ctx=Depends(require_clinic_membe
         raise HTTPException(status_code=400, detail="calculation_type inválido")
     if calc == 'percentage' and not (data.get("percentage") and float(data["percentage"]) > 0):
         raise HTTPException(status_code=400, detail="Porcentaje requerido")
+    if calc == 'percentage' and float(data.get("percentage") or 0) > 100:
+        raise HTTPException(status_code=400, detail="Porcentaje no puede exceder 100%")
     if calc == 'fixed' and not (data.get("fixed_amount") and float(data["fixed_amount"]) > 0):
         raise HTTPException(status_code=400, detail="Monto fijo requerido")
     if applies_to == 'service' and not data.get("service_id"):
@@ -5186,7 +5188,7 @@ def _compute_commissions_for_sale(clinic_id: str, sale_id: str, doctor_id: str, 
     """For each item in the sale find applicable commission rules and insert commissions_earned rows."""
     from datetime import date as dt_date
     today = dt_date.today().isoformat()
-    rules = sdb.table('commission_settings').select('*').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).eq('is_active', True).lte('effective_from', today).execute().data or []
+    rules = sdb.table('commission_settings').select('*').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).eq('is_active', True).lte('effective_from', today).order('created_at', desc=True).execute().data or []
     # Filter by effective_to
     rules = [r for r in rules if not r.get('effective_to') or r['effective_to'] >= today]
     if not rules:

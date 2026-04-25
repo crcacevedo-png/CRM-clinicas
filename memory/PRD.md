@@ -73,6 +73,16 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Eliminar restringido a clinic_admin
   - [x] Tested iteration_15 (100% backend 15/15, 100% frontend E2E)
 
+- [x] **MODULO COMISIONES** (25 Abril 2026):
+  - [x] Ruta /dashboard/comisiones + feature flag 'commissions' (habilitada via clinic_feature_overrides)
+  - [x] Tab Liquidación: 3 cards (total generado, pagadas, pendientes) + tabla por médico con base/ganadas/pagadas/pendientes + drill-down por médico con checkboxes para bulk-pay + reporte PDF exportable agrupado por médico
+  - [x] Tab Reglas: CRUD completo de commission_settings (médico, applies_to: all_consultations/all_products/service/product, calculation_type: percentage/fixed, valor, vigencia, toggle activa, eliminar admin-only)
+  - [x] Auto-cálculo en create_sale: hook tras commit que evalúa todas las reglas activas del doctor_id de la venta y crea filas en commissions_earned por cada item que matchee (con prioridad: específico > general)
+  - [x] Bulk pay: marca status=paid + paid_at + payment_reference; rechaza double-pay
+  - [x] Validación enum: applies_to, calculation_type, percentage ≤ 100, requeridos según contexto
+  - [x] Reglas ordenadas por created_at desc en evaluación → priority determinístico
+  - [x] Tested iteration_16 (100% backend 17/17, 100% frontend E2E)
+
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
 - [ ] Dropdown sucursal en formulario de nueva cita - P1
