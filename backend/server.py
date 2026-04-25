@@ -4739,6 +4739,8 @@ async def create_payment_plan(ar_id: str, data: dict, ctx=Depends(require_clinic
     n_installments = int(data.get("installments") or 0)
     if n_installments < 2:
         raise HTTPException(status_code=400, detail="Mínimo 2 cuotas")
+    if n_installments > 60:
+        raise HTTPException(status_code=400, detail="Máximo 60 cuotas")
     first_due = data.get("first_due_date")
     if not first_due:
         raise HTTPException(status_code=400, detail="Fecha de primera cuota requerida")
@@ -4755,9 +4757,12 @@ async def create_payment_plan(ar_id: str, data: dict, ctx=Depends(require_clinic
         last_amount = round(balance - total_planned, 2)
         # Compute due dates
         from datetime import date as dt_date, timedelta
+        from dateutil.relativedelta import relativedelta
         d0 = dt_date.fromisoformat(first_due)
-        deltas = {"weekly": timedelta(days=7), "biweekly": timedelta(days=14), "monthly": timedelta(days=30)}
-        step = deltas.get(frequency, timedelta(days=30))
+        def _due_for(i):
+            if frequency == 'weekly': return d0 + timedelta(days=7 * i)
+            if frequency == 'biweekly': return d0 + timedelta(days=14 * i)
+            return d0 + relativedelta(months=i)  # monthly = true calendar months
         # Remove any pre-existing installments for this AR
         sdb.table('payment_plan_installments').delete().eq('account_receivable_id', ar_id).execute()
         for i in range(n_installments):
@@ -4767,7 +4772,7 @@ async def create_payment_plan(ar_id: str, data: dict, ctx=Depends(require_clinic
                 "account_receivable_id": ar_id,
                 "installment_number": i + 1,
                 "amount": amt,
-                "due_date": (d0 + step * i).isoformat(),
+                "due_date": _due_for(i).isoformat(),
                 "paid_amount": 0,
                 "status": "pending",
             }).execute()
