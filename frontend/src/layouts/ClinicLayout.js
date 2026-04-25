@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useFeatures } from '../context/FeatureContext';
 import { 
   LayoutDashboard, 
   CalendarDays, 
@@ -9,21 +10,34 @@ import {
   Building2,
   Pill,
   FlaskConical,
-  Settings
+  Settings,
+  Package,
+  ShoppingCart,
+  Receipt,
+  CreditCard,
+  BarChart3,
+  GitBranch,
+  Percent
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
-const navItems = [
+const allNavItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', end: true },
-  { to: '/dashboard/agenda', icon: CalendarDays, label: 'Agenda' },
-  { to: '/dashboard/pacientes', icon: Users, label: 'Pacientes' },
-  { to: '/dashboard/recetas', icon: Pill, label: 'Recetas' },
-  { to: '/dashboard/laboratorio', icon: FlaskConical, label: 'Laboratorio' },
+  { to: '/dashboard/agenda', icon: CalendarDays, label: 'Agenda', feature: 'agenda' },
+  { to: '/dashboard/pacientes', icon: Users, label: 'Pacientes', feature: 'patients' },
+  { to: '/dashboard/recetas', icon: Pill, label: 'Recetas', feature: 'prescriptions' },
+  { to: '/dashboard/laboratorio', icon: FlaskConical, label: 'Laboratorio', feature: 'lab_orders' },
+  { to: '/dashboard/inventario', icon: Package, label: 'Inventario', feature: 'inventory' },
+  { to: '/dashboard/ventas', icon: ShoppingCart, label: 'Ventas', feature: 'sales' },
+  { to: '/dashboard/cuentas', icon: Receipt, label: 'Cuentas por cobrar', feature: 'accounts_receivable' },
+  { to: '/dashboard/gastos', icon: CreditCard, label: 'Gastos', feature: 'expenses' },
+  { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports' },
   { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
 export default function ClinicLayout() {
   const { user, logout } = useAuth();
+  const { hasFeature } = useFeatures();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -31,22 +45,17 @@ export default function ClinicLayout() {
     navigate('/login');
   };
 
+  const navItems = allNavItems.filter(item => !item.feature || hasFeature(item.feature));
+
   return (
-    <div className="flex min-h-screen bg-[#F8FAFC]">
-      <aside className="w-64 flex flex-col fixed h-full" style={{ backgroundColor: '#0F172A' }}>
+    <div className="flex min-h-screen bg-[#FAFAFA]">
+      <aside className="w-52 flex flex-col fixed h-full" style={{ backgroundColor: '#0F1A2E' }}>
         <div className="p-4 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-teal-500 flex items-center justify-center rounded">
-              <Building2 className="w-5 h-5 text-white" strokeWidth={1.5} />
-            </div>
-            <div>
-              <span className="text-base font-semibold text-white">ClinicCRM</span>
-              <p className="text-xs text-teal-400">Panel Clínico</p>
-            </div>
-          </div>
+          <h1 className="text-lg font-bold text-white">ClinicCRM</h1>
+          <p className="text-xs text-teal-400">Panel Clínico</p>
         </div>
 
-        <nav className="flex-1 py-4 px-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -59,7 +68,7 @@ export default function ClinicLayout() {
                     : 'text-slate-400 hover:text-white hover:bg-white/5'
                 }`
               }
-              data-testid={`clinic-nav-${item.label.toLowerCase()}`}
+              data-testid={`clinic-nav-${item.label.toLowerCase().replace(/\s/g, '-')}`}
             >
               <item.icon className="w-5 h-5" strokeWidth={1.5} />
               <span>{item.label}</span>
@@ -85,7 +94,7 @@ export default function ClinicLayout() {
         </div>
       </aside>
 
-      <main className="flex-1 ml-64">
+      <main className="flex-1 ml-52">
         <Outlet />
       </main>
     </div>

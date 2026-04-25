@@ -1,6 +1,7 @@
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { FeatureProvider } from "./context/FeatureContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Toaster } from "./components/ui/sonner";
 
@@ -16,6 +17,7 @@ import ClinicDetailPage from "./pages/admin/ClinicDetailPage";
 import UsersPage from "./pages/admin/UsersPage";
 import CatalogsPage from "./pages/admin/CatalogsPage";
 import SettingsPage from "./pages/admin/SettingsPage";
+import PlansPage from "./pages/admin/PlansPage";
 
 // Clinic Pages
 import ClinicLayout from "./layouts/ClinicLayout";
@@ -33,6 +35,7 @@ import ClinicSettingsPage from "./pages/clinic/ClinicSettingsPage";
 function App() {
   return (
     <AuthProvider>
+      <FeatureProvider>
       <BrowserRouter>
         <Routes>
           {/* Public Routes */}
@@ -53,6 +56,7 @@ function App() {
             <Route path="clinicas/:id" element={<ClinicDetailPage />} />
             <Route path="usuarios" element={<UsersPage />} />
             <Route path="catalogos" element={<CatalogsPage />} />
+            <Route path="planes" element={<PlansPage />} />
             <Route path="configuracion" element={<SettingsPage />} />
           </Route>
 
@@ -83,6 +87,7 @@ function App() {
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" />
+      </FeatureProvider>
     </AuthProvider>
   );
 }

@@ -7,7 +7,8 @@ import {
   BookOpen, 
   Settings, 
   LogOut,
-  ChevronRight
+  ChevronRight,
+  CreditCard
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/admin/clinicas', icon: Building2, label: 'Clínicas' },
   { to: '/admin/usuarios', icon: Users, label: 'Usuarios' },
   { to: '/admin/catalogos', icon: BookOpen, label: 'Catálogos' },
+  { to: '/admin/planes', icon: CreditCard, label: 'Planes' },
   { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 

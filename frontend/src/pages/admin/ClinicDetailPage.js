@@ -67,6 +67,9 @@ export default function ClinicDetailPage() {
   const [credentials, setCredentials] = useState(null);
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [clinicFeatures, setClinicFeatures] = useState([]);
+  const [clinicPlan, setClinicPlan] = useState('');
+  const [allPlans, setAllPlans] = useState([]);
 
   const [editData, setEditData] = useState({});
   const [memberForm, setMemberForm] = useState({
@@ -75,6 +78,8 @@ export default function ClinicDetailPage() {
 
   useEffect(() => {
     fetchClinicDetail();
+    fetchClinicFeatures();
+    fetchAllPlans();
   }, [id]);
 
   const fetchClinicDetail = async () => {
@@ -93,6 +98,45 @@ export default function ClinicDetailPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchClinicFeatures = async () => {
+    try {
+      const res = await axios.get(`${API}/admin/clinics/${id}/features`, { headers: getAuthHeaders() });
+      setClinicFeatures(res.data.features || []);
+      setClinicPlan(res.data.plan || '');
+    } catch {}
+  };
+
+  const fetchAllPlans = async () => {
+    try {
+      const res = await axios.get(`${API}/admin/plans`, { headers: getAuthHeaders() });
+      setAllPlans(res.data || []);
+    } catch {}
+  };
+
+  const handleChangePlan = async (planCode) => {
+    try {
+      await axios.put(`${API}/admin/clinics/${id}/plan`, { plan: planCode }, { headers: getAuthHeaders() });
+      toast.success('Plan actualizado');
+      fetchClinicDetail();
+      fetchClinicFeatures();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+  };
+
+  const handleToggleFeatureOverride = async (featureId, currentOverride, inPlan) => {
+    try {
+      let newEnabled;
+      if (currentOverride === null || currentOverride === undefined) {
+        newEnabled = !inPlan;
+      } else {
+        newEnabled = null;
+      }
+      await axios.put(`${API}/admin/clinics/${id}/features/${featureId}`,
+        { is_enabled: newEnabled }, { headers: getAuthHeaders() });
+      toast.success('Override actualizado');
+      fetchClinicFeatures();
+    } catch { toast.error('Error'); }
   };
 
   const handleSave = async () => {
@@ -523,6 +567,47 @@ export default function ClinicDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Plan y Módulos Section */}
+      {clinicFeatures.length > 0 && (
+        <div className="mt-8 bg-white rounded-xl border border-zinc-200 overflow-hidden" data-testid="plan-modules-section">
+          <div className="p-5 border-b border-zinc-100">
+            <h3 className="text-lg font-semibold text-zinc-900">Plan y Módulos</h3>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-zinc-600">Plan actual:</span>
+              <Select value={clinicPlan} onValueChange={handleChangePlan}>
+                <SelectTrigger className="w-48" data-testid="change-plan-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {allPlans.map(p => <SelectItem key={p.code} value={p.code}>{p.name} — ${p.price_monthly}/mes</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-zinc-700 mb-2">Módulos</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {clinicFeatures.map(f => {
+                  const isActive = f.override !== null && f.override !== undefined ? f.override : f.in_plan;
+                  const hasOverride = f.override !== null && f.override !== undefined;
+                  return (
+                    <div key={f.id} className={`flex items-center justify-between p-2.5 rounded-lg border text-sm ${isActive ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`} data-testid={`feature-${f.code}`}>
+                      <div className="flex-1 min-w-0">
+                        <p className={`font-medium truncate ${isActive ? 'text-emerald-800' : 'text-slate-500'}`}>{f.name}</p>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {f.in_plan && <span className="text-xs bg-teal-100 text-teal-700 px-1 rounded">Plan</span>}
+                          {hasOverride && <span className="text-xs bg-amber-100 text-amber-700 px-1 rounded">Override</span>}
+                        </div>
+                      </div>
+                      <Switch checked={isActive} onCheckedChange={() => handleToggleFeatureOverride(f.id, f.override, f.in_plan)} data-testid={`toggle-feature-${f.code}`} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Credentials Modal */}
       <Dialog open={showCredentials} onOpenChange={setShowCredentials}>
