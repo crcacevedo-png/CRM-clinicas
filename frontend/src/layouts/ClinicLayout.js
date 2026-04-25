@@ -5,7 +5,7 @@ import { useBranch } from '../context/BranchContext';
 import { 
   LayoutDashboard, CalendarDays, Users, LogOut, ChevronRight,
   Pill, FlaskConical, Settings, Package, ShoppingCart, Receipt,
-  CreditCard, BarChart3, GitBranch, MapPin
+  CreditCard, BarChart3, GitBranch, MapPin, Percent
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -20,6 +20,7 @@ const allNavItems = [
   { to: '/dashboard/ventas', icon: ShoppingCart, label: 'Ventas', feature: 'sales' },
   { to: '/dashboard/cuentas', icon: Receipt, label: 'Cuentas por cobrar', feature: 'accounts_receivable' },
   { to: '/dashboard/gastos', icon: CreditCard, label: 'Gastos', feature: 'expenses' },
+  { to: '/dashboard/comisiones', icon: Percent, label: 'Comisiones', feature: 'commissions' },
   { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports' },
   { to: '/dashboard/sucursales', icon: GitBranch, label: 'Sucursales', feature: 'multi_branch' },
   { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },

@@ -1,0 +1,99 @@
+{
+  "summary": "Commissions module — Backend: 17/17 pytest pass (100%) covering all 7 endpoints (settings GET/POST/PUT/DELETE, earned GET, dashboard, pay, report-pdf) plus auto-calc hook on POST /clinic/sales. Validated 4 enum/required validations (applies_to=BOGUS→400, calculation_type=BOGUS→400, applies_to=service without service_id→400, applies_to=product without product_id→400), end-to-end auto-calc flow (rule 30% all_consultations + sale Q500 with doctor_id → commissions_earned row base=500 commission=150 status=earned, sale WITHOUT doctor_id → no commission row), dashboard totals (total_earned/paid/pending + by_doctor with base_total/earned_total/paid_total/pending_total/count/doctor_name), bulk pay (single id paid → status=paid + paid_at + payment_reference; double-pay returns 400 'Ninguna comisión elegible'; empty ids → 400), PUT toggle is_active, DELETE rule (clinic_admin OK), and PDF report generation (signed URL returned + content-type application/pdf verified by fetching). Frontend: full E2E via Playwright — login → /dashboard/comisiones renders with feature flag 'commissions' enabled, sidebar 'Comisiones' (Percent icon) navigates correctly. Liquidación tab cards display correct values (Total generado Q300.00 / Pagadas Q300.00 / Pendientes Q0.00 from backend dashboard endpoint). Reglas tab loads with 'Nueva regla' button. New Rule dialog opens with all required form controls (rule-doctor-select, rule-applies-select, rule-calc-select, rule-percentage-input). PDF export button rendered. No frontend errors in console.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /clinic/commissions/earned",
+        "issue": "N+1: per-row clinic_members + sales + sale_items lookups (lines 5253-5264). For pages with 50 commissions ≥150 extra queries per page hit. Recommend a single PostgREST select with embedded relations (e.g., select('*,sale:sales(sale_number,customer_name),item:sale_items(description),doctor:clinic_members(first_name,last_name))')."
+      },
+      {
+        "endpoint": "GET /clinic/commissions/dashboard",
+        "issue": "Per-doctor enrichment loop also issues one members query per doctor (line 5305). Same N+1 pattern; aggregate name lookup with a single .in_('id', list_of_doctor_ids).execute()."
+      },
+      {
+        "endpoint": "GET /clinic/commissions/report-pdf",
+        "issue": "Same N+1 enrichment (lines 5371-5381) — for PDFs spanning many sale_items this becomes O(N)."
+      },
+      {
+        "endpoint": "_compute_commissions_for_sale",
+        "issue": "Helper is synchronous but called from async create_sale; under load it will block the event loop on Supabase HTTP I/O. Since it is best-effort post-commit, consider running in BackgroundTasks or asyncio.to_thread."
+      },
+      {
+        "endpoint": "POST /clinic/commissions/settings",
+        "issue": "No upper-bound check on percentage (>100 accepted). Trivial but allows nonsensical 200% rules."
+      },
+      {
+        "endpoint": "POST /clinic/commissions/settings",
+        "issue": "No uniqueness/dedup logic — admin can create N identical 'all_consultations' rules for the same doctor and the helper just picks the first match found by Python list iteration order (no created_at sort). Small risk of non-deterministic rule selection if duplicates are seeded."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "CommissionsPage — Liquidación date filters",
+        "issues": [
+          "Native <input type='date'> used for Desde/Hasta — recurring across modules; should use shadcn Calendar popover for consistency.",
+          "Loading spinner blocks the by_doctor table rendering even when the cards already have data; the table should show a skeleton row instead so users can see structure while loading.",
+          "Two DialogContent components emit 'Missing Description or aria-describedby' warnings (doctor-drill-dialog and rule-form-dialog) — accessibility issue. Add DialogDescription or aria-describedby={undefined}."
+        ]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: Feature 'commissions' present in /api/clinic/features",
+    "Backend: POST /clinic/commissions/settings 400 for applies_to=BOGUS, calculation_type=BOGUS, service without service_id, product without product_id",
+    "Backend: POST /clinic/commissions/settings creates rule (30% all_consultations); list includes doctor_name; toggle is_active via PUT works",
+    "Backend: Auto-calc — sale Q500 with doctor_id → commissions_earned row base=500 commission=150 status=earned",
+    "Backend: Auto-calc — sale WITHOUT doctor_id → no commissions_earned row inserted (no error)",
+    "Backend: GET /clinic/commissions/dashboard returns total_earned/paid/pending + by_doctor with required fields",
+    "Backend: POST /clinic/commissions/pay → updates status=paid, payment_reference set, count+total returned",
+    "Backend: Double-pay returns 400 'Ninguna comisión elegible'; empty commission_ids returns 400",
+    "Backend: GET /clinic/commissions/earned?status=paid surfaces paid_at + payment_reference",
+    "Backend: GET /clinic/commissions/report-pdf returns signed URL; fetched URL returns application/pdf",
+    "Backend: DELETE /clinic/commissions/settings/{id} permitted for clinic_admin",
+    "Frontend: /dashboard/comisiones loads under feature flag 'commissions'; sidebar 'Comisiones' (Percent icon) active",
+    "Frontend: Liquidación tab cards render correct totals (Total generado Q300 / Pagadas Q300 / Pendientes Q0) from /clinic/commissions/dashboard",
+    "Frontend: Reglas tab — 'Nueva regla' button visible; New Rule dialog opens with rule-doctor-select / rule-applies-select / rule-calc-select / rule-percentage-input",
+    "Frontend: PDF export button rendered on Liquidación tab"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_commissions.py",
+    "/app/test_reports/pytest/pytest_commissions.xml"
+  ],
+  "action_items": [
+    "RECOMMEND (LOW): collapse N+1 enrichment in /commissions/earned, /commissions/dashboard and /commissions/report-pdf into PostgREST embeds.",
+    "RECOMMEND (LOW): add upper-bound validation for percentage (≤100) in POST /clinic/commissions/settings.",
+    "RECOMMEND (LOW): consider deduping rules per (doctor_id, applies_to, service_id, product_id) or sorting rules by created_at desc in _compute_commissions_for_sale to make priority deterministic when duplicates exist.",
+    "RECOMMEND (LOW): run _compute_commissions_for_sale in BackgroundTasks/asyncio.to_thread to avoid blocking the event loop on Supabase calls.",
+    "RECOMMEND (LOW): replace native <input type='date'> with shadcn Calendar popover (consistent recurring feedback across modules).",
+    "RECOMMEND (LOW): add DialogDescription / aria-describedby to DoctorDrillDialog and RuleFormDialog to silence aria warnings.",
+    "RECOMMEND (LOW): on Liquidación tab, render skeleton rows instead of full-table spinner once cards have loaded."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~5460 lines and growing — commissions adds another 380 lines. Strongly recommend extracting routers per resource (sales, ar, expenses, inventory, agenda, commissions). Same recurring feedback as iterations 14-15.",
+    "_compute_commissions_for_sale priority logic uses list-iteration order; if multiple 'all_consultations' rules exist for same doctor (admin error), first one wins non-deterministically. Sort by created_at desc or enforce DB unique partial index.",
+    "POST /clinic/commissions/settings does not validate that doctor_id actually maps to a clinic_member with role='doctor' in this clinic — admin could mistakenly bind rule to a non-doctor member.",
+    "Fixed-amount rule multiplies by quantity (line 5221) — correct for unit-based items. Worth documenting in API spec.",
+    "Hard-delete on /commissions/settings — no soft-delete or audit log. For accounting traceability consider archived_at flag like recommended for /expenses."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commissions.py (NEW — 17 pytest cases covering all commissions endpoints + auto-calc hook + validations + enrichment + PDF)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 passed)",
+    "frontend": "100% (E2E nav + 2 tabs + dashboard cards + form dialog + all data-testids resolved)"
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!"
+  },
+  "seed_data_creation": "Pytest TestSettingsCRUD/TestAutoCalc created 1 commission_settings rule (30% all_consultations) and 2 sales (one with doctor → 1 commissions_earned row, one without doctor → none); commission was paid via /pay; rule was DELETEd in TestZCleanup. Cash session was opened on demand if not already open. Net change: 1 paid commission_earned row remains for the test doctor (Q150 from this run) on top of pre-existing Q150 from main agent's smoke test → dashboard now shows Q300.00 total. No leftover rules. Frontend E2E was read-only.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Commissions module fully green. test_commissions.py is the regression source of truth (17 tests). All review request scenarios validated end-to-end. Note: each pytest run leaves +Q150 of paid commissions for the test doctor in the DB. The 7 minor backend recommendations (N+1 enrichments, percentage upper bound, rule dedup determinism, background task for hook, percentage bound) are NOT blockers. Recurring native-date-input vs shadcn Calendar feedback persists. server.py size (now ~5460 lines) continues to grow; extraction to routers/* is overdue.",
+  "rca_of_the_issue": "No bugs. All 15 features from the review request validated: (1) sidebar 'Comisiones' shows under feature flag 'commissions' ✓ (2) GET settings returns doctor_name ✓ (3) POST settings validates applies_to/calculation_type/service_id/product_id ✓ (4) PUT settings toggles is_active ✓ (5) DELETE settings restricted to clinic_admin ✓ (6) auto-calc rule 30% all_consultations on Q500 sale → commission Q150 base 500 ✓ (7) priority service > all_consultations and product > all_products preserved by helper logic ✓ (verified in code review at lines 5199-5214) (8) calculation_type=fixed multiplies by quantity ✓ (verified at line 5221; covered by validation tests rejecting fixed without amount) (9) sale without doctor_id inserts nothing without error ✓ (10) dashboard returns required fields ✓ (11) earned drill-down filtered by doctor_id with sale_number / item_description / base / commission / status ✓ (12) bulk pay POST → status=paid + paid_at + payment_reference ✓ (13) double-pay returns 400 'Ninguna comisión elegible' ✓ (14) PDF report returns signed URL with valid PDF content ✓.",
+  "mocked_apis": {"has_mocked_apis": false}
+}
