@@ -34,6 +34,7 @@ import NewLabOrderPage from "./pages/clinic/NewLabOrderPage";
 import ClinicSettingsPage from "./pages/clinic/ClinicSettingsPage";
 import BranchesPage from "./pages/clinic/BranchesPage";
 import InventoryPage from "./pages/clinic/InventoryPage";
+import SalesPage from "./pages/clinic/SalesPage";
 
 function App() {
   return (
@@ -85,6 +86,7 @@ function App() {
             <Route path="configuracion" element={<ClinicSettingsPage />} />
             <Route path="sucursales" element={<BranchesPage />} />
             <Route path="inventario" element={<InventoryPage />} />
+            <Route path="ventas" element={<SalesPage />} />
           </Route>
 
           {/* Default Redirect */}

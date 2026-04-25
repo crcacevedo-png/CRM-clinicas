@@ -1,0 +1,105 @@
+{
+  "summary": "End-to-end Sales/POS module testing. Backend: 23/28 pytest cases passed (82%). Frontend UI smoke test: 100% — all 4 tabs render, sidebar shows 'Ventas', Servicios CRUD reflects backend data (TEST_Consulta_Upd Q250 / TEST_Limpieza Q350.50), Sesiones de caja shows TEST_Caja_Principal + closed session with opening Q500 / esperado Q780 / real Q785 / diferencia Q5 (correctly computed), Ventas del día shows summary cards + 3 rows (Cliente Cash V-...-0001 Q280 Efectivo Pagada, Cliente Parcial V-...-0002 Q392.56 Anulada, V-...-0003 Q560 Pagada), POS empty state shown after session close. TWO CRITICAL backend bugs found.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/clinic/sales",
+        "issue": "When any payment uses payment_method='card' the request returns 500 with Postgres error: \"invalid input value for enum payment_method: 'card'\" (code 22P02). The Postgres `payment_method` enum does NOT include 'card', but the frontend (SalesPage.js line 26 PAY_LABEL, line 456 default 'card', line 498 SelectItem value='card') and backend default ('cash') and PDF (line 4431) all use 'card'. Effect: any sale paid with Tarjeta is rejected. WORSE: the sale row + sale_items + inventory_movements are inserted BEFORE payments (no transaction), so a failed payment insert leaves an orphan sale row that already has payment_status computed from the requested payments list and therefore appears as 'paid' in Ventas del día with no actual payment row (visible in screenshot: V-20260425-0003 Q560 'Pagada' but Pago column shows '—'). Data integrity bug in addition to the enum mismatch.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /api/clinic/sales/{id}/pdf-url + generate_sale_pdf",
+        "issue": "PDF generation always fails. Backend log: 'Generate sale PDF error: column clinics.nit does not exist (code 42703)'. server.py:4337 selects clinics.nit which is not in the schema. Result: pdf_url is empty after a sale, the recibo PDF is never uploaded to Supabase storage, /pdf-url returns {url: ''}, the 'Imprimir' UX action will be broken.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/clinic/sales",
+        "issue": "Sale creation is not transactional. Sale → items → inventory_movements → payments → AR → PDF run sequentially with try/except wrappers; any failure leaves partial data. Recommend wrapping in a Postgres RPC/transaction or at least rolling back the sale row if payments fail."
+      },
+      {
+        "endpoint": "GET /api/clinic/sales (list_sales)",
+        "issue": "N+1 query pattern: per sale fetches cashier, branch, items, payments separately (4 extra queries × N sales). Will be slow once volume grows. Recommend batched joins or RPC."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Cobro con tarjeta",
+        "issue": "The Tarjeta button in ChargeModal will trigger a 500 response from /api/clinic/sales because of the payment_method enum mismatch. User cannot register card payments at all (single or mixed).",
+        "affected_selectors": ["SelectItem value='card'", "ChargeModal submit"]
+      },
+      {
+        "flow": "Imprimir recibo",
+        "issue": "Clicking Imprimir on a sale opens an empty signed URL because PDF generation fails (clinics.nit). Receipt PDF never produced."
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "SalesPage all tabs",
+        "issues": [
+          "Ventas del día filter uses native HTML date input (browser default) instead of shadcn Calendar component — inconsistent with the rest of the app. Recommend switching to <Calendar /> popover.",
+          "No data-testid attributes on key elements (tabs, Nuevo servicio, Nueva caja, Abrir caja, Cobrar, Anular, payment-method buttons, sale-row, charge-modal submit). Hard to write reliable Playwright tests."
+        ]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: feature flag 'sales' active",
+    "Backend: services CRUD (POST/GET/PUT) — create, list, update persisted",
+    "Backend: cash registers POST/GET (validation + branch_name enrichment)",
+    "Backend: cash session open/double-open-blocked/current/close/already-closed/current-after-close",
+    "Backend: POST /api/clinic/sales cash-only sale (paid, sale_number, total)",
+    "Backend: POST /api/clinic/sales partial payment → status=partial, amount_due>0",
+    "Backend: validation — empty items returns 400",
+    "Backend: GET /api/clinic/sales/{id} returns items + payments + cashier_name",
+    "Backend: POST /api/clinic/sales/{id}/cancel sets status=cancelled, second cancel returns 400",
+    "Backend: auth required (401/403 without token)",
+    "Frontend: sidebar 'Ventas' visible (feature flag) + /dashboard/ventas loads",
+    "Frontend: 4 tabs (Punto de venta, Ventas del día, Servicios, Sesiones de caja) all clickable",
+    "Frontend: Servicios tab shows 2 services with price/duración/estado columns",
+    "Frontend: Sesiones de caja shows Caja registradora + Historial de sesiones with opening/expected/actual/difference (Q5)",
+    "Frontend: Ventas del día shows 4 summary cards + 3 sale rows (1 anulada)",
+    "Frontend: POS empty state ('No hay sesión de caja abierta' + Abrir caja button) shown after session close"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_sales.py",
+    "/app/test_reports/pytest/pytest_sales.xml"
+  ],
+  "action_items": [
+    "FIX (CRITICAL): payment_method enum mismatch. Either (a) add 'card' to the Postgres enum payment_method via a migration, or (b) standardize on the existing enum values (likely 'credit_card'/'debit_card' or similar — check the DB) and update frontend SalesPage.js (PAY_LABEL, addPay default, SelectItem value, SummaryCard label) + backend defaults + PDF method_label dict. Inspect schema: `SELECT unnest(enum_range(NULL::payment_method));` to know the canonical values.",
+    "FIX (CRITICAL): generate_sale_pdf selects clinics.nit which does not exist. Either add nit column to clinics table, or change the SELECT in server.py:4337 to use only existing columns (and gracefully degrade NIT to empty string or fetch from clinic_settings if that's where it lives).",
+    "FIX (HIGH): wrap create_sale in a transaction (Supabase RPC or function) so a payment insert failure rolls back the sale + sale_items + inventory_movements. Otherwise orphan 'paid' sales with no payment row appear in Ventas del día (already happened during testing — V-20260425-0003 visible in screenshot).",
+    "RECOMMEND: Add data-testid to SalesPage interactive elements (tabs, Nuevo servicio, Nueva caja, Abrir caja, service-card-{id}, cart-row, Cobrar, payment-method buttons, charge-submit, sale-row-{id}, Anular, Imprimir).",
+    "RECOMMEND: Replace native date input on Ventas del día filter with shadcn Calendar.",
+    "RECOMMEND: server.py is now 4478 lines — split sales/POS routes into /app/backend/routers/sales.py."
+  ],
+  "critical_code_review_comments": [
+    "server.py exceeds 4400 lines — must be split into routers (sales, cash-session, inventory, agenda, etc.).",
+    "create_sale is not transactional. Multi-step inserts (sale → items → movements → payments → AR → PDF) can leave partial data on any failure. The 'card' enum error already produced an orphan sale.",
+    "Frontend/backend enum drift: 'card' is hard-coded in 4+ places in SalesPage.js but rejected by the DB enum. There is no validation layer (Pydantic) catching this mismatch — relies on Postgres error.",
+    "PDF generator silently swallows errors via try/except → return None. The caller stores empty pdf_url and the user sees an empty signed URL. Should at minimum log loudly and surface a 503/warning.",
+    "list_sales does N+1 queries (per sale: cashier, branch, items, payments). Will degrade quickly. Consider Postgres views or RPCs.",
+    "_generate_sale_number is racy — two concurrent sales same second can collide on the seq. Use a sequence or unique constraint + retry."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales.py (new - 28 pytest cases for sales/POS)"
+  ],
+  "success_rate": {
+    "backend": "82.1% (23/28 passed). 5 failures all stem from the 2 critical bugs above (3 cascade from card-enum, 1 from PDF, 1 daily-summary cascade).",
+    "frontend": "100% smoke (sidebar+route+4 tabs+empty state+real data render). Charge-with-card and Imprimir flows not exercised due to known backend bugs."
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!",
+    "clinic_id": "c0321ed8-97da-47a1-b601-3b94bffabdd7"
+  },
+  "seed_data_creation": "Created 2 services (TEST_Consulta_Upd Q250, TEST_Limpieza Q350.50), 1 cash register (TEST_Caja_Principal), 1 closed cash session (opening Q500, expected Q780, actual Q785, difference Q5), 3 sales (V-20260425-0001 cash Q280 paid, V-20260425-0002 partial Q392.56 → cancelled, V-20260425-0003 'card' Q560 — orphan sale with no payments due to enum bug). Not cleaned up.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After main agent fixes (1) payment_method enum drift and (2) clinics.nit column, re-run /app/backend/tests/test_sales.py (set REACT_APP_BACKEND_URL env var first). Specifically verify TestSales::test_create_sale_mixed_card_cash, test_pdf_url, test_list_sales_today, test_daily_summary, TestCloseSession::test_summary all pass. The orphan sale V-20260425-0003 may need manual cleanup (DELETE FROM sales WHERE sale_number='V-20260425-0003') as it has total=560 with no payment rows. UI was not exercised end-to-end through ChargeModal because the card path is broken at API level — once fixed, verify UI charge flow with mixed cash+card payment and Cambio/Saldo display.",
+  "rca_of_the_issue": "Bug 1 (card enum): Postgres enum payment_method defined in Supabase migration does not include literal 'card'. Likely uses {'cash','credit_card','debit_card','transfer','credit'} or similar. Frontend & backend both assume 'card'. Reproduction: POST /api/clinic/sales with payments=[{payment_method:'card', amount:N}] → 500 \"invalid input value for enum payment_method: 'card'\". Bug 2 (PDF): server.py:4337 `sdb.table('clinics').select('name,address,city,phone,email,nit')` — column 'nit' missing in clinics table (likely lives in clinic_settings or never migrated). Reproduction: any successful sale → background generate_sale_pdf logs 'column clinics.nit does not exist' → returns None → /pdf-url returns empty url. Mitigation: pick canonical enum values + DB migration + update both ends; fix the SELECT to omit nit or fetch it from the right table.",
+  "mocked_apis": {"has_mocked_apis": false}
+}
