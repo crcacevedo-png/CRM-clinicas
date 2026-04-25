@@ -61,6 +61,18 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Tab Antiguedad: 5 buckets (current/1-30/31-60/61-90/90+)
   - [x] Tested iteration_14 (100% backend 16/16, 100% frontend)
 
+- [x] **MODULO GASTOS** (25 Abril 2026):
+  - [x] Ruta /dashboard/gastos + feature flag 'expenses'
+  - [x] Tab Gastos: 4 cards (mes actual, mes anterior con delta%, top categoría, pendientes), tabla con filtros (fechas, categoría, sucursal, estado, busqueda), form CRUD completo
+  - [x] 10 categorías enum: rent, utilities, salaries, supplies, equipment, marketing, professional_services, taxes, maintenance, other (con labels en español)
+  - [x] Total auto-calculado (amount + tax_amount), validación enum (categoría, payment_method, payment_status)
+  - [x] Adjuntos PDF/PNG/JPG/WEBP (max 10MB) a Supabase Storage {clinic_id}/expenses/{expense_id}/
+  - [x] Autocomplete de proveedor desde catalogo de inventory/suppliers
+  - [x] Tab Por categoría: barras de progreso con %, total del periodo, filtros sucursal+rango
+  - [x] Tab Por proveedor: tabla con totales por supplier_id resueltos a nombre
+  - [x] Eliminar restringido a clinic_admin
+  - [x] Tested iteration_15 (100% backend 15/15, 100% frontend E2E)
+
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
 - [ ] Dropdown sucursal en formulario de nueva cita - P1

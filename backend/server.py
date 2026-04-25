@@ -4980,6 +4980,8 @@ async def update_expense(expense_id: str, data: dict, ctx=Depends(require_clinic
             raise HTTPException(status_code=400, detail="Método inválido")
     if data.get("category") and data["category"] not in EXPENSE_CATEGORIES:
         raise HTTPException(status_code=400, detail="Categoría inválida")
+    if data.get("payment_status") and data["payment_status"] not in {"pending", "partial", "paid"}:
+        raise HTTPException(status_code=400, detail="Estado inválido")
     try:
         allowed = ['branch_id','category','subcategory','supplier_id','description','amount','tax_amount','payment_method','payment_status','document_type','document_number','expense_date','notes']
         update = {k: v for k, v in data.items() if k in allowed}
@@ -5025,6 +5027,8 @@ async def upload_expense_attachment(expense_id: str, file: UploadFile = File(...
         if ext not in ('pdf', 'png', 'jpg', 'jpeg', 'webp'):
             raise HTTPException(status_code=400, detail="Tipo de archivo no permitido")
         contents = await file.read()
+        if len(contents) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Archivo excede 10MB")
         path = f"{clinic_id}/expenses/{expense_id}/receipt.{ext}"
         supabase_admin.storage.from_('patient-files').upload(path, contents, {"content-type": file.content_type or "application/octet-stream", "upsert": "true"})
         signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 86400 * 7)
