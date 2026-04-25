@@ -1,0 +1,85 @@
+{
+  "summary": "RETEST after fixes for iteration_12 critical bugs (payment_method enum 'card' → 'credit_card'/'debit_card', clinics.nit removed from PDF, upfront enum validation + transactional rollback). Backend: 31/31 pytest cases passed (100%). Frontend UI: full POS flow exercised end-to-end — open caja → add service → cobrar Tarjeta crédito → success dialog with V-20260425-0011 Q560 Pagada + Imprimir comprobante visible → toast 'Venta registrada' → Ventas del día filter shows 'Tarjeta crédito' + 'Tarjeta débito' as separate options + summary cards aggregate Tarjeta=Q1520 (credit+debit) → detail dialog shows 'Tarjeta crédito' label + Anular works (toast 'Venta anulada'). Both critical bugs from iteration_12 are confirmed fixed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/clinic/sales/cash-session/{id}/summary",
+        "issue": "totals dict no longer exposes 'card' key. Frontend already aggregates credit_card+debit_card on close-cash-dialog (line 573 SalesPage.js). Confirmed working but legacy clients/integrations relying on totals.card would break — document the breaking change."
+      },
+      {
+        "endpoint": "POST /api/clinic/sales (list_sales)",
+        "issue": "N+1 query pattern unchanged from iteration_12 (still per-sale fetches for cashier/branch/items/payments). Not a regression, just remains as recommended optimization."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Global dev-mode overlay (react-error-overlay)",
+        "issue": "ResizeObserver loop completed with undelivered notifications appears as Uncaught runtime errors overlay on /dashboard/ventas (and likely other shadcn-heavy pages). Harmless but blocks clicks until dismissed. Suppress via window.addEventListener('error', e => { if (e.message.includes('ResizeObserver')) e.stopImmediatePropagation(); }) or upgrade radix-ui.",
+        "selector": "iframe#webpack-dev-server-client-overlay or document body overlay",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Ventas del día — método filter",
+        "issues": ["Filter Select shows only [Todos, Efectivo, Tarjeta crédito, Tarjeta débito, Transferencia, Crédito] but ChargeModal allows Cheque & Otro — filter is missing those two methods so sales paid with cheque/otro cannot be filtered."]
+      },
+      {
+        "screen": "Ventas del día — date input",
+        "issues": ["Still uses native HTML <input type='date'> instead of shadcn Calendar (carryover from iteration_12)."]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: POST /api/clinic/sales payment_method='credit_card' → 200 (was 500)",
+    "Backend: POST /api/clinic/sales mixed cash+credit_card+transfer → 200",
+    "Backend: POST /api/clinic/sales payment_method='card' → 400 with NO orphan sale created (verified via pre/post sales count)",
+    "Backend: POST /api/clinic/sales payment_method='BOGUS' → 400",
+    "Backend: GET /api/clinic/sales/{id}/pdf-url returns non-empty signed URL; PDF accessible with Content-Type=application/pdf (verified via HEAD)",
+    "Backend: GET /api/clinic/sales/cash-session/{id}/summary totals contains credit_card + debit_card keys, NOT 'card'",
+    "Backend: GET /api/clinic/sales/daily-summary 'card' field aggregates credit_card+debit_card (>=480 with 280 credit-only + 200 mixed credit)",
+    "Backend: cancel_sale, double-cancel 400, close session math (opening + cash = expected, difference computed)",
+    "Frontend: ChargeModal Select shows 'Tarjeta crédito' and 'Tarjeta débito' as 2 separate items",
+    "Frontend: Cobrar with Tarjeta crédito → sale persisted V-20260425-0011 Q560 Pagada → success dialog + Imprimir + toast",
+    "Frontend: Ventas del día filter Select includes 'Tarjeta crédito' & 'Tarjeta débito'",
+    "Frontend: Ventas del día summary cards (Total Q3360, Efectivo Q1260, Tarjeta Q1520, Pendiente Q0) — Tarjeta aggregates credit+debit",
+    "Frontend: Sale detail dialog renders 'Tarjeta crédito' as PAY_LABEL (not raw enum)",
+    "Frontend: Anular venta on V-20260425-0011 → 'Venta anulada' toast"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_sales.py",
+    "/app/test_reports/pytest/pytest_sales.xml"
+  ],
+  "action_items": [
+    "FIX (MEDIUM): suppress ResizeObserver dev-overlay or fix root cause — currently obscures the UI on Ventas page in non-prod builds.",
+    "FIX (LOW): add 'Cheque' and 'Otro' to Ventas del día payment_method filter to match ChargeModal options.",
+    "RECOMMEND (LOW): replace native date input on Ventas del día filter with shadcn Calendar popover.",
+    "DOCUMENT: cash_session/summary.totals dropped 'card' key (now credit_card + debit_card) — communicate breaking change to any external integrators."
+  ],
+  "critical_code_review_comments": [
+    "server.py still exceeds 4400 lines — split sales/POS routes into /app/backend/routers/sales.py for maintainability.",
+    "list_sales remains N+1 (per sale: cashier/branch/items/payments queries). Acceptable for low volume but should migrate to Postgres view/RPC.",
+    "_generate_sale_number is still time-based; concurrent sales in the same second can collide. Use a Postgres sequence or unique constraint + retry."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sales.py (added test_create_sale_credit_card_only, test_create_sale_mixed_cash_creditcard_transfer, test_create_sale_invalid_payment_method_card with orphan-check, test_create_sale_invalid_payment_method_bogus; rewrote test_summary for new credit_card/debit_card keys; rewrote test_daily_summary for aggregated 'card' field)"
+  ],
+  "success_rate": {
+    "backend": "100% (31/31 passed) — both iteration_12 critical bugs verified fixed",
+    "frontend": "100% smoke (all retest scenarios from request executed successfully via Playwright)"
+  },
+  "test_credentials": {
+    "clinic_admin": "carlos@lasalud.gt / Test123456!",
+    "clinic_id": "c0321ed8-97da-47a1-b601-3b94bffabdd7"
+  },
+  "seed_data_creation": "Reused TEST_Consulta_Upd / TEST_Limpieza services + TEST_Caja_Principal register from iteration_12. New sales today: V-20260425-0007/0008/0009/0010 from pytest run + V-20260425-0011 from UI run (then anulada). All cash sessions closed at end of pytest. Not cleaned up; safe to leave for next iteration.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Sales/POS module is fully green. test_sales.py is the source of truth (31 tests). For follow-ups: address ResizeObserver overlay (annoyance, not a functional bug) and add Cheque/Otro to filter. Backend create_sale now correctly returns 400 for invalid payment_method without leaving orphans (confirmed via pre/post count test). PDF generation works end-to-end (Content-Type application/pdf verified).",
+  "rca_of_the_issue": "Both iteration_12 critical bugs fixed: (1) payment_method enum now accepts credit_card/debit_card/transfer/cash/credit/check/other; frontend (PAY_LABEL, ChargeModal SelectItems, DailySalesTab filter, CloseSessionDialog tarjeta combinado), backend (cash_session_summary totals dict, daily_sales_summary credit_card+debit_card branch) all aligned. Upfront Pydantic-level enum validation rejects bogus values with 400 before any DB write — verified no orphan sale rows on rejection. (2) generate_sale_pdf no longer SELECTs clinics.nit; PDF generates and uploads successfully — /pdf-url returns non-empty Supabase signed URL, HEAD returns Content-Type=application/pdf.",
+  "mocked_apis": {"has_mocked_apis": false}
+}

@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const PAY_LABEL = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', credit: 'Crédito' };
+const PAY_LABEL = { cash: 'Efectivo', credit_card: 'Tarjeta crédito', debit_card: 'Tarjeta débito', transfer: 'Transferencia', credit: 'Crédito', check: 'Cheque', other: 'Otro' };
 const STATUS_LABEL = { paid: 'Pagada', partial: 'Parcial', pending: 'Pendiente', cancelled: 'Anulada' };
 
 export default function SalesPage() {
@@ -453,7 +453,7 @@ function ChargeModal({ open, onClose, total, onConfirm }) {
 
   useEffect(() => { if (open) setPayments([{ payment_method: 'cash', amount: total, reference: '' }]); }, [open, total]);
 
-  const addPay = () => setPayments(p => [...p, { payment_method: 'card', amount: 0, reference: '' }]);
+  const addPay = () => setPayments(p => [...p, { payment_method: 'credit_card', amount: 0, reference: '' }]);
   const removePay = (i) => setPayments(p => p.filter((_, idx) => idx !== i));
   const updPay = (i, field, value) => setPayments(p => p.map((x, idx) => idx === i ? { ...x, [field]: value } : x));
 
@@ -495,9 +495,12 @@ function ChargeModal({ open, onClose, total, onConfirm }) {
                   <SelectTrigger className="mt-1 text-sm h-8" data-testid={`pay-method-${i}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="cash"><Banknote className="w-3 h-3 inline mr-1" />Efectivo</SelectItem>
-                    <SelectItem value="card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta</SelectItem>
+                    <SelectItem value="credit_card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta crédito</SelectItem>
+                    <SelectItem value="debit_card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta débito</SelectItem>
                     <SelectItem value="transfer"><ArrowRight className="w-3 h-3 inline mr-1" />Transferencia</SelectItem>
                     <SelectItem value="credit"><Wallet className="w-3 h-3 inline mr-1" />Crédito</SelectItem>
+                    <SelectItem value="check">Cheque</SelectItem>
+                    <SelectItem value="other">Otro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -505,7 +508,7 @@ function ChargeModal({ open, onClose, total, onConfirm }) {
                 <Label className="text-xs">Monto</Label>
                 <Input type="number" step="0.01" className="mt-1 text-sm h-8" value={p.amount} onChange={e => updPay(i, 'amount', e.target.value)} data-testid={`pay-amount-${i}`} />
               </div>
-              {(p.payment_method === 'card' || p.payment_method === 'transfer') && (
+              {(p.payment_method === 'credit_card' || p.payment_method === 'debit_card' || p.payment_method === 'transfer' || p.payment_method === 'check') && (
                 <div className="w-24">
                   <Label className="text-xs">Ref.</Label>
                   <Input className="mt-1 text-sm h-8" value={p.reference || ''} onChange={e => updPay(i, 'reference', e.target.value)} placeholder="Auth" />
@@ -567,7 +570,7 @@ function CloseSessionDialog({ open, onClose, session, headers, onClosed }) {
         <div className="space-y-2 py-2 text-sm">
           <div className="flex justify-between"><span className="text-slate-500">Apertura:</span><span className="font-medium">Q{(summary.opening || 0).toFixed(2)}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">Ventas en efectivo:</span><span className="font-medium">Q{(summary.totals?.cash || 0).toFixed(2)}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">Ventas en tarjeta:</span><span className="font-medium">Q{(summary.totals?.card || 0).toFixed(2)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Ventas en tarjeta:</span><span className="font-medium">Q{((summary.totals?.credit_card || 0) + (summary.totals?.debit_card || 0)).toFixed(2)}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">Transferencias:</span><span className="font-medium">Q{(summary.totals?.transfer || 0).toFixed(2)}</span></div>
           <Separator />
           <div className="flex justify-between text-base"><span className="font-bold">Total esperado en caja:</span><span className="font-bold text-teal-600">Q{(summary.expected || 0).toFixed(2)}</span></div>
@@ -651,7 +654,8 @@ function DailySalesTab({ headers, branches }) {
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="cash">Efectivo</SelectItem>
-            <SelectItem value="card">Tarjeta</SelectItem>
+            <SelectItem value="credit_card">Tarjeta crédito</SelectItem>
+            <SelectItem value="debit_card">Tarjeta débito</SelectItem>
             <SelectItem value="transfer">Transferencia</SelectItem>
             <SelectItem value="credit">Crédito</SelectItem>
           </SelectContent>

@@ -3972,12 +3972,13 @@ async def cash_session_summary(session_id: str, ctx=Depends(require_clinic_membe
         session = sdb.table('cash_sessions').select('*').eq('id', session_id).eq('clinic_id', clinic_id).single().execute().data
         sales_in = sdb.table('sales').select('id,total').eq('cash_session_id', session_id).neq('status', 'cancelled').execute()
         sale_ids = [s['id'] for s in (sales_in.data or [])]
-        totals = {"cash": 0.0, "card": 0.0, "transfer": 0.0, "credit": 0.0, "other": 0.0}
+        totals = {"cash": 0.0, "credit_card": 0.0, "debit_card": 0.0, "transfer": 0.0, "credit": 0.0, "check": 0.0, "other": 0.0}
         if sale_ids:
             pays = sdb.table('payments').select('amount,payment_method').in_('sale_id', sale_ids).execute()
             for p in (pays.data or []):
                 m = p.get('payment_method') or 'other'
-                totals[m if m in totals else 'other'] = totals.get(m if m in totals else 'other', 0) + float(p.get('amount') or 0)
+                key = m if m in totals else 'other'
+                totals[key] = totals.get(key, 0) + float(p.get('amount') or 0)
         opening = float(session.get('opening_amount') or 0)
         expected = opening + totals['cash']
         return {
@@ -4041,6 +4042,11 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=400, detail="Debe agregar al menos un ítem")
     if not data.get("branch_id"):
         raise HTTPException(status_code=400, detail="Sucursal requerida")
+    valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "other"}
+    for p in payments:
+        m = p.get("payment_method")
+        if m and m not in valid_methods:
+            raise HTTPException(status_code=400, detail=f"Método de pago inválido: {m}")
     try:
         # Compute totals
         subtotal = 0.0
@@ -4098,49 +4104,63 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
         }
         sdb.table('sales').insert(sale_doc).execute()
 
-        # Insert sale_items
-        for idx, it in enumerate(items):
-            qty = float(it.get("quantity") or 0)
-            unit = float(it.get("unit_price") or 0)
-            disc_pct = float(it.get("discount_pct") or 0)
-            line = qty * unit
-            disc_amount = round(line * disc_pct / 100, 2)
-            tr = float(it.get("tax_rate") or 0)
-            line_subtotal = round(line - disc_amount, 2)
-            line_tax = round(line_subtotal * (tr / 100), 2)
-            line_total = round(line_subtotal + line_tax, 2)
-            sdb.table('sale_items').insert({
-                "id": str(uuid.uuid4()), "sale_id": sale_id,
-                "product_id": it.get("product_id"), "service_id": it.get("service_id"),
-                "description": it.get("description") or it.get("name"),
-                "quantity": qty, "unit_price": unit,
-                "discount_pct": disc_pct, "discount_amount": disc_amount,
-                "tax_rate": tr, "tax_amount": line_tax,
-                "subtotal": line_subtotal, "total": line_total,
-                "sort_order": idx,
-            }).execute()
-            # If product, register an inventory_movement (negative qty); trigger updates stock
-            if it.get("product_id"):
-                sdb.table('inventory_movements').insert({
-                    "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": it["product_id"],
-                    "branch_id": data["branch_id"], "movement_type": "sale",
-                    "quantity": -qty, "unit_cost": unit,
-                    "reference_type": "sale", "reference_id": sale_id,
-                    "performed_by": member["id"], "created_at": now,
+        # From this point on, if anything fails, rollback the sale + cascading rows.
+        try:
+            # Insert sale_items
+            for idx, it in enumerate(items):
+                qty = float(it.get("quantity") or 0)
+                unit = float(it.get("unit_price") or 0)
+                disc_pct = float(it.get("discount_pct") or 0)
+                line = qty * unit
+                disc_amount = round(line * disc_pct / 100, 2)
+                tr = float(it.get("tax_rate") or 0)
+                line_subtotal = round(line - disc_amount, 2)
+                line_tax = round(line_subtotal * (tr / 100), 2)
+                line_total = round(line_subtotal + line_tax, 2)
+                sdb.table('sale_items').insert({
+                    "id": str(uuid.uuid4()), "sale_id": sale_id,
+                    "product_id": it.get("product_id"), "service_id": it.get("service_id"),
+                    "description": it.get("description") or it.get("name"),
+                    "quantity": qty, "unit_price": unit,
+                    "discount_pct": disc_pct, "discount_amount": disc_amount,
+                    "tax_rate": tr, "tax_amount": line_tax,
+                    "subtotal": line_subtotal, "total": line_total,
+                    "sort_order": idx,
                 }).execute()
+                # If product, register an inventory_movement (negative qty); trigger updates stock
+                if it.get("product_id"):
+                    sdb.table('inventory_movements').insert({
+                        "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": it["product_id"],
+                        "branch_id": data["branch_id"], "movement_type": "sale",
+                        "quantity": -qty, "unit_cost": unit,
+                        "reference_type": "sale", "reference_id": sale_id,
+                        "performed_by": member["id"], "created_at": now,
+                    }).execute()
 
-        # Insert payments
-        for p in payments:
-            amt = float(p.get("amount") or 0)
-            if amt <= 0:
-                continue
-            sdb.table('payments').insert({
-                "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
-                "payment_method": p.get("payment_method", "cash"),
-                "amount": amt, "reference": p.get("reference"),
-                "notes": p.get("notes"), "received_by": member["id"],
-                "paid_at": now, "created_at": now,
-            }).execute()
+            # Insert payments
+            for p in payments:
+                amt = float(p.get("amount") or 0)
+                if amt <= 0:
+                    continue
+                sdb.table('payments').insert({
+                    "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
+                    "payment_method": p.get("payment_method", "cash"),
+                    "amount": amt, "reference": p.get("reference"),
+                    "notes": p.get("notes"), "received_by": member["id"],
+                    "paid_at": now, "created_at": now,
+                }).execute()
+        except Exception as inner_e:
+            # Rollback: delete payments, inventory movements (ref this sale), sale_items, sale
+            logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}")
+            try: sdb.table('payments').delete().eq('sale_id', sale_id).execute()
+            except Exception: pass
+            try: sdb.table('inventory_movements').delete().eq('reference_id', sale_id).eq('reference_type', 'sale').execute()
+            except Exception: pass
+            try: sdb.table('sale_items').delete().eq('sale_id', sale_id).execute()
+            except Exception: pass
+            try: sdb.table('sales').delete().eq('id', sale_id).execute()
+            except Exception: pass
+            raise HTTPException(status_code=500, detail=f"Error al registrar venta: {str(inner_e)}")
 
         # If amount_due > 0 → also create accounts_receivable record (best-effort; ignore if table missing)
         if amount_due > 0:
@@ -4230,7 +4250,7 @@ async def daily_sales_summary(date: str = "", branch_id: str = "", ctx=Depends(r
                 amt = float(p.get('amount') or 0)
                 m = p.get('payment_method')
                 if m == 'cash': cash_total += amt
-                elif m == 'card': card_total += amt
+                elif m in ('credit_card', 'debit_card'): card_total += amt
                 elif m == 'transfer': transfer_total += amt
         return {
             "date": target.isoformat(),
@@ -4334,7 +4354,7 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
         sale = sdb.table('sales').select('*').eq('id', sale_id).single().execute().data
         items = sdb.table('sale_items').select('*').eq('sale_id', sale_id).order('sort_order').execute().data or []
         payments = sdb.table('payments').select('*').eq('sale_id', sale_id).execute().data or []
-        clinic = sdb.table('clinics').select('name,address,city,phone,email,nit').eq('id', clinic_id).single().execute().data
+        clinic = sdb.table('clinics').select('name,address,city,phone,email').eq('id', clinic_id).single().execute().data
         cashier = None
         if sale.get('cashier_id'):
             cashier_res = sdb.table('clinic_members').select('first_name,last_name').eq('id', sale['cashier_id']).maybe_single().execute()
@@ -4356,7 +4376,6 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
         contact = ' | '.join(filter(None, [clinic.get('phone'), clinic.get('email')]))
         if addr: elements.append(Paragraph(addr, styles['ClinicInfo2']))
         if contact: elements.append(Paragraph(contact, styles['ClinicInfo2']))
-        if clinic.get('nit'): elements.append(Paragraph(f"NIT: {clinic['nit']}", styles['ClinicInfo2']))
         elements.append(Spacer(1, 3*mm))
         elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#0D9488')))
         elements.append(Spacer(1, 3*mm))
@@ -4428,7 +4447,7 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
         if payments:
             elements.append(Paragraph("<b>Pagos:</b>", styles['Lbl2']))
             for p in payments:
-                method_label = {'cash':'Efectivo','card':'Tarjeta','transfer':'Transferencia','credit':'Crédito'}.get(p.get('payment_method'), p.get('payment_method'))
+                method_label = {'cash':'Efectivo','credit_card':'Tarjeta crédito','debit_card':'Tarjeta débito','transfer':'Transferencia','credit':'Crédito','check':'Cheque','other':'Otro'}.get(p.get('payment_method'), p.get('payment_method'))
                 line = f"{method_label}: Q{float(p.get('amount') or 0):.2f}"
                 if p.get('reference'):
                     line += f" — Ref: {p['reference']}"

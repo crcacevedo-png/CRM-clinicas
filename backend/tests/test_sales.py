@@ -212,8 +212,30 @@ class TestSales:
         assert float(d["amount_due"]) > 0
         state["sale_id_partial"] = d["id"]
 
-    def test_create_sale_mixed_card_cash(self, H, branch_id):
-        # 2 x service @ 250 = 500 + IVA 60 = 560; pay 300 card + 260 cash
+    def test_create_sale_credit_card_only(self, H, branch_id):
+        # 1 x service @ 250 + IVA 12 = 280; pay 280 credit_card → status paid
+        payload = {
+            "branch_id": branch_id,
+            "cash_session_id": state["session_id"],
+            "items": [{
+                "service_id": state["service_id"],
+                "description": "TEST_Consulta_Upd",
+                "quantity": 1,
+                "unit_price": 250,
+                "tax_rate": 12,
+            }],
+            "payments": [{"payment_method": "credit_card", "amount": 280}],
+            "customer_name": "Cliente CreditCard",
+        }
+        r = requests.post(f"{BASE_URL}/api/clinic/sales", headers=H, json=payload)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["payment_status"] == "paid"
+        assert abs(float(d["total"]) - 280.0) < 0.01
+        state["sale_id_credit"] = d["id"]
+
+    def test_create_sale_mixed_cash_creditcard_transfer(self, H, branch_id):
+        # 2 x service @ 250 = 500 + IVA 60 = 560; pay 200 cash + 200 credit_card + 160 transfer
         payload = {
             "branch_id": branch_id,
             "cash_session_id": state["session_id"],
@@ -225,9 +247,11 @@ class TestSales:
                 "tax_rate": 12,
             }],
             "payments": [
-                {"payment_method": "card", "amount": 300},
-                {"payment_method": "cash", "amount": 260},
+                {"payment_method": "cash", "amount": 200},
+                {"payment_method": "credit_card", "amount": 200},
+                {"payment_method": "transfer", "amount": 160},
             ],
+            "customer_name": "Cliente Mixto",
         }
         r = requests.post(f"{BASE_URL}/api/clinic/sales", headers=H, json=payload)
         assert r.status_code == 200, r.text
@@ -235,6 +259,50 @@ class TestSales:
         assert d["payment_status"] == "paid"
         assert abs(float(d["total"]) - 560.0) < 0.01
         state["sale_id_mixed"] = d["id"]
+
+    def test_create_sale_invalid_payment_method_card(self, H, branch_id):
+        """Old 'card' value MUST be rejected with 400 and not leave orphan rows."""
+        # Snapshot pre-count
+        from datetime import date
+        today = date.today().isoformat()
+        pre = requests.get(f"{BASE_URL}/api/clinic/sales", headers=H,
+                           params={"date_from": today}).json()
+        pre_count = len(pre.get("sales", []))
+
+        payload = {
+            "branch_id": branch_id,
+            "cash_session_id": state["session_id"],
+            "items": [{
+                "service_id": state["service_id"],
+                "description": "TEST_Invalid_Card",
+                "quantity": 1,
+                "unit_price": 250,
+                "tax_rate": 12,
+            }],
+            "payments": [{"payment_method": "card", "amount": 280}],
+        }
+        r = requests.post(f"{BASE_URL}/api/clinic/sales", headers=H, json=payload)
+        assert r.status_code == 400, f"Expected 400 for invalid enum, got {r.status_code}: {r.text}"
+        # Verify no orphan sale created (count unchanged)
+        post = requests.get(f"{BASE_URL}/api/clinic/sales", headers=H,
+                            params={"date_from": today}).json()
+        assert len(post.get("sales", [])) == pre_count, "Orphan sale created on invalid payment_method"
+
+    def test_create_sale_invalid_payment_method_bogus(self, H, branch_id):
+        payload = {
+            "branch_id": branch_id,
+            "cash_session_id": state["session_id"],
+            "items": [{
+                "service_id": state["service_id"],
+                "description": "TEST_Invalid_Bogus",
+                "quantity": 1,
+                "unit_price": 250,
+                "tax_rate": 12,
+            }],
+            "payments": [{"payment_method": "BOGUS", "amount": 280}],
+        }
+        r = requests.post(f"{BASE_URL}/api/clinic/sales", headers=H, json=payload)
+        assert r.status_code == 400, f"Expected 400, got {r.status_code}: {r.text}"
 
     def test_create_sale_requires_items(self, H, branch_id):
         r = requests.post(f"{BASE_URL}/api/clinic/sales", headers=H,
@@ -268,11 +336,13 @@ class TestSales:
         r = requests.get(f"{BASE_URL}/api/clinic/sales/daily-summary", headers=H)
         assert r.status_code == 200
         d = r.json()
-        # 3 sales created: 280 + 392.56 + 560 = 1232.56
-        assert d["count"] >= 3
-        assert d["total"] >= 1232
-        assert d["cash"] >= 280 + 200 + 260  # 740
-        assert d["card"] >= 300
+        # 4 sales created: cash 280 + partial 200 + credit 280 + mixed 560 = 1320
+        assert d["count"] >= 4
+        assert d["total"] >= 1300
+        # cash payments: 280 + 200 + 200 = 680
+        assert d["cash"] >= 680
+        # card field aggregates credit_card + debit_card => 280 + 200 = 480
+        assert d["card"] >= 480, f"daily_summary['card'] should aggregate credit_card+debit_card: {d}"
         assert d["pending_due"] > 0  # from partial sale
 
     def test_cancel_sale(self, H):
@@ -309,11 +379,16 @@ class TestCloseSession:
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["opening"] == 500
-        # cash_total = sale1 (280) + sale3 (260) = 540 (sale2 cancelled, excluded)
-        assert d["totals"]["cash"] >= 540
-        assert d["totals"]["card"] >= 300
+        # totals must contain credit_card and debit_card keys (no longer 'card')
+        assert "credit_card" in d["totals"], f"totals missing credit_card: {d['totals']}"
+        assert "debit_card" in d["totals"], f"totals missing debit_card: {d['totals']}"
+        assert "card" not in d["totals"], f"totals should not have legacy 'card' key: {d['totals']}"
+        # cash_total: cash sale (280) + mixed cash (200) = 480 (partial cancelled, excluded)
+        assert d["totals"]["cash"] >= 480
+        # credit_card: credit-only (280) + mixed (200) = 480
+        assert d["totals"]["credit_card"] >= 480
         # expected = opening + cash
-        assert d["expected"] >= 500 + 540
+        assert d["expected"] >= 500 + 480
 
     def test_close_session(self, H):
         sid = state["session_id"]
