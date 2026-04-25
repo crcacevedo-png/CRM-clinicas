@@ -32,6 +32,17 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] FeatureGate: muestra "Enterprise" cuando multi_branch no esta activo
   - [x] Item "Sucursales" en sidebar (condicionado por feature)
   - [x] clinic_feature_overrides para activar multi_branch individualmente
+- [x] **MODULO INVENTARIO** (25 Abril 2026):
+  - [x] Ruta /dashboard/inventario + sidebar item con feature flag 'inventory'
+  - [x] Tab Productos: CRUD + categorias + busqueda + filtros + paginacion + margenes
+  - [x] Tab Stock: por sucursal, alertas (bajo/vencimiento), ajustes con motivos
+  - [x] Tab Compras: ordenes con multiples items, recepcion automatica de stock + lotes
+  - [x] Tab Movimientos: paginado, filtros por tipo y sucursal
+  - [x] Tab Proveedores: CRUD completo
+  - [x] Backend hardened: defensive maybe_single() guards en todo el modulo
+  - [x] Bug fix CRITICO: PO recibida ya NO duplica stock (trigger DB hace el upsert)
+  - [x] Bug fix HIGH: adjust_stock funciona sin row inventory_stock previa
+  - [x] Tested via testing_agent_v3_fork iteration_11 + curl post-fix verification
 
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1

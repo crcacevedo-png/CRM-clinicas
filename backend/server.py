@@ -3192,7 +3192,8 @@ async def list_products(q: str = "", category_id: str = "", low_stock: str = "",
             p.pop('search_vector', None)
             if p.get('category_id'):
                 cat = sdb.table('product_categories').select('name').eq('id', p['category_id']).maybe_single().execute()
-                p['category_name'] = cat.data['name'] if cat.data else ''
+                cat_data = getattr(cat, 'data', None) if cat else None
+                p['category_name'] = cat_data['name'] if cat_data else ''
             else:
                 p['category_name'] = ''
         if low_stock == 'true':
@@ -3263,17 +3264,19 @@ async def list_stock(branch_id: str = "", category_id: str = "", ctx=Depends(req
         stocks = result.data or []
         for s in stocks:
             p = sdb.table('products').select('name,sku,min_stock,category_id').eq('id', s['product_id']).maybe_single().execute()
-            if p.data:
-                s['product_name'] = p.data['name']
-                s['sku'] = p.data['sku']
-                s['min_stock'] = p.data.get('min_stock', 0)
-                s['category_id'] = p.data.get('category_id')
+            p_data = getattr(p, 'data', None) if p else None
+            if p_data:
+                s['product_name'] = p_data['name']
+                s['sku'] = p_data['sku']
+                s['min_stock'] = p_data.get('min_stock', 0)
+                s['category_id'] = p_data.get('category_id')
             else:
                 s['product_name'] = '?'
                 s['sku'] = ''
                 s['min_stock'] = 0
             b = sdb.table('branches').select('name').eq('id', s['branch_id']).maybe_single().execute()
-            s['branch_name'] = b.data['name'] if b.data else ''
+            b_data = getattr(b, 'data', None) if b else None
+            s['branch_name'] = b_data['name'] if b_data else ''
             qty = s.get('quantity', 0)
             ms = s.get('min_stock', 0)
             s['status'] = 'critical' if qty <= 0 else ('low' if qty <= ms else 'ok')
@@ -3297,15 +3300,18 @@ async def get_inventory_alerts(ctx=Depends(require_clinic_member)):
             for s in (stocks.data or []):
                 if s.get('quantity', 0) <= (p.get('min_stock') or 0):
                     b = sdb.table('branches').select('name').eq('id', s['branch_id']).maybe_single().execute()
-                    low_stock.append({**p, "quantity": s['quantity'], "branch_id": s['branch_id'], "branch_name": b.data['name'] if b.data else ''})
+                    b_data = getattr(b, 'data', None) if b else None
+                    low_stock.append({**p, "quantity": s['quantity'], "branch_id": s['branch_id'], "branch_name": b_data['name'] if b_data else ''})
         # Expiring: batches expiring in 60 days
         from datetime import datetime as dt, timedelta
         cutoff = (dt.now(timezone.utc) + timedelta(days=60)).isoformat()
         batches = sdb.table('inventory_batches').select('*').eq('clinic_id', clinic_id).eq('is_active', True).lt('expiration_date', cutoff).order('expiration_date').limit(20).execute()
         for b in (batches.data or []):
             p = sdb.table('products').select('name,sku').eq('id', b['product_id']).maybe_single().execute()
+            p_data = getattr(p, 'data', None) if p else None
             br = sdb.table('branches').select('name').eq('id', b['branch_id']).maybe_single().execute()
-            expiring.append({**b, "product_name": p.data['name'] if p.data else '', "sku": p.data['sku'] if p.data else '', "branch_name": br.data['name'] if br.data else ''})
+            br_data = getattr(br, 'data', None) if br else None
+            expiring.append({**b, "product_name": p_data['name'] if p_data else '', "sku": p_data['sku'] if p_data else '', "branch_name": br_data['name'] if br_data else ''})
         return {"low_stock": low_stock, "expiring": expiring}
     except Exception as e:
         logger.error(f"Inventory alerts error: {e}")
@@ -3321,21 +3327,18 @@ async def adjust_stock(data: dict, ctx=Depends(require_clinic_member)):
         new_qty = data["new_quantity"]
         reason = data.get("reason", "adjustment")
         notes = data.get("notes", "")
-        existing = sdb.table('inventory_stock').select('id,quantity').eq('product_id', product_id).eq('branch_id', branch_id).maybe_single().execute()
-        old_qty = existing.data['quantity'] if existing.data else 0
+        existing_res = sdb.table('inventory_stock').select('id,quantity').eq('product_id', product_id).eq('branch_id', branch_id).maybe_single().execute()
+        existing = getattr(existing_res, 'data', None) if existing_res else None
+        old_qty = existing['quantity'] if existing else 0
         diff = new_qty - old_qty
-        # Record movement
+        # Insert only the movement; a Postgres trigger on inventory_movements
+        # automatically upserts inventory_stock by summing quantities.
         sdb.table('inventory_movements').insert({
             "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": product_id,
             "branch_id": branch_id, "movement_type": "adjustment", "quantity": diff,
             "notes": f"{reason}: {notes}".strip(': '), "performed_by": member["id"],
             "created_at": now_iso(),
         }).execute()
-        # Update stock
-        if existing.data:
-            sdb.table('inventory_stock').update({"quantity": new_qty, "updated_at": now_iso()}).eq('id', existing.data['id']).execute()
-        else:
-            sdb.table('inventory_stock').insert({"clinic_id": clinic_id, "product_id": product_id, "branch_id": branch_id, "quantity": new_qty}).execute()
         return {"message": "Stock ajustado", "old": old_qty, "new": new_qty, "diff": diff}
     except Exception as e:
         logger.error(f"Adjust stock error: {e}")
@@ -3357,13 +3360,16 @@ async def list_movements(product_id: str = "", branch_id: str = "", movement_typ
         movements = result.data or []
         for m in movements:
             p = sdb.table('products').select('name,sku').eq('id', m['product_id']).maybe_single().execute()
-            m['product_name'] = p.data['name'] if p.data else ''
-            m['sku'] = p.data.get('sku', '') if p.data else ''
+            p_data = getattr(p, 'data', None) if p else None
+            m['product_name'] = p_data['name'] if p_data else ''
+            m['sku'] = p_data.get('sku', '') if p_data else ''
             b = sdb.table('branches').select('name').eq('id', m['branch_id']).maybe_single().execute()
-            m['branch_name'] = b.data['name'] if b.data else ''
+            b_data = getattr(b, 'data', None) if b else None
+            m['branch_name'] = b_data['name'] if b_data else ''
             if m.get('performed_by'):
                 mb = sdb.table('clinic_members').select('first_name,last_name').eq('id', m['performed_by']).maybe_single().execute()
-                m['performed_by_name'] = f"{mb.data['first_name']} {mb.data['last_name']}" if mb.data else ''
+                mb_data = getattr(mb, 'data', None) if mb else None
+                m['performed_by_name'] = f"{mb_data['first_name']} {mb_data['last_name']}" if mb_data else ''
             else:
                 m['performed_by_name'] = ''
         return {"movements": movements, "total": result.count or 0, "page": page, "pages": ((result.count or 0) + limit - 1) // limit}
@@ -3420,7 +3426,8 @@ async def list_purchase_orders(status: str = "", page: int = 1, limit: int = 20,
         orders = result.data or []
         for o in orders:
             b = sdb.table('branches').select('name').eq('id', o['branch_id']).maybe_single().execute()
-            o['branch_name'] = b.data['name'] if b.data else ''
+            b_data = getattr(b, 'data', None) if b else None
+            o['branch_name'] = b_data['name'] if b_data else ''
             items = sdb.table('purchase_order_items').select('id', count='exact').eq('purchase_order_id', o['id']).execute()
             o['item_count'] = items.count or 0
         return {"orders": orders, "total": result.count or 0, "page": page, "pages": ((result.count or 0) + limit - 1) // limit}
@@ -3471,12 +3478,12 @@ async def create_purchase_order(data: dict, ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 async def process_po_receive(po_id: str, clinic_id: str, branch_id: str, performed_by: str):
-    """Process receiving a purchase order - update stock and create batches"""
+    """Process receiving a purchase order - insert movement (trigger updates stock) and create batches"""
     items = sdb.table('purchase_order_items').select('*').eq('purchase_order_id', po_id).execute()
     for item in (items.data or []):
         pid = item['product_id']
         qty = item['quantity']
-        # Create movement
+        # Insert movement; Postgres trigger on inventory_movements upserts inventory_stock automatically.
         sdb.table('inventory_movements').insert({
             "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": pid,
             "branch_id": branch_id, "movement_type": "purchase",
@@ -3484,12 +3491,6 @@ async def process_po_receive(po_id: str, clinic_id: str, branch_id: str, perform
             "reference_type": "purchase_order", "reference_id": po_id,
             "performed_by": performed_by, "created_at": now_iso(),
         }).execute()
-        # Update stock
-        existing = sdb.table('inventory_stock').select('id,quantity').eq('product_id', pid).eq('branch_id', branch_id).maybe_single().execute()
-        if existing.data:
-            sdb.table('inventory_stock').update({"quantity": (existing.data['quantity'] or 0) + qty, "updated_at": now_iso()}).eq('id', existing.data['id']).execute()
-        else:
-            sdb.table('inventory_stock').insert({"clinic_id": clinic_id, "product_id": pid, "branch_id": branch_id, "quantity": qty}).execute()
         # Create batch if has expiration
         if item.get('expiration_date') or item.get('batch_number'):
             sdb.table('inventory_batches').insert({
