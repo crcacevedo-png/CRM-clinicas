@@ -658,6 +658,8 @@ function DailySalesTab({ headers, branches }) {
             <SelectItem value="debit_card">Tarjeta débito</SelectItem>
             <SelectItem value="transfer">Transferencia</SelectItem>
             <SelectItem value="credit">Crédito</SelectItem>
+            <SelectItem value="check">Cheque</SelectItem>
+            <SelectItem value="other">Otro</SelectItem>
           </SelectContent>
         </Select>
       </div>

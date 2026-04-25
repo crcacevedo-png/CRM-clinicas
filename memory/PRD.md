@@ -43,6 +43,20 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Bug fix CRITICO: PO recibida ya NO duplica stock (trigger DB hace el upsert)
   - [x] Bug fix HIGH: adjust_stock funciona sin row inventory_stock previa
   - [x] Tested via testing_agent_v3_fork iteration_11 + curl post-fix verification
+- [x] **MODULO VENTAS / POS** (25 Abril 2026):
+  - [x] Ruta /dashboard/ventas + feature flag 'sales'
+  - [x] Tab Punto de venta: layout 2 columnas (catalogo + carrito), busqueda paciente, multiples metodos pago, cambio, saldo pendiente, recibo/factura
+  - [x] Tab Ventas del dia: cards resumen, tabla con filtros, detalle modal, anular, imprimir
+  - [x] Tab Servicios: CRUD completo (codigo, precio, IVA, duracion)
+  - [x] Tab Sesiones de caja: cajas registradoras + historial sesiones con esperado/real/diferencia
+  - [x] Apertura/cierre de caja con resumen automatico (efectivo/tarjeta/transferencia)
+  - [x] Anulacion crea movimiento reverso de inventario si tenia productos
+  - [x] PDF de recibo/factura via reportlab + Supabase Storage
+  - [x] Numeracion automatica de venta (V-YYYYMMDD-XXXX)
+  - [x] Bug fix CRITICO iter12: payment_method enum ('card' invalido -> credit_card/debit_card)
+  - [x] Bug fix CRITICO iter12: clinics.nit no existe en schema (removido del PDF)
+  - [x] Validacion enum + rollback transaccional al fallar pasos post-sale
+  - [x] Tested iteration_12 + iteration_13 (100% backend 31/31, 100% frontend smoke)
 
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
