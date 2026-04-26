@@ -51,23 +51,21 @@ async def list_appointments(
         result = query.order('starts_at').execute()
         appointments = result.data or []
 
-        # Enrich with patient and doctor names
+        # Enrich with patient and doctor names — batch fetched via .in_() to avoid N+1
         patient_ids = list({a["patient_id"] for a in appointments if a.get("patient_id")})
         doctor_ids = list({a["doctor_id"] for a in appointments if a.get("doctor_id")})
 
         patient_map = {}
         if patient_ids:
-            for pid in patient_ids:
-                p = sdb.table('patients').select('id,first_name,last_name').eq('id', pid).maybe_single().execute()
-                if p.data:
-                    patient_map[pid] = f"{p.data['first_name']} {p.data['last_name']}"
+            ps = sdb.table('patients').select('id,first_name,last_name').in_('id', patient_ids).execute()
+            for p in (ps.data or []):
+                patient_map[p['id']] = f"{p['first_name']} {p['last_name']}"
 
         doctor_map = {}
         if doctor_ids:
-            for did in doctor_ids:
-                d = sdb.table('clinic_members').select('id,first_name,last_name').eq('id', did).maybe_single().execute()
-                if d.data:
-                    doctor_map[did] = f"{d.data['first_name']} {d.data['last_name']}"
+            ds = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', doctor_ids).execute()
+            for d in (ds.data or []):
+                doctor_map[d['id']] = f"{d['first_name']} {d['last_name']}"
 
         for apt in appointments:
             apt["patient_name"] = patient_map.get(apt.get("patient_id"), "Desconocido")
@@ -328,61 +326,96 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
             rx_q = rx_q.eq('doctor_id', member_id)
         rx_month = rx_q.execute()
 
-        # Recent patients
+        # Recent patients (collect ids first, then one batched fetch below)
         recent_apts_q = sdb.table('appointments').select('patient_id').eq('clinic_id', clinic_id).eq('status', 'completed')
         if role == 'doctor':
             recent_apts_q = recent_apts_q.eq('doctor_id', member_id)
         recent_apts = recent_apts_q.order('updated_at', desc=True).limit(10).execute()
         seen_ids = []
-        recent_patients = []
         for ra in (recent_apts.data or []):
-            pid = ra['patient_id']
-            if pid not in seen_ids and len(recent_patients) < 5:
+            pid = ra.get('patient_id')
+            if pid and pid not in seen_ids and len(seen_ids) < 5:
                 seen_ids.append(pid)
-                p = sdb.table('patients').select('id,first_name,last_name,phone').eq('id', pid).maybe_single().execute()
-                p_data = getattr(p, 'data', None) if p else None
-                if p_data:
-                    recent_patients.append(p_data)
-        if len(recent_patients) < 5 and role != 'doctor':
+        # Pre-fetch up to 5 fallback patients (only if non-doctor and we don't have 5 yet)
+        fallback_patients = []
+        if len(seen_ids) < 5 and role != 'doctor':
             extra = sdb.table('patients').select('id,first_name,last_name,phone').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
             for p in (extra.data or []):
-                if p['id'] not in seen_ids and len(recent_patients) < 5:
-                    seen_ids.append(p['id'])
-                    recent_patients.append(p)
+                if p['id'] not in seen_ids and len(seen_ids) + len(fallback_patients) < 5:
+                    fallback_patients.append(p)
 
-        # Activity log (skipped for doctor to keep doctor dashboard clean)
-        activity = []
+        # Activity log (skipped for doctor) — fetch the source rows now; enrich names in the batch step
+        activity_rows = []
         if role != 'doctor':
             recent_created_apts = sdb.table('appointments').select('id,patient_id,created_at,starts_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
             for a in (recent_created_apts.data or []):
-                p = sdb.table('patients').select('first_name,last_name').eq('id', a['patient_id']).maybe_single().execute()
-                p_data = getattr(p, 'data', None) if p else None
-                pname = f"{p_data['first_name']} {p_data['last_name']}" if p_data else "Paciente"
-                activity.append({"type": "appointment", "message": f"Cita agendada para {pname}", "timestamp": a['created_at']})
+                activity_rows.append({"type": "appointment", "patient_id": a.get('patient_id'), "timestamp": a['created_at']})
             recent_rx = sdb.table('prescriptions').select('id,patient_id,created_at,status').eq('clinic_id', clinic_id).eq('status', 'issued').order('created_at', desc=True).limit(5).execute()
             for r in (recent_rx.data or []):
-                p = sdb.table('patients').select('first_name,last_name').eq('id', r['patient_id']).maybe_single().execute()
-                p_data = getattr(p, 'data', None) if p else None
-                pname = f"{p_data['first_name']} {p_data['last_name']}" if p_data else "Paciente"
-                activity.append({"type": "prescription", "message": f"Receta emitida para {pname}", "timestamp": r['created_at']})
-            recent_pats = sdb.table('patients').select('id,first_name,last_name,created_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
-            for p in (recent_pats.data or []):
-                activity.append({"type": "patient", "message": f"Paciente registrado: {p['first_name']} {p['last_name']}", "timestamp": p['created_at']})
-            activity.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-            activity = activity[:10]
+                activity_rows.append({"type": "prescription", "patient_id": r.get('patient_id'), "timestamp": r['created_at']})
+            recent_pats_for_activity = sdb.table('patients').select('id,first_name,last_name,created_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
+            for p in (recent_pats_for_activity.data or []):
+                activity_rows.append({"type": "patient", "_inline_name": f"{p['first_name']} {p['last_name']}", "timestamp": p['created_at']})
 
-        # Enrich appointments
+        # ===== Single batched lookup: patients + doctors =====
+        all_patient_ids = set()
+        all_doctor_ids = set()
+        for a in apts:
+            if a.get('patient_id'): all_patient_ids.add(a['patient_id'])
+            if a.get('doctor_id'): all_doctor_ids.add(a['doctor_id'])
+        if next_apt and next_apt.get('patient_id'):
+            all_patient_ids.add(next_apt['patient_id'])
+        for pid in seen_ids:
+            all_patient_ids.add(pid)
+        for ar in activity_rows:
+            if ar.get('patient_id'):
+                all_patient_ids.add(ar['patient_id'])
+
+        patient_map = {}
+        if all_patient_ids:
+            ps = sdb.table('patients').select('id,first_name,last_name,phone').in_('id', list(all_patient_ids)).execute()
+            for p in (ps.data or []):
+                patient_map[p['id']] = p
+
+        doctor_map = {}
+        if all_doctor_ids:
+            ds = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', list(all_doctor_ids)).execute()
+            for d in (ds.data or []):
+                doctor_map[d['id']] = d
+
+        # Build recent_patients from seen_ids preserving order, fall back to fallback_patients
+        recent_patients = []
+        for pid in seen_ids:
+            p = patient_map.get(pid)
+            if p:
+                recent_patients.append({"id": p['id'], "first_name": p['first_name'], "last_name": p['last_name'], "phone": p.get('phone')})
+        for fb in fallback_patients:
+            if len(recent_patients) >= 5:
+                break
+            recent_patients.append(fb)
+
+        # Build activity messages with patient names from the batched map
+        activity = []
+        for ar in activity_rows:
+            if ar['type'] == 'patient':
+                msg = f"Paciente registrado: {ar['_inline_name']}"
+            else:
+                pdata = patient_map.get(ar.get('patient_id'))
+                pname = f"{pdata['first_name']} {pdata['last_name']}" if pdata else "Paciente"
+                msg = (f"Cita agendada para {pname}" if ar['type'] == 'appointment' else f"Receta emitida para {pname}")
+            activity.append({"type": ar['type'], "message": msg, "timestamp": ar['timestamp']})
+        activity.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        activity = activity[:10]
+
+        # Enrich today's appointments
         for apt in apts:
-            p = sdb.table('patients').select('first_name,last_name').eq('id', apt["patient_id"]).maybe_single().execute()
-            d = sdb.table('clinic_members').select('first_name,last_name').eq('id', apt["doctor_id"]).maybe_single().execute()
-            p_data = getattr(p, 'data', None) if p else None
-            d_data = getattr(d, 'data', None) if d else None
-            apt["patient_name"] = f"{p_data['first_name']} {p_data['last_name']}" if p_data else ""
-            apt["doctor_name"] = f"{d_data['first_name']} {d_data['last_name']}" if d_data else ""
+            p = patient_map.get(apt.get('patient_id'))
+            d = doctor_map.get(apt.get('doctor_id'))
+            apt["patient_name"] = f"{p['first_name']} {p['last_name']}" if p else ""
+            apt["doctor_name"] = f"{d['first_name']} {d['last_name']}" if d else ""
         if next_apt:
-            p = sdb.table('patients').select('first_name,last_name').eq('id', next_apt["patient_id"]).maybe_single().execute()
-            p_data = getattr(p, 'data', None) if p else None
-            next_apt["patient_name"] = f"{p_data['first_name']} {p_data['last_name']}" if p_data else ""
+            p = patient_map.get(next_apt.get('patient_id'))
+            next_apt["patient_name"] = f"{p['first_name']} {p['last_name']}" if p else ""
 
         # ===== Admin stats + alerts (skip for doctor) =====
         admin_stats = {}
@@ -467,18 +500,22 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
                     })
 
             if 'inventory' in features:
-                # Low stock count
+                # Low stock count — single batched query for all stocks
                 products = sdb.table('products').select('id,min_stock').eq('clinic_id', clinic_id).eq('is_active', True).execute()
+                product_min = {p['id']: (p.get('min_stock') or 0) for p in (products.data or []) if (p.get('min_stock') or 0) > 0}
                 low_count = 0
-                for p in (products.data or []):
-                    minv = p.get('min_stock') or 0
-                    if minv <= 0:
-                        continue
-                    stocks = sdb.table('inventory_stock').select('quantity').eq('product_id', p['id']).execute()
+                if product_min:
+                    pids = list(product_min.keys())
+                    stocks = sdb.table('inventory_stock').select('product_id,quantity').in_('product_id', pids).execute()
+                    # Track which products have at least one branch under min_stock
+                    flagged = set()
                     for s in (stocks.data or []):
-                        if (s.get('quantity') or 0) <= minv:
-                            low_count += 1
-                            break
+                        pid = s.get('product_id')
+                        if pid in flagged:
+                            continue
+                        if (s.get('quantity') or 0) <= product_min[pid]:
+                            flagged.add(pid)
+                    low_count = len(flagged)
                 admin_stats['low_stock_count'] = low_count
                 if low_count > 0:
                     alerts.append({

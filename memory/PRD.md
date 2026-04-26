@@ -128,16 +128,23 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Frontend: `InventoryPage.StockTab + MovementsTab` y `SalesPage.DailySalesTab + SessionsTab` defaultean su `branchFilter` a `activeBranch.id` con `useEffect` de sincronización
   - [x] Tested iteration_21: **74/74 PASS** (11 P1 + 44 phase2_refactor + 19 dashboard A9), Playwright E2E 6/6 integration assertions; cross-branch verificado con curl (MAIN+Z15 OK simultáneos, mismo MAIN+MAIN → 409)
 
+- [x] **OPTIMIZACIÓN N+1** (26 Abril 2026):
+  - [x] `GET /api/clinic/appointments`: dos batched fetches (`patients.in_(...)`, `clinic_members.in_(...)`) en lugar de 2N queries individuales
+  - [x] `GET /api/clinic/dashboard`: batch único de patients/doctors al final del cómputo (citas hoy + next_apt + recent + activity), reduciendo ~50 queries a ~6 para una agenda típica
+  - [x] `GET /api/clinic/dashboard` (low_stock): un solo `inventory_stock.in_('product_id', [...])` en lugar de 1 query/producto
+  - [x] `GET /api/clinic/sales`: cuatro batched fetches (cashiers, branches, sale_items, payments) en lugar de 4N queries
+  - [x] **Resultados latencia**: dashboard 1.65s, appointments 0.37s, sales 0.48s; suite de tests bajó de 43s → 32s (-25%)
+  - [x] Suite regresión completa: **74/74 PASS** sin regresiones
+
 ## Pendientes
 - [ ] Endpoints faltantes detectados por testing agent (P2): /api/auth/me, /api/clinic/expenses/categories (alias de /by-category), /api/clinic/sales/dashboard (alias de /daily-summary)
 - [ ] Mejora 422-vs-500 en path params no-UUID (sales/{id}, prescriptions/{id}, lab-orders/{id}, patients/{id}) - P2
-- [ ] Optimización N+1 en /api/clinic/dashboard (loops por paciente/médico/stock) - P2
 - [ ] Cobertura de pruebas para roles doctor/receptionist en dashboard (no hay usuarios pre-seed) - P2
 - [ ] Considerar default de branch_id en ReportsPage / ExpensesPage / AccountsReceivablePage (intencionalmente excluidos para preservar comparación cross-branch) - P2
 - [ ] React 'unique key' warning en AgendaPage list render - cosmético P3
+- [ ] Persistencia del activeBranch en localStorage - P2
 - [ ] Importacion CSV para catalogos - P2
-- [ ] Notificaciones/recordatorios - P2
-- [ ] WhatsApp via n8n - P2
+- [ ] Recordatorios WhatsApp via n8n (24h/2h antes) - P1
 - [ ] Stripe/dLocal facturacion - P2
 
 ## Credenciales

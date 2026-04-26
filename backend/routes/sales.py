@@ -435,20 +435,45 @@ async def list_sales(
         offset = (page - 1) * limit
         result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
         sales = result.data or []
-        # Enrich
+        # Batch lookup maps to avoid N+1 (cashier, branch, sale_items, payments)
+        sale_ids = [s['id'] for s in sales]
+        cashier_ids = list({s['cashier_id'] for s in sales if s.get('cashier_id')})
+        branch_ids = list({s['branch_id'] for s in sales if s.get('branch_id')})
+
+        cashier_map = {}
+        if cashier_ids:
+            cb = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', cashier_ids).execute()
+            for m in (cb.data or []):
+                cashier_map[m['id']] = f"{m['first_name']} {m['last_name']}"
+
+        branch_map = {}
+        if branch_ids:
+            br = sdb.table('branches').select('id,name').in_('id', branch_ids).execute()
+            for b in (br.data or []):
+                branch_map[b['id']] = b['name']
+
+        items_by_sale = {sid: [] for sid in sale_ids}
+        if sale_ids:
+            items = sdb.table('sale_items').select('sale_id,description').in_('sale_id', sale_ids).execute()
+            for it in (items.data or []):
+                sid = it.get('sale_id')
+                if sid in items_by_sale:
+                    items_by_sale[sid].append(it.get('description') or '—')
+
+        methods_by_sale = {sid: set() for sid in sale_ids}
+        if sale_ids:
+            pays = sdb.table('payments').select('sale_id,payment_method').in_('sale_id', sale_ids).execute()
+            for p in (pays.data or []):
+                sid = p.get('sale_id')
+                if sid in methods_by_sale:
+                    methods_by_sale[sid].add(p['payment_method'])
+
         for s in sales:
-            cb = sdb.table('clinic_members').select('first_name,last_name').eq('id', s['cashier_id']).maybe_single().execute() if s.get('cashier_id') else None
-            cb_data = getattr(cb, 'data', None) if cb else None
-            s['cashier_name'] = f"{cb_data['first_name']} {cb_data['last_name']}" if cb_data else ''
-            br = sdb.table('branches').select('name').eq('id', s['branch_id']).maybe_single().execute() if s.get('branch_id') else None
-            br_data = getattr(br, 'data', None) if br else None
-            s['branch_name'] = br_data['name'] if br_data else ''
-            items = sdb.table('sale_items').select('description').eq('sale_id', s['id']).limit(3).execute()
-            descs = [i.get('description') or '—' for i in (items.data or [])]
+            s['cashier_name'] = cashier_map.get(s.get('cashier_id'), '')
+            s['branch_name'] = branch_map.get(s.get('branch_id'), '')
+            descs = items_by_sale.get(s['id'], [])
             s['items_summary'] = ', '.join(descs[:2]) + (f' +{len(descs)-2} más' if len(descs) > 2 else '')
-            pays = sdb.table('payments').select('payment_method').eq('sale_id', s['id']).execute()
-            methods = list({p['payment_method'] for p in (pays.data or [])})
-            s['payment_methods'] = methods
+            s['payment_methods'] = list(methods_by_sale.get(s['id'], set()))
         # Optional filter by payment_method (post-fetch since payments are separate)
         if payment_method:
             sales = [s for s in sales if payment_method in (s.get('payment_methods') or [])]
