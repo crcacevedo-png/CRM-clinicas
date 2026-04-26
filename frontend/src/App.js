@@ -38,6 +38,7 @@ import SalesPage from "./pages/clinic/SalesPage";
 import AccountsReceivablePage from "./pages/clinic/AccountsReceivablePage";
 import ExpensesPage from "./pages/clinic/ExpensesPage";
 import CommissionsPage from "./pages/clinic/CommissionsPage";
+import ReportsPage from "./pages/clinic/ReportsPage";
 
 function App() {
   return (
@@ -93,6 +94,7 @@ function App() {
             <Route path="cuentas" element={<AccountsReceivablePage />} />
             <Route path="gastos" element={<ExpensesPage />} />
             <Route path="comisiones" element={<CommissionsPage />} />
+            <Route path="reportes" element={<ReportsPage />} />
           </Route>
 
           {/* Default Redirect */}

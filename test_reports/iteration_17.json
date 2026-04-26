@@ -1,0 +1,83 @@
+{
+  "summary": "Financial Reports module — Backend: 21/21 pytest pass (100%) covering all 6 endpoints (executive-summary, income, pnl, pnl-pdf, inventory, by-branch). Validated auth gating (5 endpoints all return 401/403 unauthenticated), executive-summary structure (period, kpis with 8 required keys, trend_12m exactly 12 months, income_by_method, expenses_by_category, income_by_branch) for current_month + previous_month + quarter + year + custom (with date_from=2025-01-01 / date_to=2026-01-31 echoed back correctly), income endpoint returns total_income/sales_count/time_series/top_products(<=10)/top_services(<=10)/by_doctor/by_method and supports grouping=day|week|month, P&L returns full {current, previous} structure each containing income(services+products+other+total), cogs, gross_margin, expenses(by_category+total), ebit_before_commissions, commissions, net_profit, net_margin_pct, pnl-pdf returns signed URL with content-type application/pdf, inventory returns valuation(cost_total+retail_total+potential_margin+by_branch+by_category)+no_movement_products+top_sold_90d+expiring+movements_30d and supports days_no_movement=30|60|90, by-branch returns branches[] with income/expenses/profit/sales_count/appointments/avg_ticket + totals. Frontend: full E2E via Playwright — login as carlos@lasalud.gt → sidebar 'Reportes' link navigates to /dashboard/reportes (feature flag financial_reports enabled), all 5 tabs render and switch correctly. Summary tab shows 8 KPI cards (Ingresos Q6980, Gastos Q3136, Utilidad neta Q3544 with 50.8% margen, CxC pendiente Q820, Ticket promedio Q498.57, Pacientes nuevos 5, Citas 15, # Ventas 14) + 6 recharts SVGs (LineChart 12-meses ingresos vs gastos, BarChart método pago, PieChart distribución gastos, BarChart horizontal sucursal). Period change Mes actual → Mes anterior reloads data correctly. Income tab shows Total Q6980, Tendencia LineChart, Top servicios (4 rows incl TEST_Consulta_Upd Q2740/TEST_CommServ Q2000), Ingresos por médico (Dr(a). prueba 2 Q1560), BarChart método pago, CSV export button visible. P&L tab renders full table with columns Actual (2026-04-01 → 2026-04-26) vs Anterior + Δ%, INGRESOS/MARGEN BRUTO/TOTAL GASTOS/UTILIDAD ANTES DE COMISIONES/UTILIDAD NETA hierarchy, UTILIDAD NETA highlighted in teal Q3544, Margen neto 50.8%, Exportar PDF button found. Inventario tab shows Valor a costo Q700 / Valor a precio venta Q2100 / Margen potencial Q1400 + Por sucursal + Por categoría tables + Sin movimiento (60 días) with TEST_Producto + Top vendidos. Por sucursal tab shows matrix table (Sede Central Q6980 ingresos / Sucursal Zona 15 Q0 / TOTAL Q6980) + 2 BarCharts (Ingresos por sucursal + Utilidad por sucursal). No on-page errors detected. Recurring recharts warning 'width(-1) and height(-1) of chart should be greater than 0' fires on hidden tabs but does not block render.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /clinic/reports/executive-summary", "issue": "12 serial queries to sales + 12 to expenses for trend_12m loop (lines 5531-5540) — endpoint takes 5-8s for a clinic with little data; will scale poorly. Recommend a single grouped query (Postgres date_trunc) or month-bucketing in Python over a single date-range fetch."},
+      {"endpoint": "GET /clinic/reports/executive-summary", "issue": "income_by_branch issues per-branch maybe_single() to fetch branch name (line 5564). Should pre-fetch all clinic branches into a dict once and look up locally."},
+      {"endpoint": "GET /clinic/reports/executive-summary", "issue": "Generic except Exception → HTTPException(500, 'Error') hides root cause; log message captured but client gets opaque 'Error'. Use specific error detail in non-prod."},
+      {"endpoint": "GET /clinic/reports/pnl", "issue": "Computes current+previous in same handler; consider parallelizing fetches via asyncio.gather (currently synchronous)."},
+      {"endpoint": "GET /clinic/reports/inventory", "issue": "If clinic has many products, no pagination on no_movement_products list — could grow unbounded."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ReportsPage — All tabs", "issues": [
+        "Recharts ResponsiveContainer renders inside hidden TabsContent and fires 'width(-1) height(-1)' warnings ~12 times on tab switches. Not a visual bug but pollutes console — consider lazy-mounting chart bodies only when tab is active (e.g., {tab==='summary' && <SummaryTab/>}).",
+        "Summary tab shows 8 KPI cards in 4-column grid → second row only has 4 cards visually balanced, OK on desktop but on tab/mobile the 'Citas / # Ventas' row will be cramped (grid-cols-2 md:grid-cols-4). Could benefit from grid-cols-2 sm:grid-cols-3 md:grid-cols-4.",
+        "PeriodPicker uses native <input type='date'> for custom range (lines 80-81) — recurring feedback across modules, should use shadcn Calendar popover for consistency.",
+        "P&L 'Exportar PDF' button has no data-testid; selector relied on text 'PDF'.",
+        "Income tab 'Top servicios' table has no header row (just rows); could be confusing — add TableHeader with 'Servicio / Cant. / Total'.",
+        "Inventory tab no Calendar/date filter for movements; only days_no_movement select. Acceptable but limited.",
+        "On-page text uses 'Q{value}' formatting in SummaryTab via prefix='Q' but other places use 'Q{value.toFixed(2)}' — minor inconsistency in number formatting (some show '5.00' for integer counts like new_patients which is awkward; should use Math.round or no decimals for count metrics)."
+      ]}
+    ]
+  },
+  "passed_tests": [
+    "Backend: Auth gating on all 5 reports endpoints (401/403)",
+    "Backend: GET /clinic/reports/executive-summary?period=current_month — full structure incl 8 KPIs + trend_12m len==12",
+    "Backend: executive-summary period=previous_month/quarter/year all 200 OK",
+    "Backend: executive-summary period=custom echoes provided date_from/date_to",
+    "Backend: GET /clinic/reports/income — total_income/sales_count/time_series/top_products(<=10)/top_services(<=10)/by_doctor/by_method present",
+    "Backend: income grouping=day|week|month all return 200",
+    "Backend: GET /clinic/reports/pnl — full {current, previous} structure with all required nested keys",
+    "Backend: GET /clinic/reports/pnl-pdf — signed URL returned + verified content-type pdf",
+    "Backend: GET /clinic/reports/inventory — valuation+no_movement+top_sold+expiring+movements present",
+    "Backend: inventory days_no_movement=30/60/90 all 200",
+    "Backend: GET /clinic/reports/by-branch — branches[] + totals with required row keys",
+    "Frontend: Sidebar Reportes link navigates to /dashboard/reportes",
+    "Frontend: All 5 tabs (Resumen ejecutivo / Ingresos / Estado de resultados / Inventario / Por sucursal) render and switch",
+    "Frontend: Summary tab — 8 KPI cards with values + 6 recharts SVGs (LineChart 12m, BarChart método, PieChart gastos, BarChart sucursal)",
+    "Frontend: Period change current_month → previous_month reloads",
+    "Frontend: Income tab — Total Q6980, Top servicios populated, médico, BarChart método, CSV export button visible",
+    "Frontend: P&L tab — full hierarchy table + UTILIDAD NETA highlighted teal + Exportar PDF button visible + columns Actual (date range) vs Anterior + Δ%",
+    "Frontend: Inventory tab — valuation cards Q700/Q2100/Q1400 + Por sucursal/categoría tables + Sin movimiento with TEST_Producto + Top vendidos card",
+    "Frontend: Por sucursal tab — matrix table (Sede Central + Sucursal Zona 15 + TOTAL row) + 2 BarCharts (Ingresos + Utilidad por sucursal)",
+    "Frontend: No on-page error messages on any tab"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_reports.py",
+    "/app/test_reports/pytest/pytest_reports.xml"
+  ],
+  "action_items": [
+    "RECOMMEND (MED): collapse executive-summary trend_12m loop into a single grouped Postgres query (date_trunc) or one fetch + Python bucketing — currently 24 serial queries → 5-8s endpoint latency.",
+    "RECOMMEND (LOW): pre-fetch branch dictionary in executive-summary instead of per-branch maybe_single().",
+    "RECOMMEND (LOW): lazy-mount chart bodies only on active tab to silence recharts width(-1)/height(-1) warnings.",
+    "RECOMMEND (LOW): replace HTTPException(500, 'Error') with a more specific detail (or at least propagate logger error reference id).",
+    "RECOMMEND (LOW): asyncio.gather for current+previous fetches in /pnl.",
+    "RECOMMEND (LOW): add data-testid='pnl-pdf-btn' to Exportar PDF button for stable selector.",
+    "RECOMMEND (LOW): add TableHeader to Top servicios / Top productos tables in IncomeTab.",
+    "RECOMMEND (LOW): use no decimals (or Math.round) for count metrics (new_patients/appointments/sales_count) instead of '.toFixed(2)' in KpiCard — currently shows '5.00' for 5 patients.",
+    "RECOMMEND (LOW): paginate no_movement_products to prevent unbounded growth on large catalogues.",
+    "RECOMMEND (LOW): replace native <input type='date'> in PeriodPicker custom range with shadcn Calendar popover (recurring feedback)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 6060 lines — reports module adds another ~600 lines on top of commissions. Strongly recommend splitting into per-resource routers (reports, commissions, sales, ar, etc) — this same feedback has been repeated in iterations 14-17.",
+    "executive-summary endpoint is functionally correct but has O(N) per-branch lookups and a 12-month serial loop. As clinic data grows, this will exceed the current 5-8s ceiling and frontend timeout (default 10s axios) becomes a real risk. Should optimize before scaling beyond 100 sales/month.",
+    "ReportsPage.js is 647 lines and contains 5 large tab components inline. Consider extracting SummaryTab/IncomeTab/PnLTab/InventoryTab/BranchTab into separate files under /pages/clinic/reports/ for maintainability.",
+    "_period_dates default 'current_month' returns first-day-of-month → today, but if today is the 1st it returns same date both ways — harmless edge case but worth noting.",
+    "KpiCard formats integers with .toFixed(2) when value is number — '5.00 pacientes nuevos' is awkward UX; should detect integer counts vs currency values."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reports.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "carlos@lasalud.gt / Test123456!",
+  "seed_data_creation": "None — used existing fixtures (Sede Central + Sucursal Zona 15 + 14 sales + Q6980 income + Q3136 expenses + 1 product + 1 commission rule)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reports module is fully functional end-to-end. All 6 endpoints (executive-summary, income, pnl, pnl-pdf, inventory, by-branch) validated structurally + auth-gated. UI renders all 5 tabs with correct data. The only non-trivial concern is performance of executive-summary (24 serial Supabase queries for trend_12m) — currently 5-8s, will degrade as data grows. No bugs to retest; recommendations are perf/polish only.",
+  "rca of the issue": "N/A — no bugs found; only recommendations in action_items."
+}
