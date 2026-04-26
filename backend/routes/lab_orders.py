@@ -19,6 +19,7 @@ from core import (
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
     require_clinical_role,
+    validate_uuid,
 )
 
 # ============== LAB ORDER ROUTES ==============
@@ -85,18 +86,22 @@ async def list_lab_orders(
 
 @router.get("/clinic/lab-orders/{order_id}")
 async def get_lab_order(order_id: str, ctx=Depends(require_clinic_member)):
+    validate_uuid(order_id, "order_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
         result = sdb.table('lab_orders').select('*').eq('id', order_id).eq('clinic_id', clinic_id).maybe_single().execute()
-        if not result.data:
+        data = getattr(result, 'data', None) if result else None
+        if not data:
             raise HTTPException(status_code=404, detail="Orden no encontrada")
-        order = result.data
+        order = data
         pat = sdb.table('patients').select('*').eq('id', order['patient_id']).maybe_single().execute()
-        order['patient'] = pat.data if pat.data else {}
+        pat_data = getattr(pat, 'data', None) if pat else None
+        order['patient'] = pat_data or {}
         if order['patient']:
             order['patient'].pop('search_vector', None)
         doc = sdb.table('clinic_members').select('first_name,last_name,specialty,license_number').eq('id', order['doctor_id']).maybe_single().execute()
-        order['doctor'] = doc.data if doc.data else {}
+        doc_data = getattr(doc, 'data', None) if doc else None
+        order['doctor'] = doc_data or {}
         items = sdb.table('lab_order_items').select('*').eq('lab_order_id', order_id).order('sort_order').execute()
         order['items'] = items.data or []
         return order
@@ -150,10 +155,12 @@ async def create_lab_order(data: LabOrderCreate, ctx=Depends(require_clinic_memb
 
 @router.get("/clinic/lab-orders/{order_id}/pdf-url")
 async def get_lab_order_pdf_url(order_id: str, ctx=Depends(require_clinic_member)):
+    validate_uuid(order_id, "order_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
         order = sdb.table('lab_orders').select('id').eq('id', order_id).eq('clinic_id', clinic_id).maybe_single().execute()
-        if not order.data:
+        order_data = getattr(order, 'data', None) if order else None
+        if not order_data:
             raise HTTPException(status_code=404, detail="Orden no encontrada")
         path = f"{clinic_id}/lab-orders/{order_id}.pdf"
         signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)

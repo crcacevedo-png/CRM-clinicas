@@ -19,6 +19,7 @@ from core import (
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
     CLINICAL_ROLES, require_clinical_role,
+    validate_uuid,
 )
 
 # ============== CONSULTATION TEMPLATES ROUTES ==============
@@ -250,6 +251,7 @@ async def list_patient_medical_records(
 @router.get("/clinic/medical-records/{record_id}")
 async def get_medical_record(record_id: str, ctx=Depends(require_clinic_member)):
     """Get a single medical record"""
+    validate_uuid(record_id, "record_id")
     clinic_id = ctx["member"]["clinic_id"]
     role = ctx["member"].get("role", "")
 
@@ -258,15 +260,18 @@ async def get_medical_record(record_id: str, ctx=Depends(require_clinic_member))
 
     try:
         result = sdb.table('medical_records').select('*').eq('id', record_id).eq('clinic_id', clinic_id).maybe_single().execute()
-        if not result.data:
+        data = getattr(result, 'data', None) if result else None
+        if not data:
             raise HTTPException(status_code=404, detail="Registro no encontrado")
 
-        record = result.data
+        record = data
         doc = sdb.table('clinic_members').select('first_name,last_name').eq('id', record.get('doctor_id', '')).maybe_single().execute()
-        record['doctor_name'] = f"{doc.data['first_name']} {doc.data['last_name']}" if doc.data else ""
+        doc_data = getattr(doc, 'data', None) if doc else None
+        record['doctor_name'] = f"{doc_data['first_name']} {doc_data['last_name']}" if doc_data else ""
 
         patient = sdb.table('patients').select('first_name,last_name').eq('id', record.get('patient_id', '')).maybe_single().execute()
-        record['patient_name'] = f"{patient.data['first_name']} {patient.data['last_name']}" if patient.data else ""
+        patient_data = getattr(patient, 'data', None) if patient else None
+        record['patient_name'] = f"{patient_data['first_name']} {patient_data['last_name']}" if patient_data else ""
 
         if role not in CLINICAL_ROLES:
             record.pop('private_notes', None)

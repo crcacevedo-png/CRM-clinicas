@@ -19,6 +19,7 @@ from core import (
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
     require_clinical_role,
+    validate_uuid,
 )
 
 # ============== PRESCRIPTION ROUTES ==============
@@ -109,18 +110,22 @@ async def list_prescriptions(
 
 @router.get("/clinic/prescriptions/{presc_id}")
 async def get_prescription(presc_id: str, ctx=Depends(require_clinic_member)):
+    validate_uuid(presc_id, "presc_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
         result = sdb.table('prescriptions').select('*').eq('id', presc_id).eq('clinic_id', clinic_id).maybe_single().execute()
-        if not result.data:
+        data = getattr(result, 'data', None) if result else None
+        if not data:
             raise HTTPException(status_code=404, detail="Receta no encontrada")
-        presc = result.data
+        presc = data
         pat = sdb.table('patients').select('*').eq('id', presc['patient_id']).maybe_single().execute()
-        presc['patient'] = pat.data if pat.data else {}
+        pat_data = getattr(pat, 'data', None) if pat else None
+        presc['patient'] = pat_data or {}
         if presc['patient']:
             presc['patient'].pop('search_vector', None)
         doc = sdb.table('clinic_members').select('first_name,last_name,specialty,license_number').eq('id', presc['doctor_id']).maybe_single().execute()
-        presc['doctor'] = doc.data if doc.data else {}
+        doc_data = getattr(doc, 'data', None) if doc else None
+        presc['doctor'] = doc_data or {}
         items = sdb.table('prescription_items').select('*').eq('prescription_id', presc_id).order('sort_order').execute()
         presc['items'] = items.data or []
         return presc
@@ -424,10 +429,12 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
 @router.get("/clinic/prescriptions/{presc_id}/pdf-url")
 async def get_prescription_pdf_url(presc_id: str, ctx=Depends(require_clinic_member)):
     """Get a fresh signed URL for the prescription PDF"""
+    validate_uuid(presc_id, "presc_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
         presc = sdb.table('prescriptions').select('id').eq('id', presc_id).eq('clinic_id', clinic_id).maybe_single().execute()
-        if not presc.data:
+        presc_data = getattr(presc, 'data', None) if presc else None
+        if not presc_data:
             raise HTTPException(status_code=404, detail="Receta no encontrada")
         path = f"{clinic_id}/prescriptions/{presc_id}.pdf"
         signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)

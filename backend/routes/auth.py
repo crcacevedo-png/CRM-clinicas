@@ -72,3 +72,32 @@ async def logout(user=Depends(get_current_user)):
         pass
     return {"message": "Sesion cerrada correctamente"}
 
+@router.get("/auth/me")
+async def auth_me(user=Depends(get_current_user)):
+    """Return identity + role payload for the authenticated user."""
+    sa = sdb.table('super_admins').select('id,first_name,last_name,email').eq('user_id', user.id).maybe_single().execute()
+    sa_data = getattr(sa, 'data', None) if sa else None
+    if sa_data:
+        return {
+            "user_id": user.id,
+            "email": user.email,
+            "user_type": "super_admin",
+            "name": f"{sa_data.get('first_name','')} {sa_data.get('last_name','')}".strip(),
+            "clinic_id": None,
+            "role": "super_admin",
+        }
+    cm = sdb.table('clinic_members').select('id,clinic_id,role,first_name,last_name,specialty').eq('user_id', user.id).eq('is_active', True).maybe_single().execute()
+    cm_data = getattr(cm, 'data', None) if cm else None
+    if cm_data:
+        return {
+            "user_id": user.id,
+            "email": user.email,
+            "user_type": "clinic_member",
+            "name": f"{cm_data.get('first_name','')} {cm_data.get('last_name','')}".strip(),
+            "clinic_id": cm_data.get('clinic_id'),
+            "member_id": cm_data.get('id'),
+            "role": cm_data.get('role'),
+            "specialty": cm_data.get('specialty'),
+        }
+    raise HTTPException(status_code=403, detail="Usuario sin acceso")
+

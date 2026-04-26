@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useFeatures } from '../../context/FeatureContext';
@@ -472,8 +472,8 @@ export default function AgendaPage() {
 
           {/* Time slots */}
           {slots.map((slotMin) => (
-            <>
-              <div key={`t-${slotMin}`} className="border-r border-b border-slate-100 h-16 flex items-start justify-end pr-2 pt-1">
+            <Fragment key={`row-${slotMin}`}>
+              <div className="border-r border-b border-slate-100 h-16 flex items-start justify-end pr-2 pt-1">
                 <span className="text-[10px] font-medium text-slate-400">{formatTime(slotMin)}</span>
               </div>
               {weekDates.map((date, dayIdx) => {
@@ -521,7 +521,7 @@ export default function AgendaPage() {
                   </div>
                 );
               })}
-            </>
+            </Fragment>
           ))}
         </div>
       </div>

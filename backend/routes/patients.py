@@ -18,6 +18,7 @@ from core import (
     ICD10CodeCreate, ICD10BulkImport,
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
+    validate_uuid,
 )
 
 # ============== PATIENT ROUTES (CLINIC) ==============
@@ -110,13 +111,15 @@ async def create_patient(data: PatientFullCreate, ctx=Depends(require_clinic_mem
 
 @router.get("/clinic/patients/{patient_id}")
 async def get_patient(patient_id: str, ctx=Depends(require_clinic_member)):
+    validate_uuid(patient_id, "patient_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
         result = sdb.table('patients').select('*').eq('id', patient_id).eq('clinic_id', clinic_id).maybe_single().execute()
-        if not result.data:
+        data = getattr(result, 'data', None) if result else None
+        if not data:
             raise HTTPException(status_code=404, detail="Paciente no encontrado")
 
-        patient = result.data
+        patient = data
         # Remove search_vector from response
         patient.pop('search_vector', None)
 

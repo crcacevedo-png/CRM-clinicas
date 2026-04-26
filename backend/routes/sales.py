@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 router = APIRouter()
 
-from core import sdb, supabase_admin, require_clinic_member, now_iso, logger
+from core import sdb, supabase_admin, require_clinic_member, now_iso, logger, validate_uuid
 
 from routes.commissions import _compute_commissions_for_sale
 
@@ -483,6 +483,7 @@ async def list_sales(
         raise HTTPException(status_code=500, detail="Error")
 
 @router.get("/clinic/sales/daily-summary")
+@router.get("/clinic/sales/dashboard")
 async def daily_sales_summary(date: str = "", branch_id: str = "", ctx=Depends(require_clinic_member)):
     """Summary cards for /ventas/del-dia."""
     clinic_id = ctx["member"]["clinic_id"]
@@ -522,9 +523,13 @@ async def daily_sales_summary(date: str = "", branch_id: str = "", ctx=Depends(r
 
 @router.get("/clinic/sales/{sale_id}")
 async def get_sale(sale_id: str, ctx=Depends(require_clinic_member)):
+    validate_uuid(sale_id, "sale_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
-        sale = sdb.table('sales').select('*').eq('id', sale_id).eq('clinic_id', clinic_id).single().execute().data
+        sale_resp = sdb.table('sales').select('*').eq('id', sale_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        sale = getattr(sale_resp, 'data', None) if sale_resp else None
+        if not sale:
+            raise HTTPException(status_code=404, detail="Venta no encontrada")
         items = sdb.table('sale_items').select('*').eq('sale_id', sale_id).order('sort_order').execute().data or []
         pays = sdb.table('payments').select('*').eq('sale_id', sale_id).order('paid_at').execute().data or []
         sale['items'] = items
@@ -534,6 +539,8 @@ async def get_sale(sale_id: str, ctx=Depends(require_clinic_member)):
             cb_data = getattr(cb, 'data', None) if cb else None
             sale['cashier_name'] = f"{cb_data['first_name']} {cb_data['last_name']}" if cb_data else ''
         return sale
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Get sale error: {e}")
         raise HTTPException(status_code=500, detail="Error")

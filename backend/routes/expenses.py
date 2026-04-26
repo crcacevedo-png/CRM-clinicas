@@ -58,6 +58,7 @@ async def expenses_dashboard(branch_id: str = "", ctx=Depends(require_clinic_mem
         raise HTTPException(status_code=500, detail="Error")
 
 @router.get("/clinic/expenses/by-category")
+@router.get("/clinic/expenses/categories")
 async def expenses_by_category(date_from: str = "", date_to: str = "", branch_id: str = "", ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
     try:

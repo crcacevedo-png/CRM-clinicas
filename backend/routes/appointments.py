@@ -161,6 +161,7 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
 
         # Sync to Google Calendar (non-blocking)
         try:
+            from routes.google_calendar import sync_appointment_to_gcal
             await sync_appointment_to_gcal(doc, "create")
         except Exception as gcal_err:
             logger.warning(f"Google Calendar sync failed (create): {gcal_err}")
@@ -236,6 +237,7 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
 
         # Sync to Google Calendar (non-blocking)
         try:
+            from routes.google_calendar import sync_appointment_to_gcal
             await sync_appointment_to_gcal(apt, "update")
         except Exception as gcal_err:
             logger.warning(f"Google Calendar sync failed (update): {gcal_err}")
@@ -270,6 +272,7 @@ async def change_appointment_status(apt_id: str, data: AppointmentStatusUpdate, 
             try:
                 apt_full = sdb.table('appointments').select('id,doctor_id,google_event_id').eq('id', apt_id).maybe_single().execute()
                 if apt_full.data and apt_full.data.get('google_event_id'):
+                    from routes.google_calendar import sync_appointment_to_gcal
                     await sync_appointment_to_gcal(apt_full.data, "delete")
             except Exception as gcal_err:
                 logger.warning(f"Google Calendar sync failed (cancel): {gcal_err}")

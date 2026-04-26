@@ -164,10 +164,10 @@ class TestPrescriptionsModule:
             print(f"  First medication: {item['medication_name']}")
     
     def test_get_prescription_not_found(self):
-        """Test GET /api/clinic/prescriptions/:id with invalid ID returns 404"""
+        """Test GET /api/clinic/prescriptions/:id with malformed ID returns 422 (UUID validation) or 404"""
         response = self.session.get(f"{BASE_URL}/api/clinic/prescriptions/invalid-id-12345")
-        assert response.status_code == 404, f"Expected 404, got {response.status_code}"
-        print("✓ Invalid prescription ID returns 404")
+        assert response.status_code in (404, 422), f"Expected 404 or 422, got {response.status_code}"
+        print(f"✓ Invalid prescription ID returns {response.status_code}")
     
     # ============== CREATE PRESCRIPTION TESTS ==============
     

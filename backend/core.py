@@ -146,6 +146,14 @@ def require_clinical_role(ctx):
         raise HTTPException(status_code=403, detail="Acceso restringido a médicos y administradores clínicos")
     return ctx
 
+def validate_uuid(value: str, label: str = "ID") -> str:
+    """Validate a path-param UUID. Returns the value unchanged or raises HTTP 422."""
+    try:
+        uuid.UUID(str(value))
+        return value
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=422, detail=f"{label} inválido (UUID requerido)")
+
 def get_clinic_features(clinic_id: str) -> set:
     """Resolve the active feature codes for a clinic (plan + overrides)."""
     try:
