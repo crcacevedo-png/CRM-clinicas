@@ -98,18 +98,33 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [x] **REFACTOR: server.py modularizado** (26 Abril 2026):
   - [x] **Fase 1**: server.py reducido de 6060 → 3472 líneas (-43%); 6 routers extraídos
   - [x] **Fase 2** (26 Abril 2026): server.py reducido de 3472 → **126 líneas** (-98% del original)
-  - [x] Creado `/app/backend/core.py` (280 líneas): Supabase clients (`supabase_user`, `supabase_admin`, `supabase_anon`, `sdb`), Settings, logger, helpers (`generate_password`, `now_iso`, `get_plan_limits`, `parse_presentations`, `get_auth_users_map`, `enrich_member`), auth deps (`get_current_user`, `require_super_admin`, `require_clinic_member`, `require_clinical_role`, `CLINICAL_ROLES`) y todos los modelos Pydantic compartidos
+  - [x] Creado `/app/backend/core.py` (280 líneas): Supabase clients (`supabase_user`, `supabase_admin`, `supabase_anon`, `sdb`), Settings, logger, helpers (`generate_password`, `now_iso`, `get_plan_limits`, `parse_presentations`, `get_auth_users_map`, `enrich_member`, `get_clinic_features`), auth deps (`get_current_user`, `require_super_admin`, `require_clinic_member`, `require_clinical_role`, `CLINICAL_ROLES`) y todos los modelos Pydantic compartidos
   - [x] 18 routers totales en `/app/backend/routes/`: auth, super_admin, catalogs, clinic_settings, branches, feature_flags, patients, appointments, medical_records, prescriptions, lab_orders, google_calendar, inventory, expenses, commissions, sales, accounts_receivable, reports
   - [x] `server.py` ahora solo contiene FastAPI app, startup_event, /health, /generate-password y mount de routers
   - [x] Eliminado patrón `from server import ...` que causaba circular imports
   - [x] Bug fix testing agent: `require_clinical_role` faltante en prescriptions/lab_orders → resuelto promoviendo helper a `core.py`
   - [x] Tested iteration_19: **44/44 PASS** suite de regresión + endpoints E2E verificados con curl
 
+- [x] **DASHBOARD ROL-AWARE (PROMPT A9)** (26 Abril 2026):
+  - [x] Backend `/api/clinic/dashboard` extendido: nuevos campos `role`, `features`, `admin_stats`, `alerts`, `income_chart`, `my_commissions_month` (todos backwards-compatible)
+  - [x] Helper `core.get_clinic_features(clinic_id)` reutilizable (plan + overrides) extraído del router de feature_flags
+  - [x] Cards condicionales por feature: sales→ventas hoy + pendiente cobro; inventory→stock bajo + próximos a vencer; expenses→gastos del mes; commissions→comisiones del mes
+  - [x] Sección "Alertas y notificaciones" (5 tipos): low_stock, expiring (60d), ar_overdue, installment_overdue, cash_session abierta >18h, cada una con link directo a la página correspondiente
+  - [x] Gráfica `recharts` LineChart de ingresos diarios del mes (solo si feature `financial_reports` activo)
+  - [x] **Vista por rol**:
+    - doctor: dashboard simplificado — sus citas del día, sus pacientes recientes, sus comisiones del mes (si aplica)
+    - clinic_admin / cashier: dashboard completo con admin stats + alertas + gráfica + acciones rápidas (incluyendo "Nueva venta")
+    - assistant / receptionist: intermedio — agenda + tarjeta de caja + alertas
+  - [x] Frontend reescrito con sub-componentes: AdminStatsRow, AlertsCard, IncomeChartCard, MyCommissionsCard, CashSessionCard, badge de rol visible
+  - [x] Tested iteration_20: 100% backend (19/19), 100% frontend Playwright (16/16 asserts), zero console errors
+
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
 - [ ] Dropdown sucursal en formulario de nueva cita - P1
 - [ ] Endpoints faltantes detectados por testing agent (P2): /api/auth/me, /api/clinic/expenses/categories (alias de /by-category), /api/clinic/sales/dashboard (alias de /daily-summary)
 - [ ] Mejora 422-vs-500 en path params no-UUID (sales/{id}, prescriptions/{id}, lab-orders/{id}, patients/{id}) - P2
+- [ ] Optimización N+1 en /api/clinic/dashboard (loops por paciente/médico/stock) - P2
+- [ ] Cobertura de pruebas para roles doctor/receptionist en dashboard (no hay usuarios pre-seed) - P2
 - [ ] Importacion CSV para catalogos - P2
 - [ ] Notificaciones/recordatorios - P2
 - [ ] WhatsApp via n8n - P2

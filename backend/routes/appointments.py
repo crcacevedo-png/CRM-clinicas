@@ -416,12 +416,10 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
                         "count": overdue,
                     })
                 # Overdue installments (filter via clinic's AR ids since installments table has no clinic_id)
-                ar_ids = [a.get('id') for a in ar_rows] if False else None  # ar_rows above didn't select id; query AR ids fresh
                 ar_ids_resp = sdb.table('accounts_receivable').select('id').eq('clinic_id', clinic_id).execute()
                 ar_id_list = [a['id'] for a in (ar_ids_resp.data or [])]
                 inst_overdue = 0
                 if ar_id_list:
-                    # Supabase SDK needs in_() chunks; here ar_id_list is small enough
                     installments = sdb.table('payment_plan_installments').select('id,due_date,status').in_('account_receivable_id', ar_id_list).neq('status', 'paid').execute()
                     for i in (installments.data or []):
                         if not i.get('due_date'):
