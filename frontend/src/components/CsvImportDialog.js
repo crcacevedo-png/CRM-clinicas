@@ -7,18 +7,20 @@ import { Upload, FileText, CheckCircle2, AlertCircle, Download } from 'lucide-re
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const CATALOG_LABELS = {
-  medications: 'Medicamentos',
-  'lab-studies': 'Estudios de Laboratorio',
-  icd10: 'Códigos CIE-10',
-  patients: 'Pacientes',
-};
-
 const ENDPOINT_MAP = {
   medications: { import: '/admin/catalogs/medications/import-csv', template: '/admin/catalogs/medications/csv-template' },
   'lab-studies': { import: '/admin/catalogs/lab-studies/import-csv', template: '/admin/catalogs/lab-studies/csv-template' },
   icd10: { import: '/admin/catalogs/icd10/import-csv', template: '/admin/catalogs/icd10/csv-template' },
   patients: { import: '/clinic/patients-bulk/import', template: '/clinic/patients-bulk/template' },
+  inventory: { import: '/clinic/inventory-bulk/import', template: '/clinic/inventory-bulk/template' },
+};
+
+const CATALOG_LABELS = {
+  medications: 'Medicamentos',
+  'lab-studies': 'Estudios de Laboratorio',
+  icd10: 'Códigos CIE-10',
+  patients: 'Pacientes',
+  inventory: 'Productos / Inventario',
 };
 
 /**

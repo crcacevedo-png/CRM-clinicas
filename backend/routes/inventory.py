@@ -363,3 +363,331 @@ async def process_po_receive(po_id: str, clinic_id: str, branch_id: str, perform
     # Mark PO as received
     sdb.table('purchase_orders').update({"status": "received", "received_at": now_iso(), "updated_at": now_iso()}).eq('id', po_id).execute()
 
+
+
+
+# ============== BULK PRODUCT IMPORT (CSV / XLSX) ==============
+
+PRODUCT_REQUIRED = ["name"]
+PRODUCT_OPTIONAL = [
+    "sku", "barcode", "description", "brand", "presentation", "category",
+    "cost_price", "sale_price", "tax_rate", "unit",
+    "min_stock", "max_stock", "requires_prescription", "has_expiration",
+    "initial_stock",  # seeds inventory_stock for the active/main branch
+]
+
+def _parse_product_row(row: dict) -> dict:
+    """Normalize a row dict into a Supabase-ready product document."""
+    def s(field):
+        v = row.get(field)
+        if v is None:
+            return ""
+        if isinstance(v, (int, float)):
+            # Avoid trailing .0 for ints
+            if isinstance(v, float) and v.is_integer():
+                return str(int(v)).strip()
+            return str(v).strip()
+        return str(v).strip()
+
+    def num(field, default=0.0):
+        raw = s(field)
+        if not raw:
+            return default
+        try:
+            return float(raw.replace(",", "."))
+        except (ValueError, TypeError):
+            return default
+
+    def boolish(field, default=False):
+        raw = s(field).lower()
+        if not raw:
+            return default
+        return raw in ("1", "true", "yes", "y", "si", "sí", "verdadero")
+
+    return {
+        "name": s("name"),
+        "sku": s("sku") or None,
+        "barcode": s("barcode") or None,
+        "description": s("description") or None,
+        "brand": s("brand") or None,
+        "presentation": s("presentation") or None,
+        "_category_label": s("category") or None,  # resolved to category_id below
+        "cost_price": num("cost_price"),
+        "sale_price": num("sale_price"),
+        "tax_rate": num("tax_rate", 12),
+        "unit": s("unit") or "unidad",
+        "min_stock": int(num("min_stock")),
+        "max_stock": int(num("max_stock")) if s("max_stock") else None,
+        "requires_prescription": boolish("requires_prescription"),
+        "has_expiration": boolish("has_expiration"),
+        "_initial_stock": num("initial_stock"),
+    }
+
+def _parse_xlsx_simple(raw: bytes) -> list:
+    """Parse .xlsx into list of row dicts (mirrors patients._parse_xlsx)."""
+    import io as _io
+    from openpyxl import load_workbook
+    wb = load_workbook(filename=_io.BytesIO(raw), read_only=True, data_only=True)
+    ws = wb.active
+    rows = ws.iter_rows(values_only=True)
+    headers = next(rows, None)
+    if not headers:
+        raise HTTPException(status_code=400, detail="XLSX sin encabezados")
+    norm_headers = [(str(h or "").strip().lower().replace(" ", "_")) for h in headers]
+    out = []
+    for row in rows:
+        if all(c is None or str(c).strip() == "" for c in row):
+            continue
+        out.append({norm_headers[i]: c for i, c in enumerate(row) if i < len(norm_headers)})
+    return out
+
+def _parse_csv_simple(raw: bytes) -> list:
+    """Parse CSV bytes into list of row dicts (mirrors patients._parse_csv)."""
+    import csv as _csv
+    import io as _io
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = raw.decode(enc); break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        raise HTTPException(status_code=400, detail="No se pudo decodificar el CSV (use UTF-8)")
+    sample = text[:2048]
+    try:
+        dialect = _csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except _csv.Error:
+        dialect = _csv.excel
+    reader = _csv.DictReader(_io.StringIO(text), dialect=dialect)
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV sin encabezados")
+    norm_headers = {h: (h or "").strip().lower().replace(" ", "_") for h in reader.fieldnames}
+    return [{norm_headers[k]: v for k, v in r.items() if k in norm_headers} for r in reader]
+
+@router.post("/clinic/inventory-bulk/import")
+async def import_products(
+    file: UploadFile = File(...),
+    branch_id: Optional[str] = None,
+    commit: bool = False,
+    ctx=Depends(require_clinic_member),
+):
+    """Bulk-import products from a CSV or XLSX file.
+
+    Required columns: name
+    Optional: sku, barcode, description, brand, presentation, category, cost_price,
+              sale_price, tax_rate, unit, min_stock, max_stock, requires_prescription,
+              has_expiration, initial_stock
+
+    Dedup: case-insensitive by sku (if provided) → fallback to name+brand
+    initial_stock: when commit=true, seeds inventory_stock at the given branch_id
+                   (or the clinic's main branch if not provided).
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Archivo supera el límite de 5 MB")
+    fname = (file.filename or "").lower()
+    if fname.endswith(".xlsx"):
+        rows = _parse_xlsx_simple(raw)
+    elif fname.endswith(".csv"):
+        rows = _parse_csv_simple(raw)
+    else:
+        raise HTTPException(status_code=400, detail="Formato no soportado (use .csv o .xlsx)")
+    if not rows:
+        raise HTTPException(status_code=400, detail="Archivo sin filas de datos")
+
+    # Verify required headers exist
+    sample_keys = set(rows[0].keys())
+    missing = [r for r in PRODUCT_REQUIRED if r not in sample_keys]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Faltan columnas requeridas: {', '.join(missing)}")
+
+    # Resolve target branch for initial stock seeding (commit mode only)
+    target_branch_id = branch_id
+    if not target_branch_id:
+        br = sdb.table('branches').select('id,is_main').eq('clinic_id', clinic_id).eq('is_active', True).execute()
+        if br.data:
+            main = next((b for b in br.data if b.get('is_main')), None)
+            target_branch_id = (main or br.data[0])['id']
+
+    # Pre-fetch existing products for dedup + categories
+    existing = sdb.table('products').select('sku,name,brand').eq('clinic_id', clinic_id).execute()
+    existing_sku = set()
+    existing_composite = set()
+    for p in (existing.data or []):
+        if p.get('sku'):
+            existing_sku.add(p['sku'].strip().lower())
+        comp = f"{(p.get('name') or '').strip().lower()}|{(p.get('brand') or '').strip().lower()}"
+        existing_composite.add(comp)
+
+    cats = sdb.table('product_categories').select('id,name').eq('clinic_id', clinic_id).execute()
+    cat_by_name = {(c.get('name') or '').strip().lower(): c['id'] for c in (cats.data or [])}
+
+    valid_rows = []  # (product_doc, initial_stock)
+    errors = []
+    skipped_dup = 0
+    preview = []
+    new_categories_to_create = {}  # label_lower -> label
+
+    for idx, raw_row in enumerate(rows, start=2):  # row 1 = header
+        try:
+            doc = _parse_product_row(raw_row)
+            for req in PRODUCT_REQUIRED:
+                if not str(doc.get(req) or "").strip():
+                    errors.append({"row": idx, "field": req, "message": "Campo requerido vacío"})
+                    raise ValueError("missing required")
+            sku_lower = (doc.get("sku") or "").strip().lower()
+            comp = f"{doc['name'].strip().lower()}|{(doc.get('brand') or '').strip().lower()}"
+            if sku_lower and sku_lower in existing_sku:
+                skipped_dup += 1
+                continue
+            if comp in existing_composite:
+                skipped_dup += 1
+                continue
+            if sku_lower:
+                existing_sku.add(sku_lower)
+            existing_composite.add(comp)
+
+            # Resolve / queue category creation
+            cat_label = doc.pop("_category_label", None)
+            initial_stock = doc.pop("_initial_stock", 0) or 0
+            if cat_label:
+                key = cat_label.strip().lower()
+                if key in cat_by_name:
+                    doc["category_id"] = cat_by_name[key]
+                else:
+                    new_categories_to_create[key] = cat_label
+                    doc["category_id"] = None  # will be filled after creation
+
+            doc["id"] = str(uuid.uuid4())
+            doc["clinic_id"] = clinic_id
+            doc["is_active"] = True
+            valid_rows.append((doc, initial_stock, cat_label))
+            if len(preview) < 5:
+                preview.append({
+                    "name": doc["name"],
+                    "sku": doc.get("sku"),
+                    "brand": doc.get("brand"),
+                    "category": cat_label,
+                    "sale_price": doc.get("sale_price"),
+                    "initial_stock": initial_stock,
+                })
+        except ValueError:
+            continue
+        except Exception as e:
+            errors.append({"row": idx, "field": "*", "message": str(e)[:120]})
+
+    imported = 0
+    stock_seeded = 0
+    categories_created = 0
+    commit_errors = []
+    if commit and valid_rows:
+        # First, create any missing categories so we can resolve category_id
+        if new_categories_to_create:
+            cat_docs = [
+                {"id": str(uuid.uuid4()), "clinic_id": clinic_id, "name": label, "is_active": True}
+                for label in new_categories_to_create.values()
+            ]
+            try:
+                sdb.table('product_categories').insert(cat_docs).execute()
+                categories_created = len(cat_docs)
+                for c in cat_docs:
+                    cat_by_name[c['name'].strip().lower()] = c['id']
+            except Exception as e:
+                commit_errors.append({"batch": 0, "message": f"Error al crear categorías: {str(e)[:160]}"})
+
+        # Resolve any pending category_id references now that categories exist
+        for tup in valid_rows:
+            doc, _, cat_label = tup
+            if cat_label and not doc.get("category_id"):
+                doc["category_id"] = cat_by_name.get(cat_label.strip().lower())
+
+        # Insert products in batches
+        BATCH = 500
+        product_docs = [d for d, _, _ in valid_rows]
+        for i in range(0, len(product_docs), BATCH):
+            chunk = product_docs[i:i + BATCH]
+            try:
+                sdb.table('products').insert(chunk).execute()
+                imported += len(chunk)
+            except Exception as e:
+                commit_errors.append({"batch": i // BATCH + 1, "message": str(e)[:200]})
+
+        # Seed inventory_stock for products with initial_stock > 0 at target branch
+        if target_branch_id and not commit_errors:
+            stock_docs = []
+            for doc, initial, _ in valid_rows:
+                if initial and float(initial) > 0:
+                    stock_docs.append({
+                        "id": str(uuid.uuid4()),
+                        "clinic_id": clinic_id,
+                        "branch_id": target_branch_id,
+                        "product_id": doc["id"],
+                        "quantity": int(float(initial)),
+                    })
+            if stock_docs:
+                for i in range(0, len(stock_docs), BATCH):
+                    chunk = stock_docs[i:i + BATCH]
+                    try:
+                        sdb.table('inventory_stock').insert(chunk).execute()
+                        stock_seeded += len(chunk)
+                    except Exception as e:
+                        commit_errors.append({"batch": i // BATCH + 1, "message": f"Stock seed: {str(e)[:160]}"})
+
+    return {
+        "total": len(valid_rows) + len(errors) + skipped_dup,
+        "valid_rows": len(valid_rows),
+        "error_rows": len(errors),
+        "duplicates_skipped": skipped_dup,
+        "errors": errors[:50],
+        "preview": preview,
+        "imported": imported,
+        "categories_created": categories_created,
+        "stock_seeded": stock_seeded,
+        "target_branch_id": target_branch_id,
+        "committed": commit and not commit_errors,
+        "commit_errors": commit_errors,
+    }
+
+@router.get("/clinic/inventory-bulk/template")
+async def products_import_template(format: str = "csv", ctx=Depends(require_clinic_member)):
+    """Download a CSV or XLSX template with required + optional product columns and one example row."""
+    headers = PRODUCT_REQUIRED + PRODUCT_OPTIONAL
+    example = {
+        "name": "Acetaminofén 500mg",
+        "sku": "MED-ACE-500",
+        "barcode": "7501234567890",
+        "brand": "Tylenol",
+        "presentation": "Tableta",
+        "category": "Analgésicos",
+        "cost_price": 1.25,
+        "sale_price": 2.50,
+        "tax_rate": 12,
+        "unit": "unidad",
+        "min_stock": 20,
+        "max_stock": 200,
+        "requires_prescription": "false",
+        "has_expiration": "true",
+        "initial_stock": 50,
+    }
+    if format == "xlsx":
+        from openpyxl import Workbook
+        from fastapi.responses import StreamingResponse
+        import io as _io
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Productos"
+        ws.append(headers)
+        ws.append([example.get(h, "") for h in headers])
+        buf = _io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="plantilla_productos.xlsx"'},
+        )
+    csv_text = ",".join(headers) + "\n" + ",".join(f'"{example.get(h, "")}"' for h in headers) + "\n"
+    return {"filename": "plantilla_productos.csv", "headers": headers, "content": csv_text}

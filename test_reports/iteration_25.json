@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 25 — Bulk inventory/products import via CSV/XLSX. Backend: created /app/backend/tests/test_iter25_inventory_bulk_import.py (12 tests) covering template (csv+xlsx), CSV dry-run with mixed rows (2 valid + 1 missing-required + 1 dup-by-sku-case-insensitive), CSV commit (verifies products inserted, 2 missing categories auto-created in product_categories, 2 stock rows seeded at MAIN branch via inventory_stock with quantity=int 25), re-upload dedup (imported=0, duplicates_skipped>=2), XLSX with native Excel numbers/booleans (verified min_stock=5/max_stock=60 stored as int and has_expiration True / requires_prescription False booleans persist), branch_id=Z15 query override (target_branch_id matches Z15 and stock row created at Z15 with qty=7), category dedup case-insensitive (UPPERCASE label maps to existing -> categories_created=0), and 4 error cases (empty/.pdf/missing-required-column/oversize-5MB). 12/12 PASS in 18.95s. Regression: 131/131 PASS in 111.31s (test_iter24_patients_bulk + test_iter23_p2_csv_import + test_p2_p3_batch + test_branch_filter_p1 + test_phase2_refactor_regression + test_dashboard_prompt_a9). Frontend Playwright on https://super-admin-panel-12.preview.emergentagent.com against carlos@lasalud.gt: sidebar Inventario link navigates to /dashboard/inventario; Productos tab is default; [data-testid=import-products-btn] (teal outline 'Importar') visible next to '+ Nuevo producto'; clicking opens [data-testid=csv-import-dialog] with title 'Importar Productos / Inventario desde CSV o Excel'; both [data-testid=csv-template-btn] and [data-testid=xlsx-template-btn] visible; dropzone hint 'UTF-8, máximo 5 MB. Acepta .csv y .xlsx.' shown; uploading 3-row CSV (2 valid + 1 missing required) triggers dry-run with Total=4 / Válidas=2 / Duplicadas=0 / Errores=2 (note: trailing newline in CSV is parsed as an extra empty row producing one extra 'Campo requerido vacío' on row 5 — same behavior as patients import, not new); preview shows 2 rows; [data-testid=csv-commit-btn] shows 'Importar 2 registros' enabled; [data-testid=csv-cancel-btn] closes dialog cleanly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "Backend GET /api/clinic/inventory-bulk/template?format=csv → 200 with headers (incl. name, category, initial_stock) + content",
+    "Backend GET /api/clinic/inventory-bulk/template?format=xlsx → 200 binary StreamingResponse, Content-Disposition plantilla_productos.xlsx, PK magic bytes",
+    "Backend POST /import?commit=false (4 rows: 2 valid + 1 missing-name + 1 dup-by-sku-case-insensitive) → total=4 valid_rows=2 error_rows=1 duplicates_skipped=1 errors[0].field=name preview len=2 committed=false imported=0",
+    "Backend POST /import?commit=true (3 rows w/ 2 new categories + 2 initial_stock>0) → committed=true imported=3 categories_created>=2 stock_seeded=2 target_branch_id=MAIN; subsequent GET /api/clinic/inventory/products?q=...Com1 returns product with min_stock and max_stock as int; GET /api/clinic/inventory/stock?branch_id=MAIN finds matching row with quantity=25 (int)",
+    "Backend Re-upload same CSV after commit → imported=0 duplicates_skipped>=2",
+    "Backend XLSX native Excel numbers/booleans dry-run+commit → valid_rows=2 imported=2 stock_seeded=1 (only Xls1 had initial_stock=8>0); GET products: min_stock=5 max_stock=60 has_expiration=true requires_prescription=false persisted",
+    "Backend branch_id=Z15 query override → target_branch_id=2ba2e8c4… stock_seeded=1; verified stock row at Z15 with quantity=7 (not at MAIN)",
+    "Backend Existing category UPPERCASE match → categories_created=0 (case-insensitive dedup works in product_categories)",
+    "Backend Empty file → 400 'Archivo vacío'",
+    "Backend .pdf upload → 400 'Formato no soportado'",
+    "Backend CSV missing 'name' column → 400 with 'name' in detail",
+    "Backend >5MB file → 400 'Archivo supera el límite de 5 MB'",
+    "Regression: 131/131 PASS — test_iter24_patients_bulk_import (14) + test_iter23_p2_csv_import (22) + test_p2_p3_batch (21) + test_branch_filter_p1 (11) + test_phase2_refactor_regression (44) + test_dashboard_prompt_a9 (19)",
+    "Frontend [data-testid=import-products-btn] (teal outline 'Importar') visible on Productos tab next to '+ Nuevo producto'",
+    "Frontend Click opens [data-testid=csv-import-dialog] with title 'Importar Productos / Inventario desde CSV o Excel'",
+    "Frontend Both [data-testid=csv-template-btn] and [data-testid=xlsx-template-btn] visible (acceptXlsx=true)",
+    "Frontend Dropzone hint 'UTF-8, máximo 5 MB. Acepta .csv y .xlsx.'",
+    "Frontend CSV upload triggers dry-run; [data-testid=csv-dryrun-results] renders Total=4 Válidas=2 Duplicadas=0 Errores=2 + error rows + preview (2 rows)",
+    "Frontend [data-testid=csv-commit-btn] shows 'Importar 2 registros' and is enabled (valid_rows>0)",
+    "Frontend [data-testid=csv-cancel-btn] closes dialog cleanly"
+  ],
+  "failed_tests": [],
+  "test_report_links": [
+    "/app/backend/tests/test_iter25_inventory_bulk_import.py",
+    "/app/test_reports/pytest/iteration_25_inventory_bulk.xml",
+    "/app/test_reports/pytest/iteration_25_regression.xml"
+  ],
+  "action_items": [
+    "(Cleanup, low priority) Bulk SQL cleanup of leftover test rows accumulated across iterations: DELETE FROM inventory_stock WHERE product_id IN (SELECT id FROM products WHERE name LIKE 'TestInv_%' OR name LIKE 'E2E_Inv%'); DELETE FROM products WHERE name LIKE 'TestInv_%' OR name LIKE 'E2E_Inv%'; DELETE FROM product_categories WHERE name LIKE 'TestInv_Cat_%' OR name LIKE 'E2E_Cat%'. Visible noise in Productos tab UI (~10–15 TestInv_* rows from this run + previous self-test).",
+    "(Parser quirk, optional polish) CSV with trailing newline produces a phantom 'Fila N nameCampo requerido vacío' (same behavior as patients import). Consider skipping rows where ALL values are empty in _parse_csv_simple (after dict construction, drop dicts with no truthy values), to avoid showing a confusing extra error to the user. Cosmetic only; doesn't affect imports or counts of valid rows.",
+    "(Server hardening, low priority) The 5MB size enforcement uses len(raw) AFTER reading the upload — fine for our use, but for very large files behind a slow proxy you could 413 earlier via Content-Length header check (consistent with patients endpoint, not a regression).",
+    "(Optional follow-up) /api/clinic/inventory-bulk/import does not enforce a role allow-list explicitly (relies on require_clinic_member). If product creation should be admin-only, add a role check matching POST /clinic/inventory/products policy. Currently test wasn't run for doctor/receptionist on this endpoint — main agent to confirm intended permissions."
+  ],
+  "critical_code_review_comments": [
+    "inventory.py bulk-import is consistent with patients pattern: separate _parse_csv_simple (encoding fallback utf-8-sig→utf-8→latin-1, delimiter sniffer) + _parse_xlsx_simple (read_only data_only) + _parse_product_row.",
+    "Dedup is robust: case-insensitive sku check first, then name|brand composite fallback. Sets are also updated INSIDE the loop preventing intra-file duplicates from sneaking through.",
+    "Auto-create categories runs once before product insert; case-insensitive lookup map (cat_by_name) is updated post-create so subsequent rows resolve correctly. Returns categories_created counter as expected.",
+    "min_stock/max_stock are explicitly cast to int via int(num(...)) — fixes the prior PostgreSQL type bug noted in agent context. inventory_stock.quantity is also cast to int(float(initial)) — correct for INTEGER column.",
+    "Stock seeding only happens for products with initial_stock > 0 — verified: row with initial_stock=0 produces no stock row and stock_seeded counter excludes it.",
+    "branch_id query param override works; falls back to is_main=true → first active branch when not provided.",
+    "5MB enforcement (HTTPException 400 with 'Archivo supera el límite de 5 MB') is now implemented (was missing in iter24/patients per its action items — good catch).",
+    "/clinic/inventory-bulk/* prefix avoids collision with /clinic/inventory/{*} dynamic routes.",
+    "(Minor) When commit_errors is non-empty (categories_create failed) the code still proceeds with product insert but blocks stock seeding (`if target_branch_id and not commit_errors`). That asymmetry could leave products without stock rows even though products got inserted. Acceptable for MVP, but consider all-or-nothing transaction semantics in the future.",
+    "(Minor) initial_stock is parsed as float via num() but cast to int when seeding. Decimal values like '5.5' will silently truncate to 5 — acceptable since column is INTEGER, but a row-level error/warning would be nicer DX.",
+    "CsvImportDialog 'inventory' entry in ENDPOINT_MAP and CATALOG_LABELS works correctly; existing /admin/catalogos and PatientsPage flows confirmed unchanged in regression (test_iter23 + test_iter24 100%)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter25_inventory_bulk_import.py (new, 12 tests)"
+  ],
+  "success_rate": {"backend": "100% (12/12 new + 131/131 regression = 143/143)", "frontend": "100% on all critical bulk-import flows for inventory"},
+  "test_credentials": "Clinic Admin carlos@lasalud.gt / Test123456! — login OK. (Doctor/receptionist not exercised this iteration; can be added if role policy needs to be tightened.)",
+  "seed_data_creation": "Test inserted ~12 products (TestInv_<runid>_*, E2E_Inv*) across MAIN and Z15 branches with associated TestInv_Cat_* categories and ~5 inventory_stock rows. Cleanup recommended via direct SQL (see action_items).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 25 bulk inventory/products import (CSV+XLSX) is GREEN end-to-end. Backend 12/12, regression 143/143. Frontend e2e PASS. Test file: /app/backend/tests/test_iter25_inventory_bulk_import.py. XML: /app/test_reports/pytest/iteration_25_inventory_bulk.xml. Use this file as regression in iter26+. Auto-detected MAIN branch=79c47aab-3d03-49a0-bcec-b931766aa48e, Z15=2ba2e8c4-3dde-4662-b232-11c3eff82bc9 (from /app/memory/test_credentials.md). NOTE 1: Frontend hard goto('/inventory') redirects to /login (auth context not yet hydrated when navigating right after login) — same caveat as iter24. Use sidebar 'Inventario' link click which goes to /dashboard/inventario. NOTE 2: GET /api/clinic/inventory/products takes 'q=' (NOT 'search=') and returns {products:[...], total, page, pages} shape. GET /api/clinic/inventory/stock returns a flat list (not wrapped). NOTE 3: Trailing newline in CSV produces a phantom error row — same as patients flow.",
+  "rca of the issue": "N/A — no bugs found. The 2 bugs the main agent self-fixed (min_stock/max_stock cast to int, inventory_stock.quantity cast to int) are confirmed working: dedicated assertions verify int types persist through GET endpoints. 5MB enforcement added in inventory bulk endpoint per request — works as expected."
+}

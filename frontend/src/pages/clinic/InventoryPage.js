@@ -18,8 +18,9 @@ import { Separator } from '../../components/ui/separator';
 import { toast } from 'sonner';
 import {
   Package, Search, Plus, Edit, Save, AlertTriangle, AlertCircle, Trash2,
-  Truck, ArrowDownUp, Users as UsersIcon, ChevronLeft, ChevronRight, Download, Clock
+  Truck, ArrowDownUp, Users as UsersIcon, ChevronLeft, ChevronRight, Download, Clock, Upload
 } from 'lucide-react';
+import CsvImportDialog from '../../components/CsvImportDialog';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const UNITS = ['unidad','caja','frasco','ml','mg','tableta','ampolla','tubo','sobre'];
@@ -48,7 +49,7 @@ export default function InventoryPage() {
             <TabsTrigger value="movements" data-testid="inv-tab-movements"><ArrowDownUp className="w-3.5 h-3.5 mr-1" />Movimientos</TabsTrigger>
             <TabsTrigger value="suppliers" data-testid="inv-tab-suppliers"><UsersIcon className="w-3.5 h-3.5 mr-1" />Proveedores</TabsTrigger>
           </TabsList>
-          <TabsContent value="products"><ProductsTab headers={h} branches={branches} /></TabsContent>
+          <TabsContent value="products"><ProductsTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="stock"><StockTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="purchases"><PurchasesTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="movements"><MovementsTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
@@ -60,7 +61,7 @@ export default function InventoryPage() {
 }
 
 /* ============ PRODUCTS TAB ============ */
-function ProductsTab({ headers, branches }) {
+function ProductsTab({ headers, branches, activeBranch }) {
   const [products, setProducts] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -75,6 +76,7 @@ function ProductsTab({ headers, branches }) {
   const [saving, setSaving] = useState(false);
   const [showCatForm, setShowCatForm] = useState(false);
   const [catName, setCatName] = useState('');
+  const [showImport, setShowImport] = useState(false);
 
   const fetch = useCallback(async () => {
     setLoading(true);
@@ -151,6 +153,7 @@ function ProductsTab({ headers, branches }) {
           </SelectContent>
         </Select>
         <Button variant="outline" size="sm" onClick={()=>setShowCatForm(true)}>+ Categoría</Button>
+        <Button variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-50" onClick={()=>setShowImport(true)} data-testid="import-products-btn"><Upload className="w-4 h-4 mr-1" />Importar</Button>
         <Button className="bg-teal-600 hover:bg-teal-700" onClick={openNew} data-testid="new-product-btn"><Plus className="w-4 h-4 mr-1" />Nuevo producto</Button>
       </div>
 
@@ -252,6 +255,16 @@ function ProductsTab({ headers, branches }) {
           <DialogFooter><Button variant="outline" onClick={()=>setShowCatForm(false)}>Cancelar</Button><Button className="bg-teal-600 hover:bg-teal-700" onClick={createCat}>Crear</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Import Dialog */}
+      <CsvImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        catalog="inventory"
+        acceptXlsx
+        headers={headers}
+        onSuccess={() => fetch()}
+      />
     </>
   );
 }
