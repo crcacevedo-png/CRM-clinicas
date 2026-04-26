@@ -350,7 +350,7 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                     sdb.table('inventory_movements').insert({
                         "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": it["product_id"],
                         "branch_id": data["branch_id"], "movement_type": "sale",
-                        "quantity": -qty, "unit_cost": unit,
+                        "quantity": -int(round(qty)), "unit_cost": unit,
                         "reference_type": "sale", "reference_id": sale_id,
                         "performed_by": member["id"], "created_at": now,
                     }).execute()

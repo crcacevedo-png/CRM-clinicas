@@ -682,6 +682,7 @@ function DailySalesTab({ headers, branches, activeBranch }) {
             <TableHeader><TableRow className="bg-slate-50/80">
               <TableHead className="text-xs font-semibold">Hora</TableHead>
               <TableHead className="text-xs font-semibold">No.</TableHead>
+              <TableHead className="text-xs font-semibold">Sucursal</TableHead>
               <TableHead className="text-xs font-semibold">Cliente</TableHead>
               <TableHead className="text-xs font-semibold">Items</TableHead>
               <TableHead className="text-xs font-semibold text-right">Total</TableHead>
@@ -695,6 +696,7 @@ function DailySalesTab({ headers, branches, activeBranch }) {
                 <TableRow key={s.id} data-testid={`sale-row-${s.id}`}>
                   <TableCell className="text-xs">{s.created_at?.substring(11, 16)}</TableCell>
                   <TableCell className="text-xs font-mono">{s.sale_number}</TableCell>
+                  <TableCell className="text-xs"><Badge variant="outline" className="text-xs bg-slate-50 text-slate-700 border-slate-200">{s.branch_name || '—'}</Badge></TableCell>
                   <TableCell className="text-sm">{s.customer_name || '—'}</TableCell>
                   <TableCell className="text-xs text-slate-500 max-w-[180px] truncate">{s.items_summary}</TableCell>
                   <TableCell className="text-right text-sm font-bold">Q{(s.total || 0).toFixed(2)}</TableCell>
@@ -706,7 +708,7 @@ function DailySalesTab({ headers, branches, activeBranch }) {
                   </TableCell>
                 </TableRow>
               ))}
-              {sales.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-400">Sin ventas en esta fecha</TableCell></TableRow>}
+              {sales.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-slate-400">Sin ventas en esta fecha</TableCell></TableRow>}
             </TableBody>
           </Table>
         </Card>}

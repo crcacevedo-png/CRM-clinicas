@@ -185,12 +185,12 @@ async def adjust_stock(data: dict, ctx=Depends(require_clinic_member)):
     try:
         product_id = data["product_id"]
         branch_id = data["branch_id"]
-        new_qty = data["new_quantity"]
+        new_qty = int(data["new_quantity"])
         reason = data.get("reason", "adjustment")
         notes = data.get("notes", "")
         existing_res = sdb.table('inventory_stock').select('id,quantity').eq('product_id', product_id).eq('branch_id', branch_id).maybe_single().execute()
         existing = getattr(existing_res, 'data', None) if existing_res else None
-        old_qty = existing['quantity'] if existing else 0
+        old_qty = int(existing['quantity']) if existing else 0
         diff = new_qty - old_qty
         # Insert only the movement; a Postgres trigger on inventory_movements
         # automatically upserts inventory_stock by summing quantities.
