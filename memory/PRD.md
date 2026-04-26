@@ -122,10 +122,11 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Backend: `AppointmentCreate` y `AppointmentUpdate` aceptan `branch_id` opcional
   - [x] Backend: `GET /api/clinic/appointments` filtra por `branch_id` query param
   - [x] Backend: `POST /api/clinic/appointments` y `PUT /api/clinic/appointments/{id}` persisten `branch_id` y validan que pertenezca al `clinic_id` del miembro (400 si inválido)
+  - [x] Backend: chequeo de **conflictos del médico ahora es scoped por sucursal** — un mismo doctor puede tener citas simultáneas en sucursales distintas; mensaje 409 actualizado a "...en esta sucursal"
   - [x] Frontend: `AgendaPage` envía automáticamente `branch_id=<activeBranch.id>` cuando `multi_branch` está activo y hay sucursal seleccionada
   - [x] Frontend: `NewAppointmentModal` muestra dropdown de sucursal cuando `multi_branch` está activo (default = activeBranch o sucursal principal)
   - [x] Frontend: `InventoryPage.StockTab + MovementsTab` y `SalesPage.DailySalesTab + SessionsTab` defaultean su `branchFilter` a `activeBranch.id` con `useEffect` de sincronización
-  - [x] Tested iteration_21: **74/74 PASS** (11 P1 + 44 phase2_refactor + 19 dashboard A9), Playwright E2E 6/6 integration assertions
+  - [x] Tested iteration_21: **74/74 PASS** (11 P1 + 44 phase2_refactor + 19 dashboard A9), Playwright E2E 6/6 integration assertions; cross-branch verificado con curl (MAIN+Z15 OK simultáneos, mismo MAIN+MAIN → 409)
 
 ## Pendientes
 - [ ] Endpoints faltantes detectados por testing agent (P2): /api/auth/me, /api/clinic/expenses/categories (alias de /by-category), /api/clinic/sales/dashboard (alias de /daily-summary)

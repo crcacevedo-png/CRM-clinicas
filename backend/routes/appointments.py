@@ -123,11 +123,16 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         if start_time < c["schedule_start"] or end_time > c["schedule_end"]:
             raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({c['schedule_start']} - {c['schedule_end']})")
 
-        # Check conflicts for this doctor
-        conflicts = sdb.table('appointments').select('id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
+        # Check conflicts for this doctor — only within the same branch (cross-branch is allowed)
+        conf_q = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat())
+        if data.branch_id:
+            conf_q = conf_q.eq('branch_id', data.branch_id)
+        else:
+            conf_q = conf_q.is_('branch_id', 'null')
+        conflicts = conf_q.execute()
 
         if conflicts.data:
-            raise HTTPException(status_code=409, detail="El doctor ya tiene una cita en ese horario")
+            raise HTTPException(status_code=409, detail="El doctor ya tiene una cita en ese horario en esta sucursal")
 
         now = now_iso()
         apt_id = str(uuid.uuid4())
@@ -210,9 +215,16 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
                 raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({c['schedule_start']} - {c['schedule_end']})")
 
             doctor_id = update_data.get("doctor_id", existing.data["doctor_id"])
-            conflicts = sdb.table('appointments').select('id').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).neq('status', 'cancelled').neq('id', apt_id).lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
+            # Conflict check scoped to the same branch as the (updated) appointment
+            target_branch = update_data.get("branch_id", existing.data.get("branch_id"))
+            conf_q = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).neq('status', 'cancelled').neq('id', apt_id).lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat())
+            if target_branch:
+                conf_q = conf_q.eq('branch_id', target_branch)
+            else:
+                conf_q = conf_q.is_('branch_id', 'null')
+            conflicts = conf_q.execute()
             if conflicts.data:
-                raise HTTPException(status_code=409, detail="Conflicto de horario con otra cita")
+                raise HTTPException(status_code=409, detail="Conflicto de horario con otra cita en esta sucursal")
 
         update_data["updated_at"] = now_iso()
         sdb.table('appointments').update(update_data).eq('id', apt_id).execute()
