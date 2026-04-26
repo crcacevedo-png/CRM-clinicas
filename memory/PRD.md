@@ -160,6 +160,16 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] **Bug fix descubierto por testing agent (iter 23)**: ICD10 commit fallaba 100% por columnas inexistentes (`created_at`, `is_active`) y tipo de id (int auto-increment, no UUID); solucionado con guard schema-aware + auto-fill `description_en` (NOT NULL constraint)
   - [x] Tested iteration_23: 99.1% (116/117) detectó el bug ICD10; iteration post-fix: **96/96 PASS** (44 phase2 + 19 dashboard + 11 branch_filter + 22 P2 CSV)
 
+- [x] **IMPORTACIÓN MASIVA DE PACIENTES (CSV/XLSX)** (26 Abril 2026):
+  - [x] Backend: `POST /api/clinic/patients-bulk/import?commit={true|false}` — acepta `.csv` (sniffer de delimitador, encoding fallback) y `.xlsx` (openpyxl con `data_only=True`); cap de tamaño 5 MB enforced server-side
+  - [x] Backend: `GET /api/clinic/patients-bulk/template?format={csv|xlsx}` — plantilla descargable con headers + ejemplo (XLSX vía StreamingResponse)
+  - [x] Backend: helpers `_parse_csv`, `_parse_xlsx`, `_parse_patient_row` — normalización de fechas (DD/MM/YYYY o ISO o objetos `date`), género (M/F/masculino/femenino → male/female), valores vacíos → null
+  - [x] Backend: dedup por `national_id` case-insensitive con fallback composite (`first_name+last_name+phone`) cuando national_id está vacío; batch insert 500 rows; rutas en prefix `/clinic/patients-bulk/` para no chocar con `/clinic/patients/{id}` (validate_uuid)
+  - [x] Backend: doctor + receptionist + clinic_admin pueden invocar (member-level access)
+  - [x] Frontend: `<CsvImportDialog>` extendido con prop `acceptXlsx` y `ENDPOINT_MAP` para 4 catálogos; segundo botón "Excel" en sección de plantillas
+  - [x] Frontend: botón "Importar" en `PatientsPage` (junto a "Nuevo paciente"), abre el dialog con `catalog="patients" acceptXlsx={true}`
+  - [x] Tested iteration_24: **131/131 PASS** (14 nuevos patients_bulk + 117 regression total); cero bugs encontrados; testing agent confirmó parsing nativo de fechas Excel, normalización de género, dedup national_id + composite, plantillas CSV/XLSX, rechazo 400 en empty/.pdf/missing-required + 5MB cap; frontend Playwright 100% E2E flows OK
+
 ## Pendientes
 - [ ] Recordatorios WhatsApp via n8n (24h/2h antes) - P1
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2

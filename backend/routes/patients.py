@@ -391,6 +391,8 @@ async def import_patients(
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Archivo vacío")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Archivo supera el límite de 5 MB")
     fname = (file.filename or "").lower()
     if fname.endswith(".xlsx"):
         rows = _parse_xlsx(raw)
