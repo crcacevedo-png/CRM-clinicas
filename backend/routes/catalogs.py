@@ -301,10 +301,11 @@ CATALOG_SCHEMAS = {
     "icd10": {
         "table": "icd10_codes",
         "required": ["code", "description_es"],
-        "optional": ["category", "is_common"],
+        "optional": ["description_en", "category", "is_common"],
         "transform": lambda row: {
             "code": (row.get("code") or "").strip().upper(),
             "description_es": (row.get("description_es") or "").strip(),
+            "description_en": (row.get("description_en") or row.get("description_es") or "").strip(),
             "category": (row.get("category") or "").strip() or None,
             "is_common": str(row.get("is_common", "")).strip().lower() in ("1", "true", "yes", "si", "sí", "y"),
         },
@@ -388,11 +389,12 @@ async def import_catalog_csv(
                 skipped_dup += 1
                 continue
             existing_set.add(key)  # in-file dedup as well
-            doc["id"] = str(uuid.uuid4())
-            doc["created_at"] = now_iso()
-            doc["is_active"] = True
             if schema["table"] != "icd10_codes":
+                # icd10_codes uses an int auto-increment id and has no clinic_id/created_at/is_active columns
+                doc["id"] = str(uuid.uuid4())
                 doc["clinic_id"] = None
+                doc["created_at"] = now_iso()
+                doc["is_active"] = True
             valid_rows.append(doc)
             if len(rows_seen) < 5:
                 rows_seen.append({k: v for k, v in doc.items() if k not in ("id", "created_at", "clinic_id", "is_active")})
@@ -402,6 +404,7 @@ async def import_catalog_csv(
             errors.append({"row": idx, "field": "*", "message": str(e)[:120]})
 
     imported = 0
+    commit_errors = []
     if commit and valid_rows:
         # Batch insert in chunks of 500 to stay within Supabase limits
         BATCH = 500
@@ -411,7 +414,7 @@ async def import_catalog_csv(
                 sdb.table(schema["table"]).insert(chunk).execute()
                 imported += len(chunk)
             except Exception as e:
-                errors.append({"row": -1, "field": "*", "message": f"Error al insertar lote {i//BATCH + 1}: {str(e)[:120]}"})
+                commit_errors.append({"batch": i // BATCH + 1, "message": str(e)[:200]})
 
     return {
         "catalog": catalog,
@@ -422,7 +425,8 @@ async def import_catalog_csv(
         "errors": errors[:50],  # cap response size
         "preview": rows_seen,
         "imported": imported,
-        "committed": commit,
+        "committed": commit and not commit_errors,
+        "commit_errors": commit_errors,
     }
 
 @router.get("/admin/catalogs/{catalog}/csv-template")

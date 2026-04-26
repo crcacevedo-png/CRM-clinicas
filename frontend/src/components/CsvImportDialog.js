@@ -88,6 +88,11 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
         { headers: { ...headers, 'Content-Type': 'multipart/form-data' } }
       );
       const d = res.data;
+      if ((d.commit_errors || []).length > 0) {
+        toast.error(`Error de inserción en BD: ${d.commit_errors[0].message.slice(0, 80)}`);
+        setDryRun(d);
+        return;
+      }
       toast.success(`Importados ${d.imported} de ${d.total} registros (${d.duplicates_skipped} duplicados omitidos)`);
       onSuccess?.(d);
       reset();

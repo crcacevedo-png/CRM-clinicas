@@ -145,12 +145,24 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] **Bug fix descubierto por linter**: `routes/appointments.py` llamaba `sync_appointment_to_gcal` sin importarlo (F821); ahora importado localmente en los 3 callsites — Google Calendar sync vuelve a funcionar
   - [x] Tested iteration_22: **95/95 PASS** (21 nuevos P2/P3 + 74 baseline) en 50s; 0 console warnings/errors en frontend Playwright
 
+- [x] **P2 BATCH OPTIÓN B** (26 Abril 2026):
+  - [x] **Seeds doctor + receptionist** en `clinic_id=c0321ed8`:
+    - `doctor.test@lasalud.gt / Test123456!` (member_id=dee8138c…) — Diana Ramírez, Medicina General
+    - `recepcion.test@lasalud.gt / Test123456!` (member_id=7988bbdc…) — Rosa Hernández
+    - Ambos valid login + `/auth/me` devuelve role correcto; `/clinic/dashboard` rol-aware verificado
+  - [x] **Default branch_id en Reports/Expenses**: `ReportsPage` (4 tabs: summary, income, pnl, inventory) y `ExpensesPage` (ListTab, CategoryReportTab) ahora defaultean su `branchFilter` a `activeBranch.id` con `useEffect` de sincronización
+  - [x] **CSV Import para catálogos** (super admin):
+    - Backend: `POST /api/admin/catalogs/{medications|lab-studies|icd10}/import-csv?commit={true|false}` — auto-detect delimiter (,;), encoding fallback (utf-8/latin-1), header normalización, validación required-fields, dedup case-insensitive contra DB y dentro del archivo, batch insert 500 rows
+    - Backend: `GET /api/admin/catalogs/{catalog}/csv-template` — devuelve plantilla CSV con headers + ejemplo
+    - Backend: schema-aware — `icd10_codes` (sin clinic_id/created_at/is_active, id auto-int) recibe tratamiento separado; auto-fill de `description_en` desde `description_es` si no se proporciona
+    - Frontend: `<CsvImportDialog>` reusable (drag-drop, dry-run preview con stats Total/Válidas/Duplicadas/Errores, tabla de errores fila-por-fila, vista previa de filas, botón download plantilla, surface de `commit_errors` separado del array de validation errors)
+    - Botones "CSV" añadidos junto a "Importar (JSON)" en cada tab de `/admin/catalogos`
+  - [x] **Bug fix descubierto por testing agent (iter 23)**: ICD10 commit fallaba 100% por columnas inexistentes (`created_at`, `is_active`) y tipo de id (int auto-increment, no UUID); solucionado con guard schema-aware + auto-fill `description_en` (NOT NULL constraint)
+  - [x] Tested iteration_23: 99.1% (116/117) detectó el bug ICD10; iteration post-fix: **96/96 PASS** (44 phase2 + 19 dashboard + 11 branch_filter + 22 P2 CSV)
+
 ## Pendientes
-- [ ] Cobertura de pruebas para roles doctor/receptionist en dashboard (no hay usuarios pre-seed) - P2
-- [ ] Considerar default de branch_id en ReportsPage / ExpensesPage / AccountsReceivablePage (intencionalmente excluidos para preservar comparación cross-branch) - P2
-- [ ] Importacion CSV para catalogos - P2
 - [ ] Recordatorios WhatsApp via n8n (24h/2h antes) - P1
-- [ ] Stripe/dLocal facturacion - P2
+- [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Credenciales
 Ver `/app/memory/test_credentials.md`
