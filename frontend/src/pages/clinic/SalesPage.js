@@ -46,9 +46,9 @@ export default function SalesPage() {
             <TabsTrigger value="sessions" data-testid="sales-tab-sessions"><Lock className="w-3.5 h-3.5 mr-1" />Sesiones de caja</TabsTrigger>
           </TabsList>
           <TabsContent value="pos"><POSTab headers={headers} branches={branches} activeBranch={activeBranch} hasInventory={hasFeature('inventory')} /></TabsContent>
-          <TabsContent value="day"><DailySalesTab headers={headers} branches={branches} /></TabsContent>
+          <TabsContent value="day"><DailySalesTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="services"><ServicesTab headers={headers} /></TabsContent>
-          <TabsContent value="sessions"><SessionsTab headers={headers} branches={branches} /></TabsContent>
+          <TabsContent value="sessions"><SessionsTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
         </Tabs>
       </div>
     </FeatureGate>
@@ -593,14 +593,19 @@ function CloseSessionDialog({ open, onClose, session, headers, onClosed }) {
 }
 
 /* ============ DAILY SALES TAB ============ */
-function DailySalesTab({ headers, branches }) {
+function DailySalesTab({ headers, branches, activeBranch }) {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [summary, setSummary] = useState(null);
   const [sales, setSales] = useState([]);
-  const [branchFilter, setBranchFilter] = useState('all');
+  const [branchFilter, setBranchFilter] = useState(activeBranch?.id || 'all');
   const [methodFilter, setMethodFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
+
+  // Sync filter with global activeBranch
+  useEffect(() => {
+    if (activeBranch?.id) setBranchFilter(activeBranch.id);
+  }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -875,7 +880,7 @@ function ServicesTab({ headers }) {
 }
 
 /* ============ SESSIONS TAB ============ */
-function SessionsTab({ headers, branches }) {
+function SessionsTab({ headers, branches, activeBranch }) {
   const [sessions, setSessions] = useState([]);
   const [registers, setRegisters] = useState([]);
   const [showCRForm, setShowCRForm] = useState(false);
@@ -885,15 +890,17 @@ function SessionsTab({ headers, branches }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const branchQS = activeBranch?.id ? `?branch_id=${activeBranch.id}` : '';
+      const branchAmp = activeBranch?.id ? `&branch_id=${activeBranch.id}` : '';
       const [s, r] = await Promise.all([
-        axios.get(`${API}/clinic/sales/cash-sessions?limit=30`, { headers }),
-        axios.get(`${API}/clinic/sales/cash-registers`, { headers }),
+        axios.get(`${API}/clinic/sales/cash-sessions?limit=30${branchAmp}`, { headers }),
+        axios.get(`${API}/clinic/sales/cash-registers${branchQS}`, { headers }),
       ]);
       setSessions(s.data.sessions || []);
       setRegisters(r.data || []);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [headers]);
+  }, [headers, activeBranch?.id]);
 
   useEffect(() => { load(); }, [load]);
 

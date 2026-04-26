@@ -268,6 +268,7 @@ class AppointmentCreate(BaseModel):
     duration_minutes: int = 30
     reason: Optional[str] = None
     notes: Optional[str] = None
+    branch_id: Optional[str] = None
 
 class AppointmentUpdate(BaseModel):
     starts_at: Optional[str] = None
@@ -275,6 +276,7 @@ class AppointmentUpdate(BaseModel):
     reason: Optional[str] = None
     notes: Optional[str] = None
     doctor_id: Optional[str] = None
+    branch_id: Optional[str] = None
 
 class AppointmentStatusUpdate(BaseModel):
     status: str

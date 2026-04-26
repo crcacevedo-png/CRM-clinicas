@@ -30,6 +30,7 @@ async def list_appointments(
     doctor_id: Optional[str] = None,
     status: Optional[str] = None,
     patient_search: Optional[str] = None,
+    branch_id: Optional[str] = None,
     ctx=Depends(require_clinic_member)
 ):
     clinic_id = ctx["member"]["clinic_id"]
@@ -44,6 +45,8 @@ async def list_appointments(
             query = query.eq('doctor_id', doctor_id)
         if status:
             query = query.eq('status', status)
+        if branch_id:
+            query = query.eq('branch_id', branch_id)
 
         result = query.order('starts_at').execute()
         appointments = result.data or []
@@ -127,6 +130,7 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
             "clinic_id": clinic_id,
             "patient_id": data.patient_id,
             "doctor_id": data.doctor_id,
+            "branch_id": data.branch_id,
             "created_by": member["id"],
             "starts_at": starts.isoformat(),
             "ends_at": ends.isoformat(),

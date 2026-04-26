@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useBranch } from '../../context/BranchContext';
+import { useFeatures } from '../../context/FeatureContext';
 import { supabase } from '../../lib/supabase';
 import axios from 'axios';
 import { Button } from '../../components/ui/button';
@@ -97,6 +99,9 @@ function getMonthDays(year, month) {
 
 export default function AgendaPage() {
   const { getAuthHeaders, clinicId } = useAuth();
+  const { activeBranch, branches } = useBranch();
+  const { hasFeature } = useFeatures();
+  const multiBranch = hasFeature('multi_branch');
   const [config, setConfig] = useState(null);
   const [appointments, setAppointments] = useState([]);
   const [viewMode, setViewMode] = useState('week'); // 'day' | 'week' | 'month'
@@ -160,6 +165,7 @@ export default function AgendaPage() {
       if (filterDoctor !== 'all') params.append('doctor_id', filterDoctor);
       if (filterStatus !== 'all') params.append('status', filterStatus);
       if (patientSearch) params.append('patient_search', patientSearch);
+      if (multiBranch && activeBranch?.id) params.append('branch_id', activeBranch.id);
 
       const res = await axios.get(`${API}/clinic/appointments?${params}`, { headers });
       setAppointments(res.data || []);
@@ -168,7 +174,7 @@ export default function AgendaPage() {
     } finally {
       setLoading(false);
     }
-  }, [viewMode, weekStart, currentDate, filterDoctor, filterStatus, patientSearch]);
+  }, [viewMode, weekStart, currentDate, filterDoctor, filterStatus, patientSearch, multiBranch, activeBranch?.id]);
 
   useEffect(() => { fetchAppointments(); }, [fetchAppointments]);
 
@@ -559,6 +565,9 @@ export default function AgendaPage() {
           config={config}
           initialDate={selectedSlot}
           headers={headers}
+          branches={branches}
+          activeBranch={activeBranch}
+          multiBranch={multiBranch}
           onClose={() => setShowNewApt(false)}
           onCreated={() => { setShowNewApt(false); fetchAppointments(); }}
         />
@@ -742,7 +751,7 @@ function MonthView({ currentDate, appointments, doctorMap, onDayClick, onAptClic
 }
 
 // ============ NEW APPOINTMENT MODAL ============
-function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated }) {
+function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated, branches = [], activeBranch = null, multiBranch = false }) {
   const [form, setForm] = useState({
     patient_id: '',
     doctor_id: config.doctors?.[0]?.id || '',
@@ -751,6 +760,7 @@ function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated 
     duration: config.clinic.slot_duration || 30,
     reason: '',
     notes: '',
+    branch_id: activeBranch?.id || (branches.find(b => b.is_main)?.id) || branches[0]?.id || '',
   });
   const [patients, setPatients] = useState([]);
   const [patientQuery, setPatientQuery] = useState('');
@@ -810,6 +820,7 @@ function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated 
         duration_minutes: parseInt(form.duration),
         reason: form.reason,
         notes: form.notes,
+        branch_id: form.branch_id || null,
       }, { headers });
       toast.success('Cita creada exitosamente');
       onCreated();
@@ -925,6 +936,25 @@ function NewAppointmentModal({ config, initialDate, headers, onClose, onCreated 
               </SelectContent>
             </Select>
           </div>
+
+          {/* Branch (only if multi-branch is active) */}
+          {multiBranch && branches.length > 0 && (
+            <div>
+              <Label className="text-xs font-medium text-slate-600">Sucursal</Label>
+              <Select value={form.branch_id || ''} onValueChange={v => setForm(p => ({ ...p, branch_id: v }))}>
+                <SelectTrigger className="mt-1" data-testid="apt-branch-select">
+                  <SelectValue placeholder="Seleccionar sucursal" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map(b => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}{b.is_main ? ' (Principal)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* Date & Time */}
           <div className="grid grid-cols-3 gap-3">

@@ -51,7 +51,7 @@ export default function InventoryPage() {
           <TabsContent value="products"><ProductsTab headers={h} branches={branches} /></TabsContent>
           <TabsContent value="stock"><StockTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="purchases"><PurchasesTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
-          <TabsContent value="movements"><MovementsTab headers={h} branches={branches} /></TabsContent>
+          <TabsContent value="movements"><MovementsTab headers={h} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="suppliers"><SuppliersTab headers={h} /></TabsContent>
         </Tabs>
       </div>
@@ -260,10 +260,15 @@ function ProductsTab({ headers, branches }) {
 function StockTab({ headers, branches, activeBranch }) {
   const [stocks, setStocks] = useState([]);
   const [alerts, setAlerts] = useState({low_stock:[],expiring:[]});
-  const [branchFilter, setBranchFilter] = useState('all');
+  const [branchFilter, setBranchFilter] = useState(activeBranch?.id || 'all');
   const [loading, setLoading] = useState(true);
   const [showAdjust, setShowAdjust] = useState(null);
   const [adjForm, setAdjForm] = useState({new_quantity:0,reason:'physical_count',notes:''});
+
+  // Sync filter with global activeBranch
+  useEffect(() => {
+    if (activeBranch?.id) setBranchFilter(activeBranch.id);
+  }, [activeBranch?.id]);
 
   useEffect(() => {
     const load = async () => {
@@ -539,14 +544,19 @@ function PurchasesTab({ headers, branches, activeBranch }) {
 }
 
 /* ============ MOVEMENTS TAB ============ */
-function MovementsTab({ headers, branches }) {
+function MovementsTab({ headers, branches, activeBranch }) {
   const [movements, setMovements] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [typeFilter, setTypeFilter] = useState('all');
-  const [branchFilter, setBranchFilter] = useState('all');
+  const [branchFilter, setBranchFilter] = useState(activeBranch?.id || 'all');
   const [loading, setLoading] = useState(true);
+
+  // Sync filter with global activeBranch
+  useEffect(() => {
+    if (activeBranch?.id) setBranchFilter(activeBranch.id);
+  }, [activeBranch?.id]);
 
   useEffect(() => {
     const load = async () => {
