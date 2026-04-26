@@ -16,7 +16,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { toast } from 'sonner';
-import { Users, Plus, Search, Phone, Mail, ChevronLeft, ChevronRight, Calendar, UserCheck, UserX, X } from 'lucide-react';
+import { Users, Plus, Search, Phone, Mail, ChevronLeft, ChevronRight, Calendar, UserCheck, UserX, X, Upload } from 'lucide-react';
+import CsvImportDialog from '../../components/CsvImportDialog';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -122,6 +123,7 @@ export default function PatientsPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editingPatient, setEditingPatient] = useState(null);
   const [saving, setSaving] = useState(false);
   const [formTab, setFormTab] = useState('personal');
@@ -245,9 +247,14 @@ export default function PatientsPage() {
           <h1 className="text-2xl font-bold text-slate-900" data-testid="patients-title">Pacientes</h1>
           <p className="text-sm text-slate-500 mt-0.5">{total} paciente{total !== 1 ? 's' : ''} registrado{total !== 1 ? 's' : ''}</p>
         </div>
-        <Button className="bg-teal-600 hover:bg-teal-700 shadow-sm" onClick={openNewPatient} data-testid="new-patient-btn">
-          <Plus className="w-4 h-4 mr-1.5" /> Nuevo paciente
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-50" onClick={() => setShowImport(true)} data-testid="import-patients-btn">
+            <Upload className="w-4 h-4 mr-1.5" /> Importar
+          </Button>
+          <Button className="bg-teal-600 hover:bg-teal-700 shadow-sm" onClick={openNewPatient} data-testid="new-patient-btn">
+            <Plus className="w-4 h-4 mr-1.5" /> Nuevo paciente
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -568,6 +575,16 @@ export default function PatientsPage() {
           </form>
         </SheetContent>
       </Sheet>
+
+      {/* Bulk Import Dialog */}
+      <CsvImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        catalog="patients"
+        acceptXlsx
+        headers={getAuthHeaders()}
+        onSuccess={() => fetchPatients()}
+      />
     </div>
   );
 }

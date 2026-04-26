@@ -11,23 +11,35 @@ const CATALOG_LABELS = {
   medications: 'Medicamentos',
   'lab-studies': 'Estudios de Laboratorio',
   icd10: 'Códigos CIE-10',
+  patients: 'Pacientes',
+};
+
+const ENDPOINT_MAP = {
+  medications: { import: '/admin/catalogs/medications/import-csv', template: '/admin/catalogs/medications/csv-template' },
+  'lab-studies': { import: '/admin/catalogs/lab-studies/import-csv', template: '/admin/catalogs/lab-studies/csv-template' },
+  icd10: { import: '/admin/catalogs/icd10/import-csv', template: '/admin/catalogs/icd10/csv-template' },
+  patients: { import: '/clinic/patients-bulk/import', template: '/clinic/patients-bulk/template' },
 };
 
 /**
- * Reusable CSV import dialog.
+ * Reusable bulk-import dialog (CSV + XLSX).
  * Props:
  *  - open, onOpenChange
- *  - catalog: 'medications' | 'lab-studies' | 'icd10'
+ *  - catalog: 'medications' | 'lab-studies' | 'icd10' | 'patients'
+ *  - acceptXlsx: boolean (true to also accept .xlsx files; default false → CSV only)
  *  - headers: axios auth headers
  *  - onSuccess?: callback fired after successful commit
  */
-export default function CsvImportDialog({ open, onOpenChange, catalog, headers, onSuccess }) {
+export default function CsvImportDialog({ open, onOpenChange, catalog, headers, onSuccess, acceptXlsx = false }) {
   const [file, setFile] = useState(null);
   const [dryRun, setDryRun] = useState(null);
   const [loading, setLoading] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef(null);
+  const endpoints = ENDPOINT_MAP[catalog] || ENDPOINT_MAP.medications;
+  const acceptedExtensions = acceptXlsx ? ['.csv', '.xlsx'] : ['.csv'];
+  const acceptAttr = acceptXlsx ? '.csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : '.csv,text/csv';
 
   const reset = () => {
     setFile(null);
@@ -44,8 +56,9 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
 
   const handleFile = (f) => {
     if (!f) return;
-    if (!f.name.toLowerCase().endsWith('.csv')) {
-      toast.error('El archivo debe tener extensión .csv');
+    const ext = '.' + f.name.split('.').pop().toLowerCase();
+    if (!acceptedExtensions.includes(ext)) {
+      toast.error(`El archivo debe tener extensión ${acceptedExtensions.join(' o ')}`);
       return;
     }
     if (f.size > 5 * 1024 * 1024) {
@@ -63,13 +76,13 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
       const fd = new FormData();
       fd.append('file', f);
       const res = await axios.post(
-        `${API}/admin/catalogs/${catalog}/import-csv?commit=false`,
+        `${API}${endpoints.import}?commit=false`,
         fd,
         { headers: { ...headers, 'Content-Type': 'multipart/form-data' } }
       );
       setDryRun(res.data);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Error al validar el CSV');
+      toast.error(err.response?.data?.detail || 'Error al validar el archivo');
       setFile(null);
     } finally {
       setLoading(false);
@@ -83,7 +96,7 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
       const fd = new FormData();
       fd.append('file', file);
       const res = await axios.post(
-        `${API}/admin/catalogs/${catalog}/import-csv?commit=true`,
+        `${API}${endpoints.import}?commit=true`,
         fd,
         { headers: { ...headers, 'Content-Type': 'multipart/form-data' } }
       );
@@ -104,16 +117,24 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
     }
   };
 
-  const downloadTemplate = async () => {
+  const downloadTemplate = async (format = 'csv') => {
     try {
-      const res = await axios.get(`${API}/admin/catalogs/${catalog}/csv-template`, { headers });
-      const blob = new Blob([res.data.content], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
+      const url = `${API}${endpoints.template}${format === 'xlsx' ? '?format=xlsx' : ''}`;
+      const res = await axios.get(url, { headers, responseType: format === 'xlsx' ? 'blob' : 'json' });
+      let blob, filename;
+      if (format === 'xlsx') {
+        blob = res.data;
+        filename = `plantilla_${catalog}.xlsx`;
+      } else {
+        blob = new Blob([res.data.content], { type: 'text/csv;charset=utf-8;' });
+        filename = res.data.filename;
+      }
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = res.data.filename;
+      a.href = blobUrl;
+      a.download = filename;
       a.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(blobUrl);
     } catch {
       toast.error('No se pudo descargar la plantilla');
     }
@@ -134,17 +155,24 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="w-4 h-4 text-[#2EC4B6]" />
-            Importar {CATALOG_LABELS[catalog] || catalog} desde CSV
+            Importar {CATALOG_LABELS[catalog] || catalog} desde {acceptXlsx ? 'CSV o Excel' : 'CSV'}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           {/* Template download */}
           <div className="flex items-center justify-between text-sm bg-slate-50 border border-slate-200 rounded p-3">
-            <span className="text-slate-600">¿Necesitas el formato? Descarga la plantilla CSV.</span>
-            <Button size="sm" variant="outline" onClick={downloadTemplate} data-testid="csv-template-btn">
-              <Download className="w-3.5 h-3.5 mr-1" /> Plantilla
-            </Button>
+            <span className="text-slate-600">¿Necesitas el formato? Descarga la plantilla.</span>
+            <div className="flex gap-1.5">
+              <Button size="sm" variant="outline" onClick={() => downloadTemplate('csv')} data-testid="csv-template-btn">
+                <Download className="w-3.5 h-3.5 mr-1" /> CSV
+              </Button>
+              {acceptXlsx && (
+                <Button size="sm" variant="outline" onClick={() => downloadTemplate('xlsx')} data-testid="xlsx-template-btn">
+                  <Download className="w-3.5 h-3.5 mr-1" /> Excel
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* File drop zone */}
@@ -158,9 +186,11 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
               data-testid="csv-dropzone"
             >
               <Upload className="w-8 h-8 mx-auto text-slate-400 mb-2" />
-              <p className="text-sm text-slate-700 font-medium">Suelta tu archivo CSV aquí o haz clic para seleccionar</p>
-              <p className="text-xs text-slate-400 mt-1">UTF-8, máximo 5 MB. Acepta delimitador coma o punto y coma.</p>
-              <input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} data-testid="csv-file-input" />
+              <p className="text-sm text-slate-700 font-medium">
+                Suelta tu archivo {acceptXlsx ? 'CSV o Excel' : 'CSV'} aquí o haz clic para seleccionar
+              </p>
+              <p className="text-xs text-slate-400 mt-1">UTF-8, máximo 5 MB. {acceptXlsx ? 'Acepta .csv y .xlsx.' : 'Acepta delimitador coma o punto y coma.'}</p>
+              <input ref={inputRef} type="file" accept={acceptAttr} className="hidden" onChange={(e) => handleFile(e.target.files?.[0])} data-testid="csv-file-input" />
             </div>
           )}
 

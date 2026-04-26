@@ -1,0 +1,71 @@
+{
+  "summary": "Iteration 24 — Bulk patient import via CSV/XLSX. Backend: created /app/backend/tests/test_iter24_patients_bulk_import.py (14 tests) covering template (csv+xlsx), CSV dry-run with mixed rows (3 valid + 1 missing-required + 1 dup), CSV commit, re-upload dedup, XLSX with native Excel date cells (verified ISO YYYY-MM-DD persisted via GET /api/clinic/patients), gender M/F + masculino/femenino normalization, dedup national_id case-insensitive + composite fallback, doctor + receptionist role access, and 400 cases (empty/.pdf/missing-required-column). 14/14 PASS in 10.7s. Regression: 117/117 PASS in 60.5s (test_iter23_p2_csv_import 22 + test_p2_p3_batch 21 + test_branch_filter_p1 11 + test_phase2_refactor_regression 44 + test_dashboard_prompt_a9 19) — note iter23 icd10 commit bug appears to be RESOLVED (its previously-failing test now passes). Frontend Playwright on https://super-admin-panel-12.preview.emergentagent.com against carlos@lasalud.gt: PatientsPage shows [data-testid=import-patients-btn] next to [data-testid=new-patient-btn]; clicking opens [data-testid=csv-import-dialog] with title 'Importar Pacientes desde CSV o Excel'; both [data-testid=csv-template-btn] and [data-testid=xlsx-template-btn] visible; dropzone hint 'UTF-8, máximo 5 MB. Acepta .csv y .xlsx.'; uploading 3-row CSV (2 valid + 1 missing required) triggers dry-run with Total=3 / Válidas=2 / Duplicadas=0 / Errores=1 inside [data-testid=csv-dryrun-results] and error 'Fila 4 first_name Campo requerido vacío'; commit button shows 'Importar 2 registros' enabled; clicking commit closes dialog; imported patient (IMPE2E_TestA) found in patients list; Cancelar closes dialog cleanly. NOTE: SPA navigation by hard goto('/patients') redirects to /login (Supabase auth context not yet hydrated when navigating after login) — workaround used pushState/popstate or sidebar link. Not a feature bug, but a possible auth-context hydration timing concern for direct deep-links right after login.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend GET /api/clinic/patients-bulk/template?format=csv → 200 with headers + content",
+    "Backend GET /api/clinic/patients-bulk/template?format=xlsx → 200 binary StreamingResponse, Content-Disposition plantilla_pacientes.xlsx, PK magic bytes",
+    "Backend POST /import?commit=false (5 rows: 3 valid + 1 missing-required + 1 dup) → total=5 valid_rows=3 error_rows=1 duplicates_skipped=1, errors[0]={row,field=first_name,message}, preview len=3, committed=false",
+    "Backend POST /import?commit=true (2 rows) → imported=2 committed=true commit_errors=[]",
+    "Backend Re-upload same CSV after commit → imported=0 duplicates_skipped>=2",
+    "Backend XLSX native Excel date cells dry-run → valid_rows=2 error_rows=0",
+    "Backend XLSX commit → imported=2; subsequent GET /api/clinic/patients?search=IMPE2E_Xls1 returns date_of_birth='1991-03-14' (ISO) — native Excel date converted correctly",
+    "Backend Gender normalization: M, F, masculino, femenino all accepted (covered in 5-row test row 1=F row 2=masculino row 3=femenino)",
+    "Backend Dedup national_id case-insensitive: NID_CASE_AbCd vs nid_case_abcd → second import duplicates_skipped=1 imported=0",
+    "Backend Dedup composite fallback (no national_id) on first_name+last_name+phone → second import imported=0 duplicates_skipped>=1",
+    "Backend Doctor (doctor.test@lasalud.gt) can call dry-run → 200",
+    "Backend Receptionist (recepcion.test@lasalud.gt) can call dry-run → 200",
+    "Backend Empty file → 400 'Archivo vacío'",
+    "Backend .pdf upload → 400 'Formato no soportado'",
+    "Backend CSV missing 'first_name' column → 400 with 'first_name' in detail",
+    "Backend Regression: 117/117 PASS — iter23 P2 CSV (22) + p2_p3_batch (21) + branch_filter_p1 (11) + phase2_refactor_regression (44) + dashboard_prompt_a9 (19). The previously-failing iter23 icd10 commit test now PASSES, indicating the created_at bug from iter23 has been fixed.",
+    "Frontend [data-testid=import-patients-btn] visible next to [data-testid=new-patient-btn] on PatientsPage",
+    "Frontend Click opens [data-testid=csv-import-dialog] with title 'Importar Pacientes desde CSV o Excel'",
+    "Frontend [data-testid=csv-template-btn] AND [data-testid=xlsx-template-btn] both visible (acceptXlsx=true)",
+    "Frontend Dropzone hint contains 'Acepta .csv y .xlsx'",
+    "Frontend CSV upload triggers dry-run; [data-testid=csv-dryrun-results] shows Total=3 Válidas=2 Duplicadas=0 Errores=1; error 'Fila 4 first_name Campo requerido vacío' rendered; preview shows 2 rows",
+    "Frontend [data-testid=csv-commit-btn] shows 'Importar 2 registros' and is enabled (valid_rows>0)",
+    "Frontend Commit closes dialog; imported patient IMPE2E_TestA visible in PatientsPage list (search confirms 1 row)",
+    "Frontend [data-testid=csv-cancel-btn] closes dialog cleanly without inserting"
+  ],
+  "failed_tests": [],
+  "test_report_links": [
+    "/app/backend/tests/test_iter24_patients_bulk_import.py",
+    "/app/test_reports/pytest/iteration_24_patients_bulk.xml",
+    "/app/test_reports/pytest/iteration_24_regression.xml"
+  ],
+  "action_items": [
+    "(Optional) After full e2e, run a bulk cleanup of any leftover TestImport_* / IMPE2E* / UI_E2E* patients in clinic c0321ed8…. The pytest cleanup fixture and the manual cleanup step both failed to find some rows because GET /api/clinic/patients?search=TestImport_ doesn't match by full prefix — search appears to require name tokens. Suggested: clean directly via supabase: DELETE FROM patients WHERE first_name LIKE 'TestImport_%' OR first_name LIKE 'IMPE2E%' OR first_name LIKE 'UI_E2E%'. ~10–15 rows.",
+    "(Minor) /api/clinic/patients?search= ignores prefix-only searches with underscores in some cases; consider trigram or lower(first_name) LIKE lower($1)||'%' for cleanup-friendly searches.",
+    "(Frontend nice-to-have) After successful commit, dialog closes and list refreshes — this works ✓. A success toast wasn't visually verified within the screenshot timing window, but `notify.success(...)` is invoked in CsvImportDialog. Main agent can self-confirm in real browser.",
+    "(Server hardening, low priority) UploadFile size is not enforced server-side; the 5MB limit is only stated in UI. Consider checking len(raw) > 5*1024*1024 → 400."
+  ],
+  "critical_code_review_comments": [
+    "patients.py bulk-import is well-structured: separate _parse_csv (encoding fallback utf-8-sig→utf-8→latin-1, delimiter sniffer) + _parse_xlsx (read_only data_only) + _parse_patient_row (handles datetime/date objects, gender variants es/en, DD/MM/YYYY+ISO).",
+    "Pre-fetching existing identifiers into existing_nat / existing_composite sets is O(N) and correct; case-insensitive on national_id is consistent in both directions.",
+    "Composite key f\"{fn}|{ln}|{phone}\" uses lowercase trim — robust against accidental leading/trailing whitespace. Note: phone is NOT normalized (no digits-only stripping), so '+502 5555-0100' vs '50255550100' would NOT collide — acceptable given national_id is the primary key.",
+    "Endpoint correctly uses /clinic/patients-bulk/* prefix to avoid colliding with /clinic/patients/{patient_id} validate_uuid path.",
+    "Returns committed=False when commit_errors is non-empty (good signaling), unlike the iter23 catalogs.py which returned committed=True even when imported=0.",
+    "Required-field validation runs per-row with try/except ValueError — clean control flow.",
+    "CsvImportDialog ENDPOINT_MAP is extensible and the acceptXlsx prop is correctly threaded into both file accept attribute and template button visibility. Title and hint text are correctly conditional.",
+    "PatientsPage import button correctly placed (variant=outline, teal-600) next to primary new-patient button — visual hierarchy preserved.",
+    "Minor: errors[] is capped at 50 (good); commit_errors is separate (good DX vs iter23 mixed approach)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter24_patients_bulk_import.py (new, 14 tests)"
+  ],
+  "success_rate": {"backend": "100% (14/14 new + 117/117 regression = 131/131)", "frontend": "100% on all critical bulk-import flows"},
+  "test_credentials": "Clinic Admin carlos@lasalud.gt / Test123456! ; Doctor doctor.test@lasalud.gt / Test123456! ; Receptionist recepcion.test@lasalud.gt / Test123456! — all login OK.",
+  "seed_data_creation": "Test inserted ~12 patients (TestImport_<runid>_*, IMPE2E_*) into clinic c0321ed8…. The pytest TestZZCleanup attempted DELETE via /api/clinic/patients/{id} but the GET /api/clinic/patients?search=<prefix> returned 0 rows (search behavior on underscore prefixes), so cleanup was best-effort only. Recommend bulk SQL cleanup as noted in action_items.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 24 bulk patient import (CSV+XLSX) is GREEN end-to-end. Backend 14/14, regression 117/117 (note iter23 icd10 created_at bug appears fixed). Frontend e2e PASS. Test file: /app/backend/tests/test_iter24_patients_bulk_import.py. XML: /app/test_reports/pytest/iteration_24_patients_bulk.xml. Use this file as regression in iter25+. Known stale data: ~10-15 TestImport_* / IMPE2E_* / UI_E2E_* patient rows remain in clinic c0321ed8 because GET ?search=<prefix> doesn't match underscore-prefixed names — clean via direct supabase if visual noise becomes a problem. SPA navigation deep-link tip: after login, hard page.goto('/patients') redirects to /login (auth context not yet hydrated); use sidebar link click or pushState+popstate to navigate.",
+  "rca of the issue": "N/A — no bugs found in this iteration. Previous iter23 icd10 commit bug (PGRST204 created_at) appears to be FIXED based on full regression suite passing 22/22 on test_iter23_p2_csv_import.py."
+}
