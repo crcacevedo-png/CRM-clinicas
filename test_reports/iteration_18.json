@@ -1,0 +1,65 @@
+{
+  "summary": "REFACTOR REGRESSION VALIDATION (iteration 18) — Backend monolith server.py was split into 6 modular routers in /app/backend/routes/ (inventory, sales, accounts_receivable, expenses, commissions, reports). Goal: zero functional regression. RESULT: 100% pass on all 6 refactored modules (124/124 pytest tests). Non-refactored modules: 119/130 pass; 11 failures in legacy modules are pre-existing test-vs-implementation mismatches, NOT regressions caused by the refactor. Frontend smoke E2E: login OK, all 9 dashboard tabs (Dashboard, Agenda, Pacientes, Inventario, Ventas, Cuentas, Gastos, Comisiones, Reportes) load with content and no on-page errors; only 1 React 'unique key prop' warning in AgendaPage. Backend startup is clean (no import errors). server.py loads routes in correct order (inventory → expenses → commissions → sales → accounts_receivable → reports) so the EXPENSE_CATEGORY_LABELS cross-import resolves. Performed 124 endpoint calls across all 6 refactored modules + URL/structure parity with iterations 11-17 baselines. Refactor verified safe.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/clinic/lab-orders/{id}", "issue": "Returns 500 instead of 404 for non-existent ID — PRE-EXISTING, NOT a refactor regression (lab_orders is in server.py, not in /routes)."},
+      {"endpoint": "POST /api/super-admin/clinics/{id}/change-plan", "issue": "Returns 500 instead of 404 for invalid plan_code — PRE-EXISTING (feature_flags in server.py)."},
+      {"endpoint": "POST /api/clinic/medical-records", "issue": "Returns 500 instead of 404 for invalid patient_id — PRE-EXISTING (medical_records in server.py)."},
+      {"endpoint": "GET /api/clinic/dashboard", "issue": "Test asserts legacy key 'total_patients' but response has 'new_patients_month'. Stale test (test_clinic_agenda.py line 106) — endpoint behaviour unchanged."},
+      {"endpoint": "GET /api/clinic/patients", "issue": "Test asserts list shape but endpoint correctly returns paginated {patients, page, pages, limit}. Stale test."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AgendaPage", "issues": ["React console warning: 'Each child in a list should have a unique key prop' rendered from AgendaPage. Pre-existing, not blocking. Recommend adding stable keys to the offending list."]}
+    ]
+  },
+  "passed_tests": [
+    "Backend startup: no import errors, routes registered in correct order (expenses before reports for EXPENSE_CATEGORY_LABELS)",
+    "Inventory module: 24/24 pytest pass — categories, products, stock+adjustments, alerts, movements, suppliers, purchase orders (PO received increases stock via trigger)",
+    "Sales/POS module: 31/31 pytest pass — services CRUD, cash registers, open/close session, create sale (cash/card/mixed/transfer/credit), validation, get-detail, list, daily-summary, cancel sale, PDF URL, close-session summary",
+    "Accounts Receivable module: 16/16 pytest pass — auto-create on sale balance, dashboard, aging, list+filters+search, detail with sale+payments, register payment validation+sync, payment plan (3 monthly, min installments, missing first_due), pending installments",
+    "Expenses module: 15/15 pytest pass — full CRUD",
+    "Commissions module: 17/17 pytest pass — settings CRUD validation, auto-calc on sale create (with/without doctor), dashboard totals, pay flow (single/double-pay/empty), PDF report, delete rule",
+    "Reports module: 21/21 pytest pass — executive-summary (current/previous/quarter/year/custom), income (day/week/month grouping), pnl, pnl-pdf, inventory (30/60/90), by-branch",
+    "Non-refactored auth/login: working",
+    "Frontend: login carlos@lasalud.gt OK, redirect to /dashboard",
+    "Frontend smoke: 9/9 main tabs load with content (Dashboard, Agenda, Pacientes, Inventario, Ventas, Cuentas, Gastos, Comisiones, Reportes), 0 on-page error toasts, 0 page-level JS errors",
+    "Frontend: Reportes tab renders all 8 KPI cards (Q9600 ingresos, Q3136 gastos, Q6014 utilidad neta, Q1020 CxC pendiente, Q480 ticket, 6 pacientes, 15 citas, 20 ventas), 12-month line chart, payment-method bar chart, expense pie, branch bar"
+  ],
+  "test_report_links": [
+    "/app/test_reports/pytest/iteration_18_refactored.xml",
+    "/app/test_reports/pytest/iteration_18_legacy.xml",
+    "/app/backend/tests/test_inventory.py",
+    "/app/backend/tests/test_sales.py",
+    "/app/backend/tests/test_accounts_receivable.py",
+    "/app/backend/tests/test_expenses.py",
+    "/app/backend/tests/test_commissions.py",
+    "/app/backend/tests/test_reports.py"
+  ],
+  "action_items": [
+    "REFACTOR IS SAFE — no regression. Main agent can ship.",
+    "Optional: Update stale tests in test_clinic_agenda.py (test_dashboard_returns_kpis line 106 → assert 'new_patients_month' not 'total_patients'; test_list_patients line 146 → handle paginated response shape).",
+    "Optional: Pre-existing 500→404 normalization in 3 endpoints (lab-orders/get, change-plan, medical-records create with invalid patient). Not refactor-related.",
+    "Optional: Fix React 'unique key prop' warning in AgendaPage list render."
+  ],
+  "critical_code_review_comments": [
+    "Refactor is well-executed: import order (expenses before reports) correctly handles EXPENSE_CATEGORY_LABELS cross-module dependency. /app/backend/routes/__init__.py is empty which means routes are imported as `from routes import inventory, ...` from server.py — works because /app/backend is the working dir; ensure pytest/unitenv also has it on sys.path (already does).",
+    "server.py is still 3472 lines — large but ~43% smaller than before. Could continue extracting auth/agenda/patients/prescriptions/lab_orders into their own routers using the same pattern.",
+    "commissions.py exposes _compute_commissions_for_sale and is imported by sales.py — this is fine, but note it creates a circular-import risk if commissions ever needs to import from sales. Currently safe because commissions only imports from server (auth dependencies) and stdlib.",
+    "reports.py imports EXPENSE_CATEGORY_LABELS from routes.expenses — clean dependency direction (reports depends on expenses).",
+    "All 6 routers correctly use APIRouter with consistent /clinic/* prefixes and feature-flag dependencies.",
+    "No data-shape/parity issues found compared to iterations 11-17 baselines."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend_refactored": "100% (124/124)", "backend_legacy": "91.5% (119/130, all failures pre-existing)", "frontend": "100% (9/9 tabs load)"},
+  "test_credentials": "carlos@lasalud.gt / Test123456!",
+  "seed_data_creation": "None — used existing fixtures created by previous iterations (1 cash session open, sales Q9600 incl Q500, 1 commission Q150, 1 AR with 3-installment plan, 1 expense Q3136 alquiler, 14+ sales in fixture set).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Refactor iteration 18 verified zero regression. The 6 refactored modules (inventory/sales/AR/expenses/commissions/reports) are now in /app/backend/routes/ and have 100% pytest pass. server.py is 3472 lines and still hosts auth/agenda/patients/prescriptions/lab_orders/branches/settings/members/medical_records — these were untouched and behave identically. Frontend was not modified and works end-to-end. The 11 pre-existing failures in legacy tests are NOT refactor regressions; they are stale-test-assertion or 500-vs-404 normalization issues that existed before the refactor. Future refactor iterations can continue extracting more modules using the same pattern (cross-imports must respect router order in server.py).",
+  "rca of the issue": "N/A — no regressions. Pre-existing minor issues documented above for awareness but unrelated to the refactor."
+}
