@@ -95,6 +95,13 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Quick wins: KpiCard formato counts sin decimales, branch dict pre-fetch (N+1 fix), data-testid pnl-pdf-btn
   - [x] Tested iteration_17 (100% backend 21/21, 100% frontend E2E completo)
 
+- [x] **REFACTOR: server.py modularizado** (26 Abril 2026):
+  - [x] server.py reducido de 6060 → 3472 líneas (-43%)
+  - [x] 6 routers extraídos a /app/backend/routes/: inventory.py (365), sales.py (707), accounts_receivable.py (318), expenses.py (291), commissions.py (377), reports.py (607)
+  - [x] Cross-module deps: routes/expenses define EXPENSE_CATEGORIES + EXPENSE_CATEGORY_LABELS; routes/reports importa labels de routes/expenses; routes/sales importa _compute_commissions_for_sale de routes/commissions
+  - [x] Patrón: cada router exporta `router = APIRouter()`; server.py al final hace `from routes import ...` e include_router (loaded post-symbol-definition para evitar circular imports)
+  - [x] Tested iteration_18: 100% (124/124) en módulos refactorizados, frontend E2E sin regresiones
+
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
 - [ ] Dropdown sucursal en formulario de nueva cita - P1
