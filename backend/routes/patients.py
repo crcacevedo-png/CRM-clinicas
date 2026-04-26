@@ -12,7 +12,7 @@ from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
     get_plan_limits, parse_presentations,
-    require_clinic_member, require_super_admin, get_current_user,
+    require_clinic_member, require_clinic_admin, require_super_admin, get_current_user,
     LoginRequest, LoginResponse, ClinicCreate, ClinicUpdate, ClinicMemberCreate, UserUpdate,
     MedicationCreate, MedicationBulkImport, LabStudyCreate, LabStudyBulkImport,
     ICD10CodeCreate, ICD10BulkImport,
@@ -374,13 +374,20 @@ def _parse_csv(raw: bytes) -> list:
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="CSV sin encabezados")
     norm_headers = {h: (h or "").strip().lower().replace(" ", "_") for h in reader.fieldnames}
-    return [{norm_headers[k]: v for k, v in r.items() if k in norm_headers} for r in reader]
+    out = []
+    for r in reader:
+        d = {norm_headers[k]: v for k, v in r.items() if k in norm_headers}
+        # Skip phantom rows from trailing newlines / fully blank lines
+        if not any((str(v).strip() if v is not None else "") for v in d.values()):
+            continue
+        out.append(d)
+    return out
 
 @router.post("/clinic/patients-bulk/import")
 async def import_patients(
     file: UploadFile = File(...),
     commit: bool = False,
-    ctx=Depends(require_clinic_member),
+    ctx=Depends(require_clinic_admin),
 ):
     """Bulk-import patients from a CSV or XLSX file.
 

@@ -10,12 +10,25 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [userType, setUserType] = useState(null);
   const [clinicId, setClinicId] = useState(null);
+  const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('access_token'));
 
   useEffect(() => {
     checkSession();
   }, []);
+
+  const fetchRole = async (accessToken) => {
+    try {
+      const res = await axios.get(`${API}/auth/me`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const r = res.data?.role || null;
+      setRole(r);
+      if (r) localStorage.setItem('user_role', r);
+      return r;
+    } catch {
+      return null;
+    }
+  };
 
   const checkSession = async () => {
     try {
@@ -24,12 +37,16 @@ export const AuthProvider = ({ children }) => {
       const storedUserId = localStorage.getItem('user_id');
       const storedEmail = localStorage.getItem('user_email');
       const storedClinicId = localStorage.getItem('clinic_id');
+      const storedRole = localStorage.getItem('user_role');
 
       if (storedToken && storedUserType && storedUserId) {
         setToken(storedToken);
         setUserType(storedUserType);
         setClinicId(storedClinicId);
+        setRole(storedRole);
         setUser({ id: storedUserId, email: storedEmail });
+        // Refresh role in background to keep it in sync
+        fetchRole(storedToken);
       }
     } catch (error) {
       console.error('Session check error:', error);
@@ -56,6 +73,8 @@ export const AuthProvider = ({ children }) => {
       setUserType(data.user_type);
       setClinicId(data.clinic_id);
       setUser({ id: data.user_id, email: data.email });
+      // Fetch role asynchronously (used to gate admin-only UI like bulk imports)
+      fetchRole(data.access_token);
 
       return { success: true, userType: data.user_type };
     } catch (error) {
@@ -79,10 +98,12 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('user_id');
     localStorage.removeItem('user_email');
     localStorage.removeItem('clinic_id');
+    localStorage.removeItem('user_role');
 
     setToken(null);
     setUserType(null);
     setClinicId(null);
+    setRole(null);
     setUser(null);
   };
 
@@ -95,6 +116,7 @@ export const AuthProvider = ({ children }) => {
       user,
       userType,
       clinicId,
+      role,
       loading,
       token,
       login,

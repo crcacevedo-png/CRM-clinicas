@@ -146,6 +146,13 @@ def require_clinical_role(ctx):
         raise HTTPException(status_code=403, detail="Acceso restringido a médicos y administradores clínicos")
     return ctx
 
+async def require_clinic_admin(ctx=Depends(require_clinic_member)):
+    """Restrict an endpoint to clinic_admin only. Use for sensitive bulk/destructive ops."""
+    role = ctx["member"].get("role", "")
+    if role != "clinic_admin":
+        raise HTTPException(status_code=403, detail="Acceso restringido a administradores de clínica")
+    return ctx
+
 def validate_uuid(value: str, label: str = "ID") -> str:
     """Validate a path-param UUID. Returns the value unchanged or raises HTTP 422."""
     try:

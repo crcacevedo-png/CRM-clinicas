@@ -113,7 +113,8 @@ function TagInput({ value, onChange, placeholder }) {
 }
 
 export default function PatientsPage() {
-  const { getAuthHeaders } = useAuth();
+  const { getAuthHeaders, role } = useAuth();
+  const isAdmin = role === 'clinic_admin';
   const navigate = useNavigate();
   const [patients, setPatients] = useState([]);
   const [total, setTotal] = useState(0);
@@ -248,9 +249,11 @@ export default function PatientsPage() {
           <p className="text-sm text-slate-500 mt-0.5">{total} paciente{total !== 1 ? 's' : ''} registrado{total !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-50" onClick={() => setShowImport(true)} data-testid="import-patients-btn">
-            <Upload className="w-4 h-4 mr-1.5" /> Importar
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-50" onClick={() => setShowImport(true)} data-testid="import-patients-btn">
+              <Upload className="w-4 h-4 mr-1.5" /> Importar
+            </Button>
+          )}
           <Button className="bg-teal-600 hover:bg-teal-700 shadow-sm" onClick={openNewPatient} data-testid="new-patient-btn">
             <Plus className="w-4 h-4 mr-1.5" /> Nuevo paciente
           </Button>

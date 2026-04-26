@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 router = APIRouter()
 
-from core import sdb, supabase_admin, require_clinic_member, now_iso, logger
+from core import sdb, supabase_admin, require_clinic_member, require_clinic_admin, now_iso, logger
 
 # ============== INVENTORY ROUTES ==============
 
@@ -462,14 +462,21 @@ def _parse_csv_simple(raw: bytes) -> list:
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="CSV sin encabezados")
     norm_headers = {h: (h or "").strip().lower().replace(" ", "_") for h in reader.fieldnames}
-    return [{norm_headers[k]: v for k, v in r.items() if k in norm_headers} for r in reader]
+    out = []
+    for r in reader:
+        d = {norm_headers[k]: v for k, v in r.items() if k in norm_headers}
+        # Skip phantom rows produced by trailing newlines / fully empty lines
+        if not any((str(v).strip() if v is not None else "") for v in d.values()):
+            continue
+        out.append(d)
+    return out
 
 @router.post("/clinic/inventory-bulk/import")
 async def import_products(
     file: UploadFile = File(...),
     branch_id: Optional[str] = None,
     commit: bool = False,
-    ctx=Depends(require_clinic_member),
+    ctx=Depends(require_clinic_admin),
 ):
     """Bulk-import products from a CSV or XLSX file.
 

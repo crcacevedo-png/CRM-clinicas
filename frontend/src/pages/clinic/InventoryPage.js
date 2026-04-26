@@ -62,6 +62,8 @@ export default function InventoryPage() {
 
 /* ============ PRODUCTS TAB ============ */
 function ProductsTab({ headers, branches, activeBranch }) {
+  const { role } = useAuth();
+  const isAdmin = role === 'clinic_admin';
   const [products, setProducts] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -153,7 +155,9 @@ function ProductsTab({ headers, branches, activeBranch }) {
           </SelectContent>
         </Select>
         <Button variant="outline" size="sm" onClick={()=>setShowCatForm(true)}>+ Categoría</Button>
-        <Button variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-50" onClick={()=>setShowImport(true)} data-testid="import-products-btn"><Upload className="w-4 h-4 mr-1" />Importar</Button>
+        {isAdmin && (
+          <Button variant="outline" className="border-teal-600 text-teal-600 hover:bg-teal-50" onClick={()=>setShowImport(true)} data-testid="import-products-btn"><Upload className="w-4 h-4 mr-1" />Importar</Button>
+        )}
         <Button className="bg-teal-600 hover:bg-teal-700" onClick={openNew} data-testid="new-product-btn"><Plus className="w-4 h-4 mr-1" />Nuevo producto</Button>
       </div>
 
