@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranch } from '../../context/BranchContext';
 import { useFeatures } from '../../context/FeatureContext';
@@ -33,6 +33,14 @@ export default function ReportsPage() {
   const { hasFeature } = useFeatures();
   const headers = getAuthHeaders();
   const [tab, setTab] = useState('summary');
+  // Shared cache across tab switches: Map of `${tab}-${JSON.stringify(params)}` → response data.
+  // Persists across unmount/remount of TabsContent (Radix default behaviour).
+  const cacheRef = useRef(new Map());
+  const cache = useMemo(() => ({
+    get: (key) => cacheRef.current.get(key),
+    set: (key, val) => cacheRef.current.set(key, val),
+    invalidate: () => cacheRef.current.clear(),
+  }), []);
 
   return (
     <FeatureGate feature="financial_reports" planRequired="Professional">
@@ -47,11 +55,11 @@ export default function ReportsPage() {
             <TabsTrigger value="inventory" data-testid="rep-tab-inventory"><Package className="w-3.5 h-3.5 mr-1" />Inventario</TabsTrigger>
             {hasFeature('multi_branch') && <TabsTrigger value="branch" data-testid="rep-tab-branch"><Building2 className="w-3.5 h-3.5 mr-1" />Por sucursal</TabsTrigger>}
           </TabsList>
-          <TabsContent value="summary"><SummaryTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
-          <TabsContent value="income"><IncomeTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
-          <TabsContent value="pnl"><PnLTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
-          <TabsContent value="inventory"><InventoryTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
-          {hasFeature('multi_branch') && <TabsContent value="branch"><BranchTab headers={headers} /></TabsContent>}
+          <TabsContent value="summary"><SummaryTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
+          <TabsContent value="income"><IncomeTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
+          <TabsContent value="pnl"><PnLTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
+          <TabsContent value="inventory"><InventoryTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
+          {hasFeature('multi_branch') && <TabsContent value="branch"><BranchTab headers={headers} cache={cache} /></TabsContent>}
         </Tabs>
       </div>
     </FeatureGate>
@@ -106,7 +114,7 @@ function buildParams({ period, dateFrom, dateTo, branchId, ...rest }) {
 }
 
 /* ============ SUMMARY TAB ============ */
-function SummaryTab({ headers, branches, activeBranch }) {
+function SummaryTab({ headers, branches, activeBranch, cache }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -117,14 +125,18 @@ function SummaryTab({ headers, branches, activeBranch }) {
   useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
+    const params = buildParams({ period, dateFrom, dateTo, branchId });
+    const cacheKey = `summary-${params}`;
+    const cached = cache?.get(cacheKey);
+    if (cached) { setData(cached); setLoading(false); return; }
     setLoading(true);
     try {
-      const params = buildParams({ period, dateFrom, dateTo, branchId });
       const r = await axios.get(`${API}/clinic/reports/executive-summary?${params}`, { headers });
       setData(r.data);
+      cache?.set(cacheKey, r.data);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [period, dateFrom, dateTo, branchId, headers]);
+  }, [period, dateFrom, dateTo, branchId, headers, cache]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -243,7 +255,7 @@ function EmptyChart() { return <div className="flex items-center justify-center 
 function Spinner() { return <div className="flex justify-center py-16"><div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>; }
 
 /* ============ INCOME TAB ============ */
-function IncomeTab({ headers, branches, activeBranch }) {
+function IncomeTab({ headers, branches, activeBranch, cache }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -255,14 +267,18 @@ function IncomeTab({ headers, branches, activeBranch }) {
   useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
+    const params = buildParams({ period, dateFrom, dateTo, branchId, grouping });
+    const cacheKey = `income-${params}`;
+    const cached = cache?.get(cacheKey);
+    if (cached) { setData(cached); setLoading(false); return; }
     setLoading(true);
     try {
-      const params = buildParams({ period, dateFrom, dateTo, branchId, grouping });
       const r = await axios.get(`${API}/clinic/reports/income?${params}`, { headers });
       setData(r.data);
+      cache?.set(cacheKey, r.data);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [period, dateFrom, dateTo, branchId, grouping, headers]);
+  }, [period, dateFrom, dateTo, branchId, grouping, headers, cache]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -361,7 +377,7 @@ function IncomeTab({ headers, branches, activeBranch }) {
 }
 
 /* ============ P&L TAB ============ */
-function PnLTab({ headers, branches, activeBranch }) {
+function PnLTab({ headers, branches, activeBranch, cache }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -373,14 +389,18 @@ function PnLTab({ headers, branches, activeBranch }) {
   useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
+    const params = buildParams({ period, dateFrom, dateTo, branchId });
+    const cacheKey = `pnl-${params}`;
+    const cached = cache?.get(cacheKey);
+    if (cached) { setData(cached); setLoading(false); return; }
     setLoading(true);
     try {
-      const params = buildParams({ period, dateFrom, dateTo, branchId });
       const r = await axios.get(`${API}/clinic/reports/pnl?${params}`, { headers });
       setData(r.data);
+      cache?.set(cacheKey, r.data);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [period, dateFrom, dateTo, branchId, headers]);
+  }, [period, dateFrom, dateTo, branchId, headers, cache]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -460,7 +480,7 @@ function PnLTab({ headers, branches, activeBranch }) {
 }
 
 /* ============ INVENTORY TAB ============ */
-function InventoryTab({ headers, branches, activeBranch }) {
+function InventoryTab({ headers, branches, activeBranch, cache }) {
   const [branchId, setBranchId] = useState(activeBranch?.id || 'all');
   const [days, setDays] = useState(60);
   const [data, setData] = useState(null);
@@ -469,15 +489,19 @@ function InventoryTab({ headers, branches, activeBranch }) {
   useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
+    const params = new URLSearchParams({ days_no_movement: String(days) });
+    if (branchId !== 'all') params.set('branch_id', branchId);
+    const cacheKey = `inventory-${params.toString()}`;
+    const cached = cache?.get(cacheKey);
+    if (cached) { setData(cached); setLoading(false); return; }
     setLoading(true);
     try {
-      const params = new URLSearchParams({ days_no_movement: String(days) });
-      if (branchId !== 'all') params.set('branch_id', branchId);
       const r = await axios.get(`${API}/clinic/reports/inventory?${params}`, { headers });
       setData(r.data);
+      cache?.set(cacheKey, r.data);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [branchId, days, headers]);
+  }, [branchId, days, headers, cache]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -563,7 +587,7 @@ function InventoryTab({ headers, branches, activeBranch }) {
 }
 
 /* ============ BRANCH COMPARATIVE ============ */
-function BranchTab({ headers }) {
+function BranchTab({ headers, cache }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -571,14 +595,18 @@ function BranchTab({ headers }) {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    const params = buildParams({ period, dateFrom, dateTo });
+    const cacheKey = `branch-${params}`;
+    const cached = cache?.get(cacheKey);
+    if (cached) { setData(cached); setLoading(false); return; }
     setLoading(true);
     try {
-      const params = buildParams({ period, dateFrom, dateTo });
       const r = await axios.get(`${API}/clinic/reports/by-branch?${params}`, { headers });
       setData(r.data);
+      cache?.set(cacheKey, r.data);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [period, dateFrom, dateTo, headers]);
+  }, [period, dateFrom, dateTo, headers, cache]);
 
   useEffect(() => { load(); }, [load]);
 
