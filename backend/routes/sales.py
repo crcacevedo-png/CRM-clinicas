@@ -315,6 +315,14 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
         else:
             payment_status = 'partial'
 
+        # If the sale has a pending balance (partial or unpaid), require a registered patient
+        # because accounts_receivable.patient_id is NOT NULL and the AR record must be created.
+        if amount_due > 0 and not data.get("patient_id"):
+            raise HTTPException(
+                status_code=400,
+                detail="Para registrar pagos parciales o crédito, selecciona un paciente registrado en el carrito (no basta con el nombre del cliente)."
+            )
+
         sale_id = str(uuid.uuid4())
         sale_number = _generate_sale_number(clinic_id)
         now = now_iso()
@@ -406,17 +414,23 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             try:
                 from datetime import datetime as dt, timedelta
                 due_default = (dt.now(timezone.utc) + timedelta(days=30)).date().isoformat()
+                installments = int(data.get("ar_installments") or 0)
                 sdb.table('accounts_receivable').insert({
                     "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
                     "patient_id": data.get("patient_id"),
                     "original_amount": total, "paid_amount": amount_paid, "balance": amount_due,
                     "due_date": data.get("ar_due_date") or due_default,
                     "status": "pending",
-                    "has_payment_plan": False, "installments": 0,
+                    "has_payment_plan": installments > 1, "installments": installments,
                     "created_at": now, "updated_at": now,
                 }).execute()
             except Exception as _e:
-                logger.warning(f"AR create skipped: {_e}")
+                # Surface the error so the user knows the AR wasn't created
+                logger.error(f"AR create failed for sale {sale_id}: {_e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Venta creada pero no se pudo crear la cuenta por cobrar: {str(_e)[:200]}"
+                )
 
         # Compute commissions for the sale's doctor (best-effort)
         if data.get("doctor_id"):

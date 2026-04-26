@@ -16,7 +16,7 @@ import { Separator } from '../../components/ui/separator';
 import { toast } from 'sonner';
 import {
   Receipt, Search, AlertCircle, Clock, Users as UsersIcon, DollarSign,
-  CalendarDays, FileText, Wallet, Layers, ChevronLeft, ChevronRight, CreditCard
+  CalendarDays, FileText, Wallet, Layers, ChevronLeft, ChevronRight, CreditCard, Plus
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -62,6 +62,7 @@ function AccountsTab({ headers }) {
   const [detail, setDetail] = useState(null);
   const [showPay, setShowPay] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
+  const [showCreateAR, setShowCreateAR] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +118,10 @@ function AccountsTab({ headers }) {
           <input type="checkbox" className="rounded" checked={onlyOverdue} onChange={e => setOnlyOverdue(e.target.checked)} data-testid="only-overdue-cb" />
           Solo vencidas
         </label>
+        <div className="flex-1" />
+        <Button className="bg-teal-600 hover:bg-teal-700 text-white" onClick={() => setShowCreateAR(true)} data-testid="new-ar-btn">
+          <Plus className="w-4 h-4 mr-1" /> Nueva cuenta
+        </Button>
       </div>
 
       {loading ? <div className="flex justify-center py-16"><div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div> :
@@ -246,7 +251,120 @@ function AccountsTab({ headers }) {
 
       <RegisterPaymentDialog open={showPay} onClose={() => setShowPay(false)} ar={detail} headers={headers} onDone={() => { setShowPay(false); openDetail(detail.id); load(); }} />
       <CreatePlanDialog open={showPlan} onClose={() => setShowPlan(false)} ar={detail} headers={headers} onDone={() => { setShowPlan(false); openDetail(detail.id); load(); }} />
+      <CreateARDialog open={showCreateAR} onClose={() => setShowCreateAR(false)} headers={headers} onDone={() => { setShowCreateAR(false); load(); }} />
     </>
+  );
+}
+
+function CreateARDialog({ open, onClose, headers, onDone }) {
+  const [patients, setPatients] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [patientQuery, setPatientQuery] = useState('');
+  const [patient, setPatient] = useState(null);
+  const [form, setForm] = useState({ amount: '', due_date: '', installments: 1, notes: '' });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      const d = new Date(); d.setDate(d.getDate() + 30);
+      setForm({ amount: '', due_date: d.toISOString().slice(0, 10), installments: 1, notes: '' });
+      setPatient(null); setPatients([]); setPatientQuery('');
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!patientQuery || patientQuery.length < 2) { setPatients([]); return; }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await axios.get(`${API}/clinic/patients/search?q=${encodeURIComponent(patientQuery)}`, { headers });
+        setPatients(r.data?.patients || r.data || []);
+      } catch { /* ignore */ }
+      finally { setSearching(false); }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [patientQuery, headers]);
+
+  const submit = async () => {
+    if (!patient?.id) { toast.error('Selecciona un paciente'); return; }
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { toast.error('Monto inválido'); return; }
+    if (!form.due_date) { toast.error('Fecha de vencimiento requerida'); return; }
+    setSubmitting(true);
+    try {
+      await axios.post(`${API}/clinic/accounts-receivable`, {
+        patient_id: patient.id,
+        amount: amt,
+        due_date: form.due_date,
+        installments: parseInt(form.installments) || 1,
+        notes: form.notes,
+      }, { headers });
+      toast.success('Cuenta por cobrar creada');
+      onDone();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al crear');
+    } finally { setSubmitting(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md" data-testid="create-ar-dialog">
+        <DialogHeader><DialogTitle>Nueva cuenta por cobrar</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-2 text-sm">
+          <p className="text-xs text-slate-500">Crea una cuenta manual para deudas heredadas o no asociadas a una venta del sistema.</p>
+          <div>
+            <Label className="text-xs">Paciente</Label>
+            {patient ? (
+              <div className="flex items-center justify-between bg-teal-50 border border-teal-200 rounded p-2 mt-1">
+                <span className="text-sm font-medium">{patient.first_name} {patient.last_name}</span>
+                <Button variant="ghost" size="sm" onClick={() => setPatient(null)}>Cambiar</Button>
+              </div>
+            ) : (
+              <>
+                <Input className="mt-1" placeholder="Buscar paciente..." value={patientQuery} onChange={e => setPatientQuery(e.target.value)} data-testid="ar-patient-search" />
+                {searching && <p className="text-xs text-slate-400 mt-1">Buscando…</p>}
+                {patients.length > 0 && (
+                  <div className="border rounded mt-1 max-h-32 overflow-auto">
+                    {patients.slice(0, 8).map(p => (
+                      <button key={p.id} type="button" className="block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50" onClick={() => { setPatient(p); setPatientQuery(''); setPatients([]); }} data-testid={`ar-patient-${p.id}`}>
+                        {p.first_name} {p.last_name} {p.national_id ? `· ${p.national_id}` : ''}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Monto (Q)</Label>
+              <Input type="number" step="0.01" min="0" className="mt-1" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} data-testid="ar-amount-input" />
+            </div>
+            <div>
+              <Label className="text-xs">Vence</Label>
+              <Input type="date" className="mt-1" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} data-testid="ar-due-input" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Cuotas</Label>
+              <Input type="number" min="1" max="36" className="mt-1" value={form.installments} onChange={e => setForm(f => ({ ...f, installments: e.target.value }))} data-testid="ar-inst-input" />
+            </div>
+            <div className="flex items-end text-xs text-slate-500">
+              {form.installments > 1 && form.amount && `~ Q${(form.amount / form.installments).toFixed(2)} por cuota`}
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Notas (opcional)</Label>
+            <Textarea className="mt-1 text-sm" rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Concepto, referencia, etc." />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button className="bg-teal-600 hover:bg-teal-700" onClick={submit} disabled={submitting} data-testid="create-ar-submit-btn">{submitting ? 'Creando…' : 'Crear cuenta'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

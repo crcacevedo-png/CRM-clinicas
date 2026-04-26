@@ -179,6 +179,45 @@ async def list_accounts_receivable(
         logger.error(f"List AR error: {e}")
         raise HTTPException(status_code=500, detail="Error")
 
+@router.post("/clinic/accounts-receivable")
+async def create_manual_ar(data: dict, ctx=Depends(require_clinic_member)):
+    """Manually create an AR record (e.g. for legacy debt not tied to a system sale)."""
+    clinic_id = ctx["member"]["clinic_id"]
+    member = ctx["member"]
+    patient_id = data.get("patient_id")
+    if not patient_id:
+        raise HTTPException(status_code=400, detail="Paciente requerido")
+    try:
+        amount = float(data.get("amount") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Monto inválido")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    due_date = data.get("due_date")
+    if not due_date:
+        raise HTTPException(status_code=400, detail="Fecha de vencimiento requerida")
+    try:
+        installments = max(1, int(data.get("installments") or 1))
+        notes = (data.get("notes") or "").strip()
+        ar_id = str(uuid.uuid4())
+        now = now_iso()
+        sdb.table('accounts_receivable').insert({
+            "id": ar_id, "clinic_id": clinic_id, "sale_id": None,
+            "patient_id": patient_id,
+            "original_amount": amount, "paid_amount": 0, "balance": amount,
+            "due_date": due_date, "status": "pending",
+            "has_payment_plan": installments > 1, "installments": installments,
+            "notes": notes or None,
+            "created_at": now, "updated_at": now,
+        }).execute()
+        logger.info(f"Manual AR {ar_id} created by member {member['id']} for patient {patient_id} amount {amount}")
+        return {"id": ar_id, "balance": amount, "due_date": due_date}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create manual AR error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al crear cuenta por cobrar: {str(e)[:200]}")
+
 @router.get("/clinic/accounts-receivable/{ar_id}")
 async def get_account_receivable(ar_id: str, ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]

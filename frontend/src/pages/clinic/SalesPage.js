@@ -403,7 +403,13 @@ function POSTab({ headers, branches, activeBranch, hasInventory }) {
       </div>
 
       {/* Charge Modal */}
-      <ChargeModal open={showCharge} onClose={() => setShowCharge(false)} total={total} onConfirm={async (payments) => {
+      <ChargeModal
+        open={showCharge}
+        onClose={() => setShowCharge(false)}
+        total={total}
+        hasPatient={!!customer.patient_id}
+        patientName={customer.name}
+        onConfirm={async (payments, arOpts = {}) => {
         try {
           const payload = {
             branch_id: session.branch_id || activeBranch?.id,
@@ -422,6 +428,7 @@ function POSTab({ headers, branches, activeBranch, hasInventory }) {
               tax_rate: c.tax_rate || 0,
             })),
             payments,
+            ...arOpts,
           };
           const r = await axios.post(`${API}/clinic/sales`, payload, { headers });
           toast.success(`Venta ${r.data.sale_number} registrada`);
@@ -461,11 +468,21 @@ function POSTab({ headers, branches, activeBranch, hasInventory }) {
 }
 
 /* ============ CHARGE MODAL ============ */
-function ChargeModal({ open, onClose, total, onConfirm }) {
+function ChargeModal({ open, onClose, total, onConfirm, hasPatient, patientName }) {
   const [payments, setPayments] = useState([{ payment_method: 'cash', amount: 0, reference: '' }]);
   const [submitting, setSubmitting] = useState(false);
+  const [arDueDate, setArDueDate] = useState('');
+  const [arInstallments, setArInstallments] = useState(1);
 
-  useEffect(() => { if (open) setPayments([{ payment_method: 'cash', amount: total, reference: '' }]); }, [open, total]);
+  useEffect(() => {
+    if (open) {
+      setPayments([{ payment_method: 'cash', amount: total, reference: '' }]);
+      // Default due date: 30 days from today
+      const d = new Date(); d.setDate(d.getDate() + 30);
+      setArDueDate(d.toISOString().slice(0, 10));
+      setArInstallments(1);
+    }
+  }, [open, total]);
 
   const addPay = () => setPayments(p => [...p, { payment_method: 'credit_card', amount: 0, reference: '' }]);
   const removePay = (i) => setPayments(p => p.filter((_, idx) => idx !== i));
@@ -475,21 +492,30 @@ function ChargeModal({ open, onClose, total, onConfirm }) {
   const cashGiven = payments.filter(p => p.payment_method === 'cash').reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
   const change = cashGiven > 0 && totalPaid > total ? totalPaid - total : 0;
   const due = Math.max(0, total - totalPaid);
+  const isPartial = due > 0.01;
 
   const handleConfirm = async () => {
-    if (totalPaid <= 0) { toast.error('Ingrese al menos un pago'); return; }
+    if (totalPaid <= 0 && !isPartial) { toast.error('Ingrese al menos un pago'); return; }
+    if (isPartial && !hasPatient) {
+      toast.error('Para pagos parciales o crédito, primero selecciona un paciente registrado en el carrito.');
+      return;
+    }
+    if (isPartial && !arDueDate) {
+      toast.error('Indica una fecha de vencimiento para la cuenta por cobrar.');
+      return;
+    }
     // Truncate any over-payment from cash to exact total (so amount_paid <= total)
     const adjusted = payments.filter(p => (parseFloat(p.amount) || 0) > 0).map(p => {
       let amt = parseFloat(p.amount) || 0;
       if (p.payment_method === 'cash' && totalPaid > total) {
-        // reduce by change to record only effective collected = total
         amt = Math.max(0, amt - change);
       }
       return { ...p, amount: amt };
     }).filter(p => p.amount > 0);
     setSubmitting(true);
-    try { await onConfirm(adjusted); }
-    finally { setSubmitting(false); }
+    try {
+      await onConfirm(adjusted, isPartial ? { ar_due_date: arDueDate, ar_installments: parseInt(arInstallments) || 1 } : {});
+    } finally { setSubmitting(false); }
   };
 
   return (
@@ -537,6 +563,37 @@ function ChargeModal({ open, onClose, total, onConfirm }) {
             {change > 0 && <div className="flex justify-between text-emerald-700"><span>Cambio:</span><span className="font-bold">Q{change.toFixed(2)}</span></div>}
             {due > 0 && <div className="flex justify-between text-amber-700"><span>Saldo pendiente:</span><span className="font-bold">Q{due.toFixed(2)}</span></div>}
           </div>
+
+          {/* Partial payment → AR options */}
+          {isPartial && (
+            <div className="border border-amber-300 bg-amber-50/60 rounded-lg p-3 space-y-2" data-testid="ar-options-section">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-900">
+                <Wallet className="w-4 h-4" /> Cuenta por cobrar
+              </div>
+              {!hasPatient ? (
+                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                  ⚠ Para registrar este pago parcial necesitas <strong>seleccionar un paciente registrado</strong> en el carrito (no basta el nombre del cliente). Cierra este diálogo y elige uno desde el buscador de paciente.
+                </p>
+              ) : (
+                <p className="text-xs text-amber-800">
+                  Se creará una cuenta por cobrar a nombre de <strong>{patientName}</strong> por <strong>Q{due.toFixed(2)}</strong>.
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Vence el</Label>
+                  <Input type="date" className="mt-1 text-sm h-8" value={arDueDate} onChange={e => setArDueDate(e.target.value)} disabled={!hasPatient} data-testid="ar-due-date-input" />
+                </div>
+                <div>
+                  <Label className="text-xs">Cuotas</Label>
+                  <Input type="number" min="1" max="36" className="mt-1 text-sm h-8" value={arInstallments} onChange={e => setArInstallments(e.target.value)} disabled={!hasPatient} data-testid="ar-installments-input" />
+                </div>
+              </div>
+              {arInstallments > 1 && hasPatient && (
+                <p className="text-xs text-slate-600">~ Q{(due / arInstallments).toFixed(2)} por cuota</p>
+              )}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
