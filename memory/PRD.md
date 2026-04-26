@@ -83,6 +83,18 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Reglas ordenadas por created_at desc en evaluación → priority determinístico
   - [x] Tested iteration_16 (100% backend 17/17, 100% frontend E2E)
 
+- [x] **MODULO REPORTES FINANCIEROS** (25 Abril 2026):
+  - [x] Ruta /dashboard/reportes + feature 'financial_reports' (ya activo)
+  - [x] Tab Resumen ejecutivo: 8 KPI cards (ingresos, gastos, utilidad neta+margen, CxC pendiente, ticket promedio, pacientes nuevos, citas, ventas) con delta% vs período anterior + 4 gráficas recharts (LineChart 12m income vs expenses, BarChart método pago, PieChart categorías gasto, BarChart horizontal sucursal)
+  - [x] Tab Ingresos: total + tendencia (day/week/month) + Top 10 productos + Top 10 servicios + por médico + por método de pago + export CSV
+  - [x] Tab Estado de resultados (P&L): tabla completa con comparación período actual vs anterior y Δ%, COGS auto-calculado de products.cost_price, comisiones, utilidad neta destacada, exportable a PDF profesional via reportlab
+  - [x] Tab Inventario: valoración cost+retail+margen potencial por sucursal y categoría, productos sin movimiento (30/60/90 días), top vendidos (90 días), próximos a vencer, movimientos del periodo
+  - [x] Tab Por sucursal: matriz comparativa (ingresos, gastos, utilidad, ventas, citas, ticket promedio) + 2 gráficas BarChart
+  - [x] Selector de período (mes actual/anterior/trimestre/año/custom) compartido en todos los tabs
+  - [x] 6 endpoints backend (/executive-summary, /income, /pnl, /pnl-pdf, /inventory, /by-branch) con auth gating
+  - [x] Quick wins: KpiCard formato counts sin decimales, branch dict pre-fetch (N+1 fix), data-testid pnl-pdf-btn
+  - [x] Tested iteration_17 (100% backend 21/21, 100% frontend E2E completo)
+
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
 - [ ] Dropdown sucursal en formulario de nueva cita - P1

@@ -218,7 +218,9 @@ function SummaryTab({ headers, branches }) {
 
 function KpiCard({ label, value, delta, deltaInverted, extra, icon: Icon, color = 'slate', prefix = '' }) {
   const colorMap = { teal: 'text-teal-600', red: 'text-red-600', emerald: 'text-emerald-600', amber: 'text-amber-600', blue: 'text-blue-600', purple: 'text-purple-600', slate: 'text-slate-700' };
-  const display = typeof value === 'number' ? `${prefix}${value.toFixed(2)}` : (value ?? '—');
+  const display = typeof value === 'number'
+    ? (prefix ? `${prefix}${value.toFixed(2)}` : `${Math.round(value)}`)
+    : (value ?? '—');
   const deltaPositive = delta != null && delta >= 0;
   const deltaGood = deltaInverted ? !deltaPositive : deltaPositive;
   return (
@@ -404,7 +406,7 @@ function PnLTab({ headers, branches }) {
     <>
       <div className="flex items-end justify-between flex-wrap gap-3">
         <PeriodPicker period={period} setPeriod={setPeriod} dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo} branchId={branchId} setBranchId={setBranchId} branches={branches} />
-        <Button variant="outline" onClick={exportPdf} disabled={pdfLoading} data-testid="export-pnl-pdf-btn"><FileDown className="w-4 h-4 mr-1" />{pdfLoading ? '...' : 'Exportar PDF'}</Button>
+        <Button variant="outline" onClick={exportPdf} disabled={pdfLoading} data-testid="pnl-pdf-btn"><FileDown className="w-4 h-4 mr-1" />{pdfLoading ? '...' : 'Exportar PDF'}</Button>
       </div>
       {loading ? <Spinner /> : !cur ? <EmptyChart /> : (
         <Card className="border overflow-hidden">

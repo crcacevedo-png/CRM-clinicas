@@ -5559,11 +5559,12 @@ async def executive_summary(
         for s in cur_sales:
             b = s.get('branch_id')
             if b: by_branch[b] = round(by_branch.get(b, 0) + float(s.get('total') or 0), 2)
-        branch_list = []
-        for bid, amount in by_branch.items():
-            br = sdb.table('branches').select('name').eq('id', bid).maybe_single().execute()
-            br_data = getattr(br, 'data', None) if br else None
-            branch_list.append({"branch_id": bid, "branch_name": br_data['name'] if br_data else 'Sucursal', "amount": amount})
+        # Pre-fetch branch dictionary in one query
+        branch_dict = {}
+        if by_branch:
+            branch_rows = sdb.table('branches').select('id,name').in_('id', list(by_branch.keys())).execute().data or []
+            branch_dict = {b['id']: b['name'] for b in branch_rows}
+        branch_list = [{"branch_id": bid, "branch_name": branch_dict.get(bid, 'Sucursal'), "amount": amount} for bid, amount in by_branch.items()]
         branch_list.sort(key=lambda x: x['amount'], reverse=True)
 
         def pct_change(cur, prev):
