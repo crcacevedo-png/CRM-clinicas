@@ -128,17 +128,28 @@ export default function CsvImportDialog({ open, onOpenChange, catalog, headers, 
         blob = res.data;
         filename = `plantilla_${catalog}.xlsx`;
       } else {
-        blob = new Blob([res.data.content], { type: 'text/csv;charset=utf-8;' });
-        filename = res.data.filename;
+        // Prepend BOM so Excel detects UTF-8 correctly when opening the CSV
+        const bom = '\ufeff';
+        blob = new Blob([bom + (res.data.content || '')], { type: 'text/csv;charset=utf-8;' });
+        filename = res.data.filename || `plantilla_${catalog}.csv`;
       }
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
       a.download = filename;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      toast.error('No se pudo descargar la plantilla');
+      // Defer cleanup so Firefox/Safari have time to start the download
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      }, 100);
+      toast.success(`Plantilla ${format.toUpperCase()} descargada`);
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || 'No se pudo descargar la plantilla';
+      toast.error(typeof msg === 'string' ? msg : 'No se pudo descargar la plantilla');
     }
   };
 
