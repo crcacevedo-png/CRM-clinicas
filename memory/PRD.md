@@ -96,21 +96,24 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Tested iteration_17 (100% backend 21/21, 100% frontend E2E completo)
 
 - [x] **REFACTOR: server.py modularizado** (26 Abril 2026):
-  - [x] server.py reducido de 6060 → 3472 líneas (-43%)
-  - [x] 6 routers extraídos a /app/backend/routes/: inventory.py (365), sales.py (707), accounts_receivable.py (318), expenses.py (291), commissions.py (377), reports.py (607)
-  - [x] Cross-module deps: routes/expenses define EXPENSE_CATEGORIES + EXPENSE_CATEGORY_LABELS; routes/reports importa labels de routes/expenses; routes/sales importa _compute_commissions_for_sale de routes/commissions
-  - [x] Patrón: cada router exporta `router = APIRouter()`; server.py al final hace `from routes import ...` e include_router (loaded post-symbol-definition para evitar circular imports)
-  - [x] Tested iteration_18: 100% (124/124) en módulos refactorizados, frontend E2E sin regresiones
+  - [x] **Fase 1**: server.py reducido de 6060 → 3472 líneas (-43%); 6 routers extraídos
+  - [x] **Fase 2** (26 Abril 2026): server.py reducido de 3472 → **126 líneas** (-98% del original)
+  - [x] Creado `/app/backend/core.py` (280 líneas): Supabase clients (`supabase_user`, `supabase_admin`, `supabase_anon`, `sdb`), Settings, logger, helpers (`generate_password`, `now_iso`, `get_plan_limits`, `parse_presentations`, `get_auth_users_map`, `enrich_member`), auth deps (`get_current_user`, `require_super_admin`, `require_clinic_member`, `require_clinical_role`, `CLINICAL_ROLES`) y todos los modelos Pydantic compartidos
+  - [x] 18 routers totales en `/app/backend/routes/`: auth, super_admin, catalogs, clinic_settings, branches, feature_flags, patients, appointments, medical_records, prescriptions, lab_orders, google_calendar, inventory, expenses, commissions, sales, accounts_receivable, reports
+  - [x] `server.py` ahora solo contiene FastAPI app, startup_event, /health, /generate-password y mount de routers
+  - [x] Eliminado patrón `from server import ...` que causaba circular imports
+  - [x] Bug fix testing agent: `require_clinical_role` faltante en prescriptions/lab_orders → resuelto promoviendo helper a `core.py`
+  - [x] Tested iteration_19: **44/44 PASS** suite de regresión + endpoints E2E verificados con curl
 
 ## Pendientes
 - [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
 - [ ] Dropdown sucursal en formulario de nueva cita - P1
+- [ ] Endpoints faltantes detectados por testing agent (P2): /api/auth/me, /api/clinic/expenses/categories (alias de /by-category), /api/clinic/sales/dashboard (alias de /daily-summary)
+- [ ] Mejora 422-vs-500 en path params no-UUID (sales/{id}, prescriptions/{id}, lab-orders/{id}, patients/{id}) - P2
 - [ ] Importacion CSV para catalogos - P2
-- [ ] Reportes y estadisticas - P2
 - [ ] Notificaciones/recordatorios - P2
 - [ ] WhatsApp via n8n - P2
 - [ ] Stripe/dLocal facturacion - P2
-- [ ] Refactoring: dividir server.py en routers
 
 ## Credenciales
 Ver `/app/memory/test_credentials.md`

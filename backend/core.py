@@ -137,6 +137,15 @@ async def require_clinic_member(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Acceso de miembro de clinica requerido")
     return {"auth_user": user, "member": result.data}
 
+CLINICAL_ROLES = ["doctor", "clinic_admin"]
+
+def require_clinical_role(ctx):
+    """Restrict an endpoint to clinical roles (doctor / clinic_admin)."""
+    role = ctx["member"].get("role", "")
+    if role not in CLINICAL_ROLES:
+        raise HTTPException(status_code=403, detail="Acceso restringido a médicos y administradores clínicos")
+    return ctx
+
 # ============== PYDANTIC MODELS ==============
 
 class LoginRequest(BaseModel):

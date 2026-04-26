@@ -18,8 +18,8 @@ from core import (
     ICD10CodeCreate, ICD10BulkImport,
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
+    require_clinical_role,
 )
-from routes.medical_records import require_clinical_role  # refactor fix: helper lives in medical_records
 
 # ============== LAB ORDER ROUTES ==============
 

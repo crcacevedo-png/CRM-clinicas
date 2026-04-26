@@ -18,6 +18,7 @@ from core import (
     ICD10CodeCreate, ICD10BulkImport,
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
+    CLINICAL_ROLES, require_clinical_role,
 )
 
 # ============== CONSULTATION TEMPLATES ROUTES ==============
@@ -136,14 +137,6 @@ class MedicalRecordCreate(BaseModel):
 
 class AddendumCreate(BaseModel):
     text: str
-
-CLINICAL_ROLES = ["doctor", "clinic_admin"]
-
-def require_clinical_role(ctx):
-    role = ctx["member"].get("role", "")
-    if role not in CLINICAL_ROLES:
-        raise HTTPException(status_code=403, detail="Acceso restringido a médicos y administradores clínicos")
-    return ctx
 
 @router.get("/clinic/icd10/search")
 async def search_icd10(q: str = "", limit: int = 20, ctx=Depends(require_clinic_member)):
