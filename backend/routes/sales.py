@@ -260,6 +260,27 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=400, detail="Debe agregar al menos un ítem")
     if not data.get("branch_id"):
         raise HTTPException(status_code=400, detail="Sucursal requerida")
+    # If a cash session is provided, force the sale's branch_id to match the session's branch.
+    # This prevents the silent mismatch where a user has an open cash session in branch A but
+    # the UI's active branch is B — sales must follow the cash session, not the global selector.
+    cash_session_id = data.get("cash_session_id")
+    if cash_session_id:
+        try:
+            cs = sdb.table('cash_sessions').select('id,cash_register_id,status').eq('id', cash_session_id).maybe_single().execute()
+            cs_data = getattr(cs, 'data', None) if cs else None
+            if not cs_data:
+                raise HTTPException(status_code=400, detail="Sesión de caja no encontrada")
+            if cs_data.get('status') != 'open':
+                raise HTTPException(status_code=400, detail="La sesión de caja no está abierta")
+            cr = sdb.table('cash_registers').select('branch_id').eq('id', cs_data['cash_register_id']).maybe_single().execute()
+            cr_data = getattr(cr, 'data', None) if cr else None
+            session_branch = (cr_data or {}).get('branch_id')
+            if session_branch and data["branch_id"] != session_branch:
+                raise HTTPException(status_code=400, detail="La sucursal de la venta no coincide con la sucursal de la caja abierta")
+        except HTTPException:
+            raise
+        except Exception as _e:
+            logger.warning(f"Could not validate cash session branch: {_e}")
     valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "other"}
     for p in payments:
         m = p.get("payment_method")

@@ -19,7 +19,7 @@ import { Separator } from '../../components/ui/separator';
 import { toast } from 'sonner';
 import {
   ShoppingCart, Search, Plus, Trash2, X, Calculator, Banknote, CreditCard,
-  Wallet, ArrowRight, Lock, Unlock, Calendar, Printer, Eye, Ban, Receipt, Stethoscope
+  Wallet, ArrowRight, Lock, Unlock, Calendar, Printer, Eye, Ban, Receipt, Stethoscope, AlertTriangle
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -240,6 +240,7 @@ function POSTab({ headers, branches, activeBranch, hasInventory }) {
   }
 
   // Active session: show POS
+  const branchMismatch = activeBranch?.id && session.branch_id && activeBranch.id !== session.branch_id;
   return (
     <>
       <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2 mb-4">
@@ -253,6 +254,19 @@ function POSTab({ headers, branches, activeBranch, hasInventory }) {
           <Lock className="w-3.5 h-3.5 mr-1" />Cerrar caja
         </Button>
       </div>
+
+      {branchMismatch && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 mb-4" data-testid="branch-mismatch-banner">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-amber-900">
+            <p className="font-semibold">Atención: tu sucursal activa no coincide con la caja abierta.</p>
+            <p className="mt-1">
+              Estás vendiendo en <strong>{session.branch_name}</strong> (la caja está abierta allí), pero tu selector de sucursal muestra <strong>{activeBranch?.name}</strong>.
+              Para vender en <strong>{activeBranch?.name}</strong>, primero <button type="button" className="underline font-medium hover:text-amber-700" onClick={() => setShowCloseDlg(true)}>cierra la caja actual</button> y abre una nueva en esa sucursal.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Catalog */}
