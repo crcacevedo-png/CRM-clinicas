@@ -8,8 +8,7 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-# Shared deps from server module (imported at file-load time, after server.py finishes init)
-from server import (
+from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
     get_plan_limits, parse_presentations,
@@ -20,6 +19,7 @@ from server import (
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
 )
+from routes.medical_records import require_clinical_role  # refactor fix: helper lives in medical_records
 
 # ============== PRESCRIPTION ROUTES ==============
 

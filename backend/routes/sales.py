@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 router = APIRouter()
 
-from server import sdb, supabase_admin, require_clinic_member, now_iso, logger
+from core import sdb, supabase_admin, require_clinic_member, now_iso, logger
 
 from routes.commissions import _compute_commissions_for_sale
 

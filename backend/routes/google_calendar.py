@@ -1,4 +1,5 @@
 """Auto-extracted from server.py."""
+import os
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta, date
@@ -8,8 +9,7 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-# Shared deps from server module (imported at file-load time, after server.py finishes init)
-from server import (
+from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
     get_plan_limits, parse_presentations,

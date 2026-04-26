@@ -1,0 +1,70 @@
+{
+  "summary": "Phase 2 backend refactor regression validation. server.py reduced from ~3500 to 126 lines; 18 routers extracted into /app/backend/routes/. Built a new 44-test regression suite touching every router (auth, super_admin, catalogs, clinic_settings, branches, feature_flags, patients, appointments, medical_records, prescriptions, lab_orders, google_calendar, inventory, sales, accounts_receivable, expenses, commissions, reports). Result: 44/44 PASS. Re-ran existing legacy module suites: 158/161 PASS after fix; 1 transient timeout, 3 pre-existing 500-vs-404 normalisation issues from iter 18 (NOT refactor regressions). FOUND ONE REAL REFACTOR REGRESSION and FIXED IT: helper require_clinical_role() lives in routes/medical_records.py but was being CALLED (without import) from routes/prescriptions.py (lines 134, 181) and routes/lab_orders.py (line 110), raising NameError 500 on POST /clinic/prescriptions and POST /clinic/lab-orders. Added missing cross-router import in both files. After fix, all create flows for prescriptions and lab orders work (35/38 module tests pass; remaining 3 are pre-existing 404 issues).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/clinic/lab-orders/{id} (non-existent ID)", "issue": "Returns 500 instead of 404 (pre-existing, iter 18)"},
+      {"endpoint": "GET /api/clinic/lab-orders/{id}/pdf-url (non-existent ID)", "issue": "Returns 500 instead of 404 (pre-existing, iter 18)"},
+      {"endpoint": "GET /api/clinic/prescriptions/{id} (non-existent ID)", "issue": "Returns 500 instead of 404 (pre-existing, iter 18)"},
+      {"endpoint": "GET /api/clinic/patients/{id} (non-existent ID)", "issue": "Returns 500 with 'NoneType has no attribute data' instead of 404 (pre-existing, iter 18)"},
+      {"endpoint": "GET /api/clinic/sales/{sale_id} when {sale_id} is a non-UUID literal", "issue": "Falls through to /clinic/sales/{sale_id} route and returns 500 from PostgreSQL UUID parse error. There is no /sales/dashboard endpoint; closest is /sales/daily-summary. Consider adding a 422/404 guard before route param consumption."},
+      {"endpoint": "Review-request endpoints that don't exist", "issue": "/api/auth/me, /api/clinic/integrations/google/status, /api/clinic/expenses/categories, and /api/clinic/sales/dashboard are listed in the request but were never implemented. Real paths used are: login response payload (no /me), /api/google-calendar/status, /api/clinic/expenses/by-category, and /api/clinic/sales/daily-summary."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "Auth: login super, login clinic, login invalid (4xx), logout — PASS",
+    "Super Admin: dashboard, clinics list, users list, dashboard forbidden for clinic role — PASS",
+    "Catalogs: medications, lab-studies, icd10 — PASS",
+    "Clinic Settings: config, members — PASS",
+    "Branches: list — PASS",
+    "Feature Flags: clinic features, admin features — PASS",
+    "Patients: list (paginated), search, get-invalid (pre-existing 500 tolerated) — PASS",
+    "Appointments: list with date range — PASS",
+    "Medical Records: templates, /patients/{id}/medical-records — PASS",
+    "Prescriptions: list — PASS, create after fix — PASS (35/38 module tests)",
+    "Lab Orders: list — PASS, create after fix — PASS",
+    "Google Calendar: /api/google-calendar/status — PASS",
+    "Inventory: products, categories, stock, alerts — PASS",
+    "Sales: list, daily-summary — PASS",
+    "Accounts Receivable: list, dashboard — PASS",
+    "Expenses: list, dashboard, by-category — PASS",
+    "Commissions: dashboard, settings — PASS",
+    "Reports: executive-summary, sales, expenses-vs-revenue, income-statement — PASS",
+    "Health: /api/health, /api/ — PASS",
+    "Refactored module deep tests (iter 18 baseline): inventory 24/24, sales 31/31, AR 16/16, expenses 14/15 (1 transient 15s timeout), commissions 17/17, reports 21/21 — PASS"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_refactor_regression.py",
+    "/app/test_reports/pytest/iteration_19_refactor_regression_final.xml",
+    "/app/test_reports/pytest/iteration_19_refactored_modules.xml",
+    "/app/test_reports/pytest/iteration_19_prescriptions_lab_orders_after_fix.xml"
+  ],
+  "action_items": [
+    "REFACTOR REGRESSION FIXED by testing agent: added 'from routes.medical_records import require_clinical_role' to routes/prescriptions.py and routes/lab_orders.py. Validate that this is the desired location for the helper — RECOMMENDED: promote require_clinical_role + CLINICAL_ROLES from routes/medical_records.py into core.py to avoid cross-router imports.",
+    "Optional: add explicit 404 handling for non-existent IDs in prescriptions GET, lab-orders GET, lab-orders pdf-url, patients GET (currently bubble up 500). Pre-existing.",
+    "Optional: add a /clinic/sales/dashboard endpoint OR teach FastAPI to return 422 when a route param is non-UUID before hitting Supabase (currently '/api/clinic/sales/dashboard' returns 500 because 'dashboard' is parsed as sale_id).",
+    "Optional: review request mentioned 4 endpoints that don't exist (/api/auth/me, /api/clinic/integrations/google/status, /api/clinic/expenses/categories, /api/clinic/sales/dashboard). Either add them or update the review."
+  ],
+  "critical_code_review_comments": [
+    "Refactor REGRESSION: routes/prescriptions.py and routes/lab_orders.py used require_clinical_role(ctx) without importing it. NameError at runtime → 500 on every POST. This is a clear miss when extracting medical_records helpers. Fixed in this iteration via cross-module import; long-term move to core.py.",
+    "Cross-router import (routes.prescriptions → routes.medical_records) introduces a structural coupling. Order-of-include in server.py becomes load-order-sensitive. Better: migrate require_clinical_role + CLINICAL_ROLES into core.py, alongside other auth deps.",
+    "server.py is now a clean 126 lines, includes all 18 routers, CORS middleware is added AFTER include_router (works for FastAPI but conventionally added before routes). Functionally fine.",
+    "core.py centralisation of Supabase clients, Pydantic models, helpers, auth deps is well done — eliminates the previous circular-import problem.",
+    "Empty /app/backend/routes/__init__.py is fine; pytest cwd ensures /app/backend is on sys.path.",
+    "5 of 18 routers (sales, prescriptions, lab_orders, patients, expenses) have a hidden contract with route ordering: '{id}' catch-alls registered after specific paths. Currently OK but a typo (missing literal route) immediately produces 500 due to UUID parse error in Supabase. Recommend adding pydantic UUID type hints on path params for FastAPI to 422 before db hit.",
+    "Test files in /app/backend/tests/ have 4 PytestReturnNotNoneWarning warnings — tests `return` a value instead of `assert`. Cosmetic, not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/routes/prescriptions.py (added require_clinical_role import)",
+    "/app/backend/routes/lab_orders.py (added require_clinical_role import)",
+    "/app/backend/tests/test_phase2_refactor_regression.py (new 44-test regression suite)"
+  ],
+  "success_rate": {"backend_regression_suite": "100% (44/44)", "backend_refactored_modules": "99.2% (123/124, 1 transient timeout)", "backend_legacy_modules": "98.1% (158/161 after fix; remaining 3 pre-existing 500→404)"},
+  "test_credentials": "Super Admin info@cortexiagt.com / Armagedon1980$ ; Clinic Admin carlos@lasalud.gt / Test123456! (clinic_id c0321ed8-97da-47a1-b601-3b94bffabdd7)",
+  "seed_data_creation": "None — used existing clinic/patient/inventory fixtures.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 refactor (server.py → 18 routers) is FUNCTIONALLY SAFE after one fix applied this iteration: require_clinical_role was missing from routes/prescriptions.py and routes/lab_orders.py imports. Recommended follow-up: move require_clinical_role + CLINICAL_ROLES from routes/medical_records.py to core.py to remove cross-router dependency. The 44-test regression suite at /app/backend/tests/test_phase2_refactor_regression.py covers every router with at least one read endpoint and is fast (~21s); use as the smoke gate for future refactors. Frontend was not tested per request (backend-only).",
+  "rca of the issue": "RCA — Missing cross-router helper import. The Phase 2 refactor extracted helper functions defined in /app/backend/server.py into the most semantically-related router (require_clinical_role landed in routes/medical_records.py at line 142). However, prescriptions.py and lab_orders.py still call this helper from inside their endpoint handlers (they share the same medical authorization model). Because Python resolves bare names at call time and the routers are sibling modules with no implicit imports, every write call into prescriptions or lab_orders raised NameError → FastAPI returned 500. REPRODUCTION: POST /api/clinic/prescriptions with valid clinic admin token + valid patient_id → 500 'Internal Server Error', backend log shows 'NameError: name require_clinical_role is not defined'. MITIGATION: Added 'from routes.medical_records import require_clinical_role' to both routers. Verified by re-running test_prescriptions.py and test_lab_orders.py: create flows now succeed (35/38 pass). LONG-TERM: promote helper into core.py to keep routers loosely coupled."
+}
