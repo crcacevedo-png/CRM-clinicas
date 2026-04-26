@@ -18,6 +18,7 @@ from core import (
     ICD10CodeCreate, ICD10BulkImport,
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
+    get_clinic_features,
 )
 
 # ============== APPOINTMENT ROUTES ==============
@@ -259,33 +260,51 @@ async def change_appointment_status(apt_id: str, data: AppointmentStatusUpdate, 
 @router.get("/clinic/dashboard")
 async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
+    member_id = ctx["member"]["id"]
+    role = ctx["member"].get("role") or "staff"
     try:
-        from datetime import datetime as dt, timedelta
+        from datetime import datetime as dt, timedelta, date as dt_date
         now = dt.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
         month_start = today_start.replace(day=1)
+        today_date = today_start.date()
+        month_start_date = today_date.replace(day=1)
 
-        # Today's appointments
-        today_apts = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', today_start.isoformat()).lt('starts_at', today_end.isoformat()).neq('status', 'cancelled').order('starts_at').execute()
+        features = get_clinic_features(clinic_id)
+
+        # ===== Common: today's appointments =====
+        # Doctors only see their own appointments; admin/cashier/receptionist/assistant see all
+        apt_q = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', today_start.isoformat()).lt('starts_at', today_end.isoformat()).neq('status', 'cancelled')
+        if role == 'doctor':
+            apt_q = apt_q.eq('doctor_id', member_id)
+        today_apts = apt_q.order('starts_at').execute()
         apts = today_apts.data or []
-
         pending_today = len([a for a in apts if a.get('status') in ('scheduled', 'confirmed')])
 
         # Next upcoming appointment
         next_apt = None
-        upcoming = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', now.isoformat()).neq('status', 'cancelled').order('starts_at').limit(1).execute()
+        upc_q = sdb.table('appointments').select('*').eq('clinic_id', clinic_id).gte('starts_at', now.isoformat()).neq('status', 'cancelled')
+        if role == 'doctor':
+            upc_q = upc_q.eq('doctor_id', member_id)
+        upcoming = upc_q.order('starts_at').limit(1).execute()
         if upcoming.data:
             next_apt = upcoming.data[0]
 
-        # New patients this month
+        # New patients this month (clinic-wide)
         new_patients_month = sdb.table('patients').select('id', count='exact').eq('clinic_id', clinic_id).gte('created_at', month_start.isoformat()).execute()
 
-        # Prescriptions issued this month
-        rx_month = sdb.table('prescriptions').select('id', count='exact').eq('clinic_id', clinic_id).eq('status', 'issued').gte('issued_at', month_start.isoformat()).execute()
+        # Prescriptions issued this month: doctor sees own, others see clinic-wide
+        rx_q = sdb.table('prescriptions').select('id', count='exact').eq('clinic_id', clinic_id).eq('status', 'issued').gte('issued_at', month_start.isoformat())
+        if role == 'doctor':
+            rx_q = rx_q.eq('doctor_id', member_id)
+        rx_month = rx_q.execute()
 
-        # Recent patients (last 5 with completed visits)
-        recent_apts = sdb.table('appointments').select('patient_id').eq('clinic_id', clinic_id).eq('status', 'completed').order('updated_at', desc=True).limit(10).execute()
+        # Recent patients
+        recent_apts_q = sdb.table('appointments').select('patient_id').eq('clinic_id', clinic_id).eq('status', 'completed')
+        if role == 'doctor':
+            recent_apts_q = recent_apts_q.eq('doctor_id', member_id)
+        recent_apts = recent_apts_q.order('updated_at', desc=True).limit(10).execute()
         seen_ids = []
         recent_patients = []
         for ra in (recent_apts.data or []):
@@ -293,66 +312,208 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
             if pid not in seen_ids and len(recent_patients) < 5:
                 seen_ids.append(pid)
                 p = sdb.table('patients').select('id,first_name,last_name,phone').eq('id', pid).maybe_single().execute()
-                if p.data:
-                    recent_patients.append(p.data)
-
-        # If not enough from completed, fill with recently created patients
-        if len(recent_patients) < 5:
+                p_data = getattr(p, 'data', None) if p else None
+                if p_data:
+                    recent_patients.append(p_data)
+        if len(recent_patients) < 5 and role != 'doctor':
             extra = sdb.table('patients').select('id,first_name,last_name,phone').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
             for p in (extra.data or []):
                 if p['id'] not in seen_ids and len(recent_patients) < 5:
                     seen_ids.append(p['id'])
                     recent_patients.append(p)
 
-        # Activity log (recent actions)
+        # Activity log (skipped for doctor to keep doctor dashboard clean)
         activity = []
+        if role != 'doctor':
+            recent_created_apts = sdb.table('appointments').select('id,patient_id,created_at,starts_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
+            for a in (recent_created_apts.data or []):
+                p = sdb.table('patients').select('first_name,last_name').eq('id', a['patient_id']).maybe_single().execute()
+                p_data = getattr(p, 'data', None) if p else None
+                pname = f"{p_data['first_name']} {p_data['last_name']}" if p_data else "Paciente"
+                activity.append({"type": "appointment", "message": f"Cita agendada para {pname}", "timestamp": a['created_at']})
+            recent_rx = sdb.table('prescriptions').select('id,patient_id,created_at,status').eq('clinic_id', clinic_id).eq('status', 'issued').order('created_at', desc=True).limit(5).execute()
+            for r in (recent_rx.data or []):
+                p = sdb.table('patients').select('first_name,last_name').eq('id', r['patient_id']).maybe_single().execute()
+                p_data = getattr(p, 'data', None) if p else None
+                pname = f"{p_data['first_name']} {p_data['last_name']}" if p_data else "Paciente"
+                activity.append({"type": "prescription", "message": f"Receta emitida para {pname}", "timestamp": r['created_at']})
+            recent_pats = sdb.table('patients').select('id,first_name,last_name,created_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
+            for p in (recent_pats.data or []):
+                activity.append({"type": "patient", "message": f"Paciente registrado: {p['first_name']} {p['last_name']}", "timestamp": p['created_at']})
+            activity.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            activity = activity[:10]
 
-        # Recent appointments (created)
-        recent_created_apts = sdb.table('appointments').select('id,patient_id,created_at,starts_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
-        for a in (recent_created_apts.data or []):
-            p = sdb.table('patients').select('first_name,last_name').eq('id', a['patient_id']).maybe_single().execute()
-            pname = f"{p.data['first_name']} {p.data['last_name']}" if p.data else "Paciente"
-            activity.append({
-                "type": "appointment",
-                "message": f"Cita agendada para {pname}",
-                "timestamp": a['created_at'],
-            })
-
-        # Recent prescriptions
-        recent_rx = sdb.table('prescriptions').select('id,patient_id,created_at,status').eq('clinic_id', clinic_id).eq('status', 'issued').order('created_at', desc=True).limit(5).execute()
-        for r in (recent_rx.data or []):
-            p = sdb.table('patients').select('first_name,last_name').eq('id', r['patient_id']).maybe_single().execute()
-            pname = f"{p.data['first_name']} {p.data['last_name']}" if p.data else "Paciente"
-            activity.append({
-                "type": "prescription",
-                "message": f"Receta emitida para {pname}",
-                "timestamp": r['created_at'],
-            })
-
-        # Recent patients registered
-        recent_pats = sdb.table('patients').select('id,first_name,last_name,created_at').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(5).execute()
-        for p in (recent_pats.data or []):
-            activity.append({
-                "type": "patient",
-                "message": f"Paciente registrado: {p['first_name']} {p['last_name']}",
-                "timestamp": p['created_at'],
-            })
-
-        # Sort activity by timestamp desc, take top 10
-        activity.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        activity = activity[:10]
-
-        # Enrich today's appointments
+        # Enrich appointments
         for apt in apts:
             p = sdb.table('patients').select('first_name,last_name').eq('id', apt["patient_id"]).maybe_single().execute()
             d = sdb.table('clinic_members').select('first_name,last_name').eq('id', apt["doctor_id"]).maybe_single().execute()
-            apt["patient_name"] = f"{p.data['first_name']} {p.data['last_name']}" if p.data else ""
-            apt["doctor_name"] = f"{d.data['first_name']} {d.data['last_name']}" if d.data else ""
-
-        # Enrich next appointment
+            p_data = getattr(p, 'data', None) if p else None
+            d_data = getattr(d, 'data', None) if d else None
+            apt["patient_name"] = f"{p_data['first_name']} {p_data['last_name']}" if p_data else ""
+            apt["doctor_name"] = f"{d_data['first_name']} {d_data['last_name']}" if d_data else ""
         if next_apt:
             p = sdb.table('patients').select('first_name,last_name').eq('id', next_apt["patient_id"]).maybe_single().execute()
-            next_apt["patient_name"] = f"{p.data['first_name']} {p.data['last_name']}" if p.data else ""
+            p_data = getattr(p, 'data', None) if p else None
+            next_apt["patient_name"] = f"{p_data['first_name']} {p_data['last_name']}" if p_data else ""
+
+        # ===== Admin stats + alerts (skip for doctor) =====
+        admin_stats = {}
+        alerts = []
+        income_chart = []
+        my_commissions_month = None
+
+        is_admin_view = role in ('clinic_admin', 'cashier', 'assistant', 'receptionist')
+
+        # Cash session status — useful for cashier/receptionist/assistant/admin
+        if is_admin_view and 'sales' in features:
+            cs = sdb.table('cash_sessions').select('id,opened_at,opening_amount').eq('clinic_id', clinic_id).eq('status', 'open').limit(5).execute()
+            open_sessions = cs.data or []
+            admin_stats['open_cash_sessions'] = len(open_sessions)
+            # Alert: cash session opened more than 18h ago
+            for s in open_sessions:
+                try:
+                    opened = dt.fromisoformat(s['opened_at'].replace('Z', '+00:00'))
+                    hours = (now - opened).total_seconds() / 3600
+                    if hours >= 18:
+                        alerts.append({
+                            "type": "cash_session",
+                            "severity": "warning",
+                            "message": f"Caja abierta hace {int(hours)}h sin cerrar",
+                            "link": "/dashboard/ventas",
+                            "count": 1,
+                        })
+                        break
+                except Exception:
+                    pass
+
+        # Sales today + AR pending (clinic_admin / cashier full view; assistant/receptionist intermediate)
+        if role in ('clinic_admin', 'cashier'):
+            if 'sales' in features:
+                sales_q = sdb.table('sales').select('total,status').eq('clinic_id', clinic_id).gte('created_at', today_start.isoformat()).lt('created_at', today_end.isoformat()).execute()
+                sales_today_rows = [s for s in (sales_q.data or []) if s.get('status') != 'cancelled']
+                admin_stats['sales_today_amount'] = round(sum(float(s.get('total') or 0) for s in sales_today_rows), 2)
+                admin_stats['sales_today_count'] = len(sales_today_rows)
+
+                ar_q = sdb.table('accounts_receivable').select('balance,due_date,status').eq('clinic_id', clinic_id).neq('status', 'paid').execute()
+                ar_rows = ar_q.data or []
+                admin_stats['ar_pending_amount'] = round(sum(float(a.get('balance') or 0) for a in ar_rows), 2)
+                # Overdue alert
+                overdue = 0
+                for a in ar_rows:
+                    if not a.get('due_date'):
+                        continue
+                    try:
+                        if dt_date.fromisoformat(a['due_date']) < today_date:
+                            overdue += 1
+                    except Exception:
+                        pass
+                if overdue > 0:
+                    alerts.append({
+                        "type": "ar_overdue",
+                        "severity": "danger",
+                        "message": f"{overdue} cuenta(s) por cobrar vencida(s)",
+                        "link": "/dashboard/cuentas-por-cobrar",
+                        "count": overdue,
+                    })
+                # Overdue installments (filter via clinic's AR ids since installments table has no clinic_id)
+                ar_ids = [a.get('id') for a in ar_rows] if False else None  # ar_rows above didn't select id; query AR ids fresh
+                ar_ids_resp = sdb.table('accounts_receivable').select('id').eq('clinic_id', clinic_id).execute()
+                ar_id_list = [a['id'] for a in (ar_ids_resp.data or [])]
+                inst_overdue = 0
+                if ar_id_list:
+                    # Supabase SDK needs in_() chunks; here ar_id_list is small enough
+                    installments = sdb.table('payment_plan_installments').select('id,due_date,status').in_('account_receivable_id', ar_id_list).neq('status', 'paid').execute()
+                    for i in (installments.data or []):
+                        if not i.get('due_date'):
+                            continue
+                        try:
+                            if dt_date.fromisoformat(i['due_date']) < today_date:
+                                inst_overdue += 1
+                        except Exception:
+                            pass
+                if inst_overdue > 0:
+                    alerts.append({
+                        "type": "installment_overdue",
+                        "severity": "danger",
+                        "message": f"{inst_overdue} cuota(s) de plan de pago vencida(s)",
+                        "link": "/dashboard/cuentas-por-cobrar",
+                        "count": inst_overdue,
+                    })
+
+            if 'inventory' in features:
+                # Low stock count
+                products = sdb.table('products').select('id,min_stock').eq('clinic_id', clinic_id).eq('is_active', True).execute()
+                low_count = 0
+                for p in (products.data or []):
+                    minv = p.get('min_stock') or 0
+                    if minv <= 0:
+                        continue
+                    stocks = sdb.table('inventory_stock').select('quantity').eq('product_id', p['id']).execute()
+                    for s in (stocks.data or []):
+                        if (s.get('quantity') or 0) <= minv:
+                            low_count += 1
+                            break
+                admin_stats['low_stock_count'] = low_count
+                if low_count > 0:
+                    alerts.append({
+                        "type": "low_stock",
+                        "severity": "warning",
+                        "message": f"{low_count} producto(s) con stock crítico",
+                        "link": "/dashboard/inventario",
+                        "count": low_count,
+                    })
+
+                # Expiring batches (next 60 days)
+                cutoff = (now + timedelta(days=60)).isoformat()
+                exp_batches = sdb.table('inventory_batches').select('id', count='exact').eq('clinic_id', clinic_id).eq('is_active', True).lt('expiration_date', cutoff).gt('quantity', 0).execute()
+                exp_count = exp_batches.count or 0
+                admin_stats['expiring_count'] = exp_count
+                if exp_count > 0:
+                    alerts.append({
+                        "type": "expiring",
+                        "severity": "warning",
+                        "message": f"{exp_count} producto(s) próximo(s) a vencer (60 días)",
+                        "link": "/dashboard/inventario",
+                        "count": exp_count,
+                    })
+
+            if 'expenses' in features:
+                exp_q = sdb.table('expenses').select('total,expense_date').eq('clinic_id', clinic_id).gte('expense_date', month_start_date.isoformat()).execute()
+                admin_stats['expenses_month'] = round(sum(float(e.get('total') or 0) for e in (exp_q.data or [])), 2)
+
+            if 'commissions' in features:
+                comm_q = sdb.table('commissions_earned').select('commission_amount,status').eq('clinic_id', clinic_id).gte('earned_at', month_start.isoformat()).execute()
+                admin_stats['commissions_month'] = round(sum(float(c.get('commission_amount') or 0) for c in (comm_q.data or [])), 2)
+                admin_stats['commissions_pending'] = round(sum(float(c.get('commission_amount') or 0) for c in (comm_q.data or []) if c.get('status') == 'earned'), 2)
+
+            # Income chart for current month (daily)
+            if 'financial_reports' in features and 'sales' in features:
+                month_sales = sdb.table('sales').select('created_at,total,status').eq('clinic_id', clinic_id).gte('created_at', month_start.isoformat()).lt('created_at', today_end.isoformat()).execute()
+                daily = {}
+                for s in (month_sales.data or []):
+                    if s.get('status') == 'cancelled':
+                        continue
+                    try:
+                        d_iso = (s.get('created_at') or '')[:10]
+                        if d_iso:
+                            daily[d_iso] = daily.get(d_iso, 0) + float(s.get('total') or 0)
+                    except Exception:
+                        pass
+                cur = month_start_date
+                while cur <= today_date:
+                    iso = cur.isoformat()
+                    income_chart.append({"date": iso, "income": round(daily.get(iso, 0), 2)})
+                    cur = cur + timedelta(days=1)
+
+        # Doctor: own commissions this month
+        if role == 'doctor' and 'commissions' in features:
+            comm_q = sdb.table('commissions_earned').select('commission_amount,status').eq('clinic_id', clinic_id).eq('doctor_id', member_id).gte('earned_at', month_start.isoformat()).execute()
+            rows = comm_q.data or []
+            my_commissions_month = {
+                "earned": round(sum(float(c.get('commission_amount') or 0) for c in rows), 2),
+                "pending": round(sum(float(c.get('commission_amount') or 0) for c in rows if c.get('status') == 'earned'), 2),
+                "paid": round(sum(float(c.get('commission_amount') or 0) for c in rows if c.get('status') == 'paid'), 2),
+            }
 
         return {
             "today_appointments": apts,
@@ -364,6 +525,12 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
             "recent_patients": recent_patients,
             "activity": activity,
             "current_member": ctx["member"],
+            "role": role,
+            "features": sorted(features),
+            "admin_stats": admin_stats,
+            "alerts": alerts,
+            "income_chart": income_chart,
+            "my_commissions_month": my_commissions_month,
         }
     except Exception as e:
         logger.error(f"Clinic dashboard error: {e}")

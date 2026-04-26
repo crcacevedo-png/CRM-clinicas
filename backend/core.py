@@ -146,6 +146,42 @@ def require_clinical_role(ctx):
         raise HTTPException(status_code=403, detail="Acceso restringido a médicos y administradores clínicos")
     return ctx
 
+def get_clinic_features(clinic_id: str) -> set:
+    """Resolve the active feature codes for a clinic (plan + overrides)."""
+    try:
+        clinic = sdb.table('clinics').select('plan').eq('id', clinic_id).maybe_single().execute()
+        clinic_data = getattr(clinic, 'data', None) if clinic else None
+        plan_code = (clinic_data or {}).get('plan', 'basic')
+
+        plan_features = set()
+        plan = sdb.table('plans').select('id').eq('code', plan_code).maybe_single().execute()
+        plan_data = getattr(plan, 'data', None) if plan else None
+        if plan_data:
+            pf = sdb.table('plan_features').select('feature_id').eq('plan_id', plan_data['id']).execute()
+            ids = [r['feature_id'] for r in (pf.data or [])]
+            if ids:
+                feats = sdb.table('features').select('code').in_('id', ids).eq('is_active', True).execute()
+                plan_features = {f['code'] for f in (feats.data or [])}
+
+        overrides = sdb.table('clinic_feature_overrides').select('feature_id,is_enabled').eq('clinic_id', clinic_id).execute()
+        if overrides.data:
+            ids = [o['feature_id'] for o in overrides.data]
+            if ids:
+                feats = sdb.table('features').select('id,code').in_('id', ids).execute()
+                id_to_code = {f['id']: f['code'] for f in (feats.data or [])}
+                for o in overrides.data:
+                    code = id_to_code.get(o['feature_id'])
+                    if not code:
+                        continue
+                    if o['is_enabled']:
+                        plan_features.add(code)
+                    else:
+                        plan_features.discard(code)
+        return plan_features
+    except Exception as e:
+        logger.error(f"get_clinic_features error: {e}")
+        return set()
+
 # ============== PYDANTIC MODELS ==============
 
 class LoginRequest(BaseModel):

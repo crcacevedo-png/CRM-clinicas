@@ -1,0 +1,51 @@
+{
+  "summary": "PROMPT A9 validation — role-aware /api/clinic/dashboard with admin_stats, alerts, income_chart, and frontend rewrite of ClinicDashboardPage. Backend: created /app/backend/tests/test_dashboard_prompt_a9.py with 19 tests covering schema (legacy + new fields), admin_stats shape & numeric types, alerts contract, income_chart (one entry per day from month-start through today), and my_commissions_month=null for clinic_admin. Result: 19/19 PASS. Live response for carlos@lasalud.gt: role=clinic_admin, sales_today=Q5240/12, ar_pending=Q1220, low_stock=0, expiring=0, expenses_month=Q3136, commissions_month=Q600, open_cash_sessions=2, 1 ar_overdue alert (severity=danger), 26-point income_chart from 2026-04-01 to 2026-04-26, my_commissions_month=null. Frontend: Playwright run on /dashboard verified data-testid clinic-dashboard, role-badge ('Clinic Admin'), stat-sales-today (Q5,240.00), stat-ar-pending, stat-low-stock, stat-expiring, stat-expenses-month, stat-commissions-month, alerts-card with alert-ar_overdue, income-chart-card (recharts LineChart), today-agenda, activity-log, recent-patients, and quick-appointment/quick-patient/quick-prescription/quick-lab. Quick-appointment button navigates to /dashboard/agenda. ZERO console errors during render.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "GET /api/clinic/dashboard returns 200 with role/features/admin_stats/alerts/income_chart/my_commissions_month — PASS",
+    "Legacy fields preserved (today_appointments, today_count, pending_today, new_patients_month, rx_issued_month, next_appointment, recent_patients, activity, current_member) — PASS",
+    "admin_stats has 9 expected keys for clinic_admin with full features — PASS",
+    "admin_stats values are numeric and non-negative — PASS",
+    "alerts is a list; each item has type/severity/message/link/count — PASS",
+    "ar_overdue alert correctly emitted when overdue accounts exist — PASS",
+    "income_chart starts at month-start and ends at today, contiguous — PASS",
+    "income_chart items have ISO date + numeric income — PASS",
+    "my_commissions_month is null for clinic_admin (only doctor populates) — PASS",
+    "Frontend: clinic-dashboard, role-badge, all 6 admin stat cards visible — PASS",
+    "Frontend: alerts-card visible with ar_overdue alert item — PASS",
+    "Frontend: income-chart-card (recharts) visible with financial_reports feature — PASS",
+    "Frontend: today-agenda, activity-log, recent-patients rendered — PASS",
+    "Frontend: quick-appointment, quick-patient, quick-prescription, quick-lab buttons present — PASS",
+    "Frontend: quick-appointment integration → navigates to /dashboard/agenda — PASS",
+    "Frontend: no console errors on /dashboard render — PASS"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_dashboard_prompt_a9.py",
+    "/app/test_reports/pytest/iteration_20_dashboard_a9.xml"
+  ],
+  "action_items": [
+    "Doctor-role frontend testing was NOT executed (no pre-seeded doctor user) — covered by code review only. Backend unit tests for doctor branch (my_commissions_month populated, scoped today_appointments/rx_issued_month) were also not exercised live; recommend creating a temporary doctor member in a future iteration, or a unit test via pytest with a mocked ctx.",
+    "Optional code-review nit: appointments.py:419 has dead code 'ar_ids = [a.get('id') for a in ar_rows] if False else None' — remove the obsolete branch.",
+    "Optional: 'expiring' alert message says '60 días' but the cutoff in the SQL is 'expiration_date < now+60d' which also matches batches that are already expired. Consider splitting into 'expired' (severity=danger) and 'expiring' (severity=warning). Currently 0 in test clinic so not user-visible."
+  ],
+  "critical_code_review_comments": [
+    "appointments.py:419 — dead conditional 'ar_ids = [...] if False else None' is confusing; the value is then re-fetched two lines below. Clean-up suggested.",
+    "appointments.py — for each today's appointment and each recent activity, the code issues N+1 Supabase round-trips to fetch patient/doctor names (loops at lines 56-67, 310-323, 328-344, 347-353). Works for small clinics but will scale poorly. Consider a single .in_('id', [...]) query and a dict lookup. Same pattern appears in list_appointments.",
+    "appointments.py — get_clinic_features is called once at the top; good. But the inventory low_stock_count loop at 444-456 issues one inventory_stock query per product (N+1). Could be replaced by a single query with a server-side aggregate or by joining batches.",
+    "appointments.py — Income chart re-uses the existing /sales table with status filter; this duplicates logic already in /api/clinic/sales/daily-summary. Consider extracting a shared helper to avoid drift between dashboard and reports.",
+    "ClinicDashboardPage.js — 615 lines is right at the recommended 700-line cap; if more cards are added, split AdminStatsRow/AlertsCard/IncomeChartCard/MyCommissionsCard/CashSessionCard into separate files under /pages/clinic/dashboard/.",
+    "ClinicDashboardPage.js:319-329 — useCallback's deps array is empty but uses 'headers' from getAuthHeaders() at component scope; the eslint-disable comment masks this. Token rotation while the dashboard is open would not refresh the request header. Acceptable now (60s polling will get the new token after re-mount) but worth noting.",
+    "ClinicDashboardPage.js — alert-* data-testid uses alert.type as suffix; if two alerts share the same type (e.g., two cash_session warnings) testids will collide. Backend currently de-dupes by 'break', so OK in practice."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_dashboard_prompt_a9.py (new, 19 tests)"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (16/16 assertions)"},
+  "test_credentials": "Clinic Admin carlos@lasalud.gt / Test123456! (clinic_id c0321ed8-97da-47a1-b601-3b94bffabdd7)",
+  "seed_data_creation": "None — used existing clinic data. Live values: sales_today=Q5240, ar_pending=Q1220, expenses=Q3136, commissions=Q600, 2 open cash sessions, 1 ar_overdue.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PROMPT A9 dashboard is fully functional and visually verified for clinic_admin (carlos@lasalud.gt). All 13 review-request assertions PASS. Doctor-role and assistant/receptionist front-desk paths are NOT yet covered with live tests because no such pre-seeded users exist in the test clinic — to add coverage, create temp clinic_member rows with role=doctor / role=receptionist, then re-run /api/clinic/dashboard with their tokens to verify (a) doctor sees only their own today_appointments/next_appointment/rx_issued_month, (b) doctor admin_stats is empty, (c) doctor my_commissions_month is populated when they have commissions, (d) front-desk sees CashSessionCard. Backend unit-test alternatives can stub require_clinic_member ctx to inject role/member_id. The new test file at /app/backend/tests/test_dashboard_prompt_a9.py is the smoke gate for any future dashboard changes.",
+  "rca of the issue": "No bugs found in PROMPT A9 implementation. Code review notes captured above are forward-looking improvements, not regressions."
+}
