@@ -91,6 +91,12 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         from datetime import datetime as dt, timedelta
         import re
 
+        # Validate branch belongs to this clinic
+        if data.branch_id:
+            br = sdb.table('branches').select('id').eq('id', data.branch_id).eq('clinic_id', clinic_id).maybe_single().execute()
+            if not getattr(br, 'data', None):
+                raise HTTPException(status_code=400, detail="Sucursal inválida")
+
         starts = dt.fromisoformat(data.starts_at.replace('Z', '+00:00'))
         if starts.tzinfo is None:
             from zoneinfo import ZoneInfo
@@ -172,6 +178,12 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
             raise HTTPException(status_code=404, detail="Cita no encontrada")
 
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+
+        # Validate branch_id (if provided) belongs to this clinic
+        if update_data.get('branch_id'):
+            br = sdb.table('branches').select('id').eq('id', update_data['branch_id']).eq('clinic_id', clinic_id).maybe_single().execute()
+            if not getattr(br, 'data', None):
+                raise HTTPException(status_code=400, detail="Sucursal inválida")
 
         if "starts_at" in update_data:
             from datetime import datetime as dt, timedelta

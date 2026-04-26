@@ -118,13 +118,22 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] Frontend reescrito con sub-componentes: AdminStatsRow, AlertsCard, IncomeChartCard, MyCommissionsCard, CashSessionCard, badge de rol visible
   - [x] Tested iteration_20: 100% backend (19/19), 100% frontend Playwright (16/16 asserts), zero console errors
 
+- [x] **MULTI-BRANCH FILTER P1** (26 Abril 2026):
+  - [x] Backend: `AppointmentCreate` y `AppointmentUpdate` aceptan `branch_id` opcional
+  - [x] Backend: `GET /api/clinic/appointments` filtra por `branch_id` query param
+  - [x] Backend: `POST /api/clinic/appointments` y `PUT /api/clinic/appointments/{id}` persisten `branch_id` y validan que pertenezca al `clinic_id` del miembro (400 si inválido)
+  - [x] Frontend: `AgendaPage` envía automáticamente `branch_id=<activeBranch.id>` cuando `multi_branch` está activo y hay sucursal seleccionada
+  - [x] Frontend: `NewAppointmentModal` muestra dropdown de sucursal cuando `multi_branch` está activo (default = activeBranch o sucursal principal)
+  - [x] Frontend: `InventoryPage.StockTab + MovementsTab` y `SalesPage.DailySalesTab + SessionsTab` defaultean su `branchFilter` a `activeBranch.id` con `useEffect` de sincronización
+  - [x] Tested iteration_21: **74/74 PASS** (11 P1 + 44 phase2_refactor + 19 dashboard A9), Playwright E2E 6/6 integration assertions
+
 ## Pendientes
-- [ ] Filtrar queries de Agenda/Inventario/Ventas por branch_id activa - P1
-- [ ] Dropdown sucursal en formulario de nueva cita - P1
 - [ ] Endpoints faltantes detectados por testing agent (P2): /api/auth/me, /api/clinic/expenses/categories (alias de /by-category), /api/clinic/sales/dashboard (alias de /daily-summary)
 - [ ] Mejora 422-vs-500 en path params no-UUID (sales/{id}, prescriptions/{id}, lab-orders/{id}, patients/{id}) - P2
 - [ ] Optimización N+1 en /api/clinic/dashboard (loops por paciente/médico/stock) - P2
 - [ ] Cobertura de pruebas para roles doctor/receptionist en dashboard (no hay usuarios pre-seed) - P2
+- [ ] Considerar default de branch_id en ReportsPage / ExpensesPage / AccountsReceivablePage (intencionalmente excluidos para preservar comparación cross-branch) - P2
+- [ ] React 'unique key' warning en AgendaPage list render - cosmético P3
 - [ ] Importacion CSV para catalogos - P2
 - [ ] Notificaciones/recordatorios - P2
 - [ ] WhatsApp via n8n - P2
