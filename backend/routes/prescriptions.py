@@ -95,13 +95,30 @@ async def list_prescriptions(
         result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
         prescriptions = result.data or []
 
-        for p in prescriptions:
-            pat = sdb.table('patients').select('first_name,last_name').eq('id', p['patient_id']).maybe_single().execute()
-            p['patient_name'] = f"{pat.data['first_name']} {pat.data['last_name']}" if pat.data else ""
-            doc = sdb.table('clinic_members').select('first_name,last_name').eq('id', p['doctor_id']).maybe_single().execute()
-            p['doctor_name'] = f"{doc.data['first_name']} {doc.data['last_name']}" if doc.data else ""
-            items = sdb.table('prescription_items').select('id').eq('prescription_id', p['id']).execute()
-            p['item_count'] = len(items.data or [])
+        if prescriptions:
+            patient_ids = list({p['patient_id'] for p in prescriptions if p.get('patient_id')})
+            doctor_ids = list({p['doctor_id'] for p in prescriptions if p.get('doctor_id')})
+            presc_ids = [p['id'] for p in prescriptions]
+
+            # Batch fetch patients, doctors, items
+            patients_map = {}
+            if patient_ids:
+                pats = sdb.table('patients').select('id,first_name,last_name').in_('id', patient_ids).execute()
+                patients_map = {x['id']: f"{x['first_name']} {x['last_name']}" for x in (pats.data or [])}
+            doctors_map = {}
+            if doctor_ids:
+                docs = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', doctor_ids).execute()
+                doctors_map = {x['id']: f"{x['first_name']} {x['last_name']}" for x in (docs.data or [])}
+            items_count = {}
+            if presc_ids:
+                items = sdb.table('prescription_items').select('prescription_id').in_('prescription_id', presc_ids).execute()
+                for it in (items.data or []):
+                    items_count[it['prescription_id']] = items_count.get(it['prescription_id'], 0) + 1
+
+            for p in prescriptions:
+                p['patient_name'] = patients_map.get(p.get('patient_id'), '')
+                p['doctor_name'] = doctors_map.get(p.get('doctor_id'), '')
+                p['item_count'] = items_count.get(p['id'], 0)
 
         return {"prescriptions": prescriptions, "total": result.count or 0, "page": page, "pages": ((result.count or 0) + limit - 1) // limit}
     except Exception as e:

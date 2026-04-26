@@ -68,16 +68,33 @@ async def list_lab_orders(
         result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
         orders = result.data or []
 
-        for o in orders:
-            pat = sdb.table('patients').select('first_name,last_name').eq('id', o['patient_id']).maybe_single().execute()
-            o['patient_name'] = f"{pat.data['first_name']} {pat.data['last_name']}" if pat.data else ""
-            doc = sdb.table('clinic_members').select('first_name,last_name').eq('id', o['doctor_id']).maybe_single().execute()
-            o['doctor_name'] = f"{doc.data['first_name']} {doc.data['last_name']}" if doc.data else ""
-            items = sdb.table('lab_order_items').select('study_name,category').eq('lab_order_id', o['id']).execute()
-            o['item_count'] = len(items.data or [])
-            o['study_summary'] = ', '.join([i['study_name'] for i in (items.data or [])[:3]])
-            if len(items.data or []) > 3:
-                o['study_summary'] += f' +{len(items.data) - 3} más'
+        if orders:
+            patient_ids = list({o['patient_id'] for o in orders if o.get('patient_id')})
+            doctor_ids = list({o['doctor_id'] for o in orders if o.get('doctor_id')})
+            order_ids = [o['id'] for o in orders]
+
+            patients_map = {}
+            if patient_ids:
+                pats = sdb.table('patients').select('id,first_name,last_name').in_('id', patient_ids).execute()
+                patients_map = {x['id']: f"{x['first_name']} {x['last_name']}" for x in (pats.data or [])}
+            doctors_map = {}
+            if doctor_ids:
+                docs = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', doctor_ids).execute()
+                doctors_map = {x['id']: f"{x['first_name']} {x['last_name']}" for x in (docs.data or [])}
+            items_by_order = {}
+            if order_ids:
+                items = sdb.table('lab_order_items').select('lab_order_id,study_name,category').in_('lab_order_id', order_ids).execute()
+                for it in (items.data or []):
+                    items_by_order.setdefault(it['lab_order_id'], []).append(it)
+
+            for o in orders:
+                o['patient_name'] = patients_map.get(o.get('patient_id'), '')
+                o['doctor_name'] = doctors_map.get(o.get('doctor_id'), '')
+                its = items_by_order.get(o['id'], [])
+                o['item_count'] = len(its)
+                o['study_summary'] = ', '.join([i['study_name'] for i in its[:3]])
+                if len(its) > 3:
+                    o['study_summary'] += f' +{len(its) - 3} más'
 
         return {"orders": orders, "total": result.count or 0, "page": page, "pages": ((result.count or 0) + limit - 1) // limit}
     except Exception as e:

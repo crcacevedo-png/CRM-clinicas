@@ -233,13 +233,18 @@ async def list_patient_medical_records(
         result = query.execute()
         records = result.data or []
 
-        # Enrich with doctor names
-        for r in records:
-            doc = sdb.table('clinic_members').select('first_name,last_name').eq('id', r.get('doctor_id', '')).maybe_single().execute()
-            r['doctor_name'] = f"{doc.data['first_name']} {doc.data['last_name']}" if doc.data else ""
-            # Strip private_notes for assistant role
-            if role not in CLINICAL_ROLES:
-                r.pop('private_notes', None)
+        # Enrich with doctor names (batch fetch to avoid N+1)
+        if records:
+            doctor_ids = list({r.get('doctor_id') for r in records if r.get('doctor_id')})
+            doctors_map = {}
+            if doctor_ids:
+                docs = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', doctor_ids).execute()
+                doctors_map = {x['id']: f"{x['first_name']} {x['last_name']}" for x in (docs.data or [])}
+            for r in records:
+                r['doctor_name'] = doctors_map.get(r.get('doctor_id'), '')
+                # Strip private_notes for assistant role
+                if role not in CLINICAL_ROLES:
+                    r.pop('private_notes', None)
 
         return records
     except HTTPException:
