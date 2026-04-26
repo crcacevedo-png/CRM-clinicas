@@ -136,13 +136,18 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] **Resultados latencia**: dashboard 1.65s, appointments 0.37s, sales 0.48s; suite de tests bajó de 43s → 32s (-25%)
   - [x] Suite regresión completa: **74/74 PASS** sin regresiones
 
+- [x] **P2 + P3 BATCH** (26 Abril 2026):
+  - [x] `GET /api/auth/me` añadido — devuelve identidad completa (user_type, role, name, clinic_id, member_id, specialty)
+  - [x] Alias `GET /api/clinic/expenses/categories` (= `/by-category`) y `GET /api/clinic/sales/dashboard` (= `/daily-summary`) vía decoradores apilados
+  - [x] Helper reusable `core.validate_uuid()` aplicado en path params de: `/sales/{id}`, `/sales/{id}/pdf-url` (heredado), `/prescriptions/{id}`, `/prescriptions/{id}/pdf-url`, `/lab-orders/{id}`, `/lab-orders/{id}/pdf-url`, `/patients/{id}`, `/medical-records/{id}` — UUIDs malformados ahora devuelven **422** (antes 500); UUIDs válidos pero no encontrados devuelven **404**
+  - [x] `BranchContext.activeBranch` persiste en `localStorage.cliniccrm.activeBranchId` con prioridad: persisted > is_main > primer item
+  - [x] React `unique key` warning en `AgendaPage` resuelto: `<>` Fragment dentro de `slots.map` reemplazado por `<Fragment key={...}>`
+  - [x] **Bug fix descubierto por linter**: `routes/appointments.py` llamaba `sync_appointment_to_gcal` sin importarlo (F821); ahora importado localmente en los 3 callsites — Google Calendar sync vuelve a funcionar
+  - [x] Tested iteration_22: **95/95 PASS** (21 nuevos P2/P3 + 74 baseline) en 50s; 0 console warnings/errors en frontend Playwright
+
 ## Pendientes
-- [ ] Endpoints faltantes detectados por testing agent (P2): /api/auth/me, /api/clinic/expenses/categories (alias de /by-category), /api/clinic/sales/dashboard (alias de /daily-summary)
-- [ ] Mejora 422-vs-500 en path params no-UUID (sales/{id}, prescriptions/{id}, lab-orders/{id}, patients/{id}) - P2
 - [ ] Cobertura de pruebas para roles doctor/receptionist en dashboard (no hay usuarios pre-seed) - P2
 - [ ] Considerar default de branch_id en ReportsPage / ExpensesPage / AccountsReceivablePage (intencionalmente excluidos para preservar comparación cross-branch) - P2
-- [ ] React 'unique key' warning en AgendaPage list render - cosmético P3
-- [ ] Persistencia del activeBranch en localStorage - P2
 - [ ] Importacion CSV para catalogos - P2
 - [ ] Recordatorios WhatsApp via n8n (24h/2h antes) - P1
 - [ ] Stripe/dLocal facturacion - P2
