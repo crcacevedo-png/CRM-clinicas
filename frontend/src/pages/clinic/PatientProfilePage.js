@@ -47,6 +47,8 @@ export default function PatientProfilePage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [prescriptions, setPrescriptions] = useState([]);
   const [labOrders, setLabOrders] = useState([]);
+  const [tabsLoaded, setTabsLoaded] = useState({ history: false, prescriptions: false, labs: false });
+  const [tabsLoading, setTabsLoading] = useState({ history: false, prescriptions: false, labs: false });
 
   const fetchPatient = useCallback(async () => {
     try {
@@ -69,6 +71,7 @@ export default function PatientProfilePage() {
   }, [id]);
 
   const fetchMedicalRecords = useCallback(async () => {
+    setTabsLoading(s => ({ ...s, history: true }));
     try {
       const params = new URLSearchParams();
       if (doctorFilter !== 'all') params.set('doctor_id', doctorFilter);
@@ -76,26 +79,49 @@ export default function PatientProfilePage() {
       if (dateTo) params.set('date_to', dateTo);
       const res = await axios.get(`${API}/clinic/patients/${id}/medical-records?${params}`, { headers });
       setMedicalRecords(res.data || []);
+      setTabsLoaded(s => ({ ...s, history: true }));
     } catch { /* role may not have access */ }
+    finally { setTabsLoading(s => ({ ...s, history: false })); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, doctorFilter, dateFrom, dateTo]);
 
-  useEffect(() => { fetchPatient(); }, [fetchPatient]);
-  useEffect(() => { fetchMedicalRecords(); }, [fetchMedicalRecords]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await axios.get(`${API}/clinic/prescriptions?patient_id=${id}&limit=50`, { headers });
-        setPrescriptions(r.data.prescriptions || []);
-      } catch { /* ignore */ }
-      try {
-        const r = await axios.get(`${API}/clinic/lab-orders?patient_id=${id}&limit=50`, { headers });
-        setLabOrders(r.data.orders || []);
-      } catch { /* ignore */ }
-    })();
+  const fetchPrescriptions = useCallback(async () => {
+    setTabsLoading(s => ({ ...s, prescriptions: true }));
+    try {
+      const r = await axios.get(`${API}/clinic/prescriptions?patient_id=${id}&limit=50`, { headers });
+      setPrescriptions(r.data.prescriptions || []);
+      setTabsLoaded(s => ({ ...s, prescriptions: true }));
+    } catch { /* ignore */ }
+    finally { setTabsLoading(s => ({ ...s, prescriptions: false })); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const fetchLabOrders = useCallback(async () => {
+    setTabsLoading(s => ({ ...s, labs: true }));
+    try {
+      const r = await axios.get(`${API}/clinic/lab-orders?patient_id=${id}&limit=50`, { headers });
+      setLabOrders(r.data.orders || []);
+      setTabsLoaded(s => ({ ...s, labs: true }));
+    } catch { /* ignore */ }
+    finally { setTabsLoading(s => ({ ...s, labs: false })); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  useEffect(() => { fetchPatient(); }, [fetchPatient]);
+
+  // Re-fetch medical records when filters change (only if tab already loaded once)
+  useEffect(() => {
+    if (tabsLoaded.history) fetchMedicalRecords();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctorFilter, dateFrom, dateTo]);
+
+  // Lazy: fetch on tab switch (only first time, then cached)
+  const handleTabChange = (newTab) => {
+    setActiveTab(newTab);
+    if (newTab === 'history' && !tabsLoaded.history && !tabsLoading.history) fetchMedicalRecords();
+    else if (newTab === 'prescriptions' && !tabsLoaded.prescriptions && !tabsLoading.prescriptions) fetchPrescriptions();
+    else if (newTab === 'labs' && !tabsLoaded.labs && !tabsLoading.labs) fetchLabOrders();
+  };
 
   const handleAddAddendum = async (recordId) => {
     if (!addendumText.trim()) return;
@@ -280,7 +306,7 @@ export default function PatientProfilePage() {
         </CardContent>
       </Card>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} data-testid="patient-tabs">
+      <Tabs value={activeTab} onValueChange={handleTabChange} data-testid="patient-tabs">
         <TabsList className="bg-slate-100 mb-4">
           <TabsTrigger value="general" data-testid="tab-general">Info General</TabsTrigger>
           <TabsTrigger value="history" data-testid="tab-history">Historial Clínico</TabsTrigger>
@@ -292,20 +318,36 @@ export default function PatientProfilePage() {
         <TabsContent value="general"><GeneralTab patient={patient} /></TabsContent>
 
         <TabsContent value="history">
-          <HistoryTab
-            patientId={id} medicalRecords={medicalRecords} doctors={doctors}
-            doctorFilter={doctorFilter} setDoctorFilter={setDoctorFilter}
-            dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
-            expandedRecord={expandedRecord} setExpandedRecord={setExpandedRecord}
-            appointments={appointments}
-            showAddendum={showAddendum} setShowAddendum={setShowAddendum}
-            addendumText={addendumText} setAddendumText={setAddendumText}
-            onAddAddendum={handleAddAddendum}
-          />
+          {tabsLoading.history && !tabsLoaded.history ? (
+            <div className="flex justify-center py-16" data-testid="history-loading"><div className="w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>
+          ) : (
+            <HistoryTab
+              patientId={id} medicalRecords={medicalRecords} doctors={doctors}
+              doctorFilter={doctorFilter} setDoctorFilter={setDoctorFilter}
+              dateFrom={dateFrom} setDateFrom={setDateFrom} dateTo={dateTo} setDateTo={setDateTo}
+              expandedRecord={expandedRecord} setExpandedRecord={setExpandedRecord}
+              appointments={appointments}
+              showAddendum={showAddendum} setShowAddendum={setShowAddendum}
+              addendumText={addendumText} setAddendumText={setAddendumText}
+              onAddAddendum={handleAddAddendum}
+            />
+          )}
         </TabsContent>
 
-        <TabsContent value="prescriptions"><PrescriptionsTab patientId={id} prescriptions={prescriptions} headers={headers} /></TabsContent>
-        <TabsContent value="labs"><LabsTab patientId={id} labOrders={labOrders} headers={headers} /></TabsContent>
+        <TabsContent value="prescriptions">
+          {tabsLoading.prescriptions && !tabsLoaded.prescriptions ? (
+            <div className="flex justify-center py-16" data-testid="prescriptions-loading"><div className="w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>
+          ) : (
+            <PrescriptionsTab patientId={id} prescriptions={prescriptions} headers={headers} />
+          )}
+        </TabsContent>
+        <TabsContent value="labs">
+          {tabsLoading.labs && !tabsLoaded.labs ? (
+            <div className="flex justify-center py-16" data-testid="labs-loading"><div className="w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>
+          ) : (
+            <LabsTab patientId={id} labOrders={labOrders} headers={headers} />
+          )}
+        </TabsContent>
         <TabsContent value="files">
           <FilesTab files={files} uploading={uploading} onUpload={handleFileUpload} onDownload={downloadFile} onDelete={deleteFile} />
         </TabsContent>
