@@ -7,6 +7,7 @@ import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Switch } from '../../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import CsvImportDialog from '../../components/CsvImportDialog';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,7 @@ export default function CatalogsPage() {
   
   const [showModal, setShowModal] = useState(false);
   const [showBulkModal, setShowBulkModal] = useState(false);
+  const [csvCatalog, setCsvCatalog] = useState(null);
   const [modalType, setModalType] = useState('');
   const [editingItem, setEditingItem] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -411,6 +413,10 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
                 <span className="text-xs text-zinc-500">{filteredMeds.length} de {medications.filter(m => m.is_active !== false).length}</span>
               )}
               <div className="ml-auto flex gap-2">
+                <Button onClick={() => setCsvCatalog('medications')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="csv-import-medications-btn">
+                  <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  CSV
+                </Button>
                 <Button onClick={() => openBulkModal('medication')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="bulk-import-medications-btn">
                   <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
                   Importar
@@ -490,6 +496,10 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
                 <span className="text-xs text-zinc-500">{filteredLabs.length} de {labStudies.filter(s => s.is_active !== false).length}</span>
               )}
               <div className="ml-auto flex gap-2">
+                <Button onClick={() => setCsvCatalog('lab-studies')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="csv-import-lab-btn">
+                  <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  CSV
+                </Button>
                 <Button onClick={() => openBulkModal('lab')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="bulk-import-lab-btn">
                   <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
                   Importar
@@ -577,6 +587,10 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
                 <span className="text-xs text-zinc-500">{filteredIcd.length} de {icd10Codes.length}</span>
               )}
               <div className="ml-auto flex gap-2">
+                <Button onClick={() => setCsvCatalog('icd10')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="csv-import-icd10-btn">
+                  <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  CSV
+                </Button>
                 <Button onClick={() => openBulkModal('icd10')} variant="outline" className="border-[#2EC4B6] text-[#2EC4B6] hover:bg-[#2EC4B6]/10" data-testid="bulk-import-icd10-btn">
                   <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
                   Importar
@@ -851,6 +865,15 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* CSV Import Dialog */}
+      <CsvImportDialog
+        open={!!csvCatalog}
+        onOpenChange={(v) => { if (!v) setCsvCatalog(null); }}
+        catalog={csvCatalog}
+        headers={getAuthHeaders()}
+        onSuccess={() => fetchCatalogs()}
+      />
     </div>
   );
 }

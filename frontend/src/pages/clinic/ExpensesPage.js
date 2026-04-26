@@ -49,7 +49,7 @@ export default function ExpensesPage() {
             <TabsTrigger value="supplier" data-testid="exp-tab-supplier"><Building2 className="w-3.5 h-3.5 mr-1" />Por proveedor</TabsTrigger>
           </TabsList>
           <TabsContent value="list"><ListTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
-          <TabsContent value="category"><CategoryReportTab headers={headers} branches={branches} /></TabsContent>
+          <TabsContent value="category"><CategoryReportTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
           <TabsContent value="supplier"><SupplierReportTab headers={headers} /></TabsContent>
         </Tabs>
       </div>
@@ -63,10 +63,13 @@ function ListTab({ headers, branches, activeBranch }) {
   const [expenses, setExpenses] = useState([]);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
-  const [filters, setFilters] = useState({ q: '', category: 'all', status: 'all', branch: 'all', dateFrom: '', dateTo: '' });
+  const [filters, setFilters] = useState({ q: '', category: 'all', status: 'all', branch: activeBranch?.id || 'all', dateFrom: '', dateTo: '' });
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [edit, setEdit] = useState(null);
+
+  // Sync branch filter with global activeBranch
+  useEffect(() => { if (activeBranch?.id) setFilters(f => ({ ...f, branch: activeBranch.id })); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -377,7 +380,7 @@ function ExpenseFormDialog({ open, onClose, edit, headers, branches, activeBranc
 }
 
 /* ============ CATEGORY REPORT ============ */
-function CategoryReportTab({ headers, branches }) {
+function CategoryReportTab({ headers, branches, activeBranch }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const today = new Date();
@@ -385,7 +388,9 @@ function CategoryReportTab({ headers, branches }) {
   const lastThis = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
   const [from, setFrom] = useState(firstThis);
   const [to, setTo] = useState(lastThis);
-  const [branch, setBranch] = useState('all');
+  const [branch, setBranch] = useState(activeBranch?.id || 'all');
+
+  useEffect(() => { if (activeBranch?.id) setBranch(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);

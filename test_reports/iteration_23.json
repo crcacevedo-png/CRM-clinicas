@@ -1,0 +1,79 @@
+{
+  "summary": "Iteration 23 — P2 batch (option b) testing: doctor/receptionist seeds + role-aware dashboard, Reports/Expenses default branch, NEW CSV import for super-admin catalogs. Backend: created /app/backend/tests/test_iter23_p2_csv_import.py (22 tests). 21/22 PASS. 1 FAIL exposes a real BACKEND BUG in the icd10 commit path. Regression: full 95-test baseline (test_p2_p3_batch + test_branch_filter_p1 + test_phase2_refactor_regression + test_dashboard_prompt_a9) re-ran 95/95 PASS in 49s. Frontend Playwright on https://super-admin-panel-12.preview.emergentagent.com: super-admin /admin/catalogos shows CSV button, opens [data-testid=csv-import-dialog] correctly, dropzone visible ('Suelta tu archivo CSV…'), Plantilla button present, file upload triggers dry-run with stats Total=3 / Válidas=2 / Duplicadas=0 / Errores=1 and error 'Fila 3 generic_name Campo requerido vacío' rendered correctly inside [data-testid=csv-dryrun-results]; preview table shows the 2 valid rows; Cancelar closes dialog cleanly. Reports/Expenses branch-default verified by static code inspection (4 ReportsPage tabs + 2 ExpensesPage tabs all use activeBranch?.id default + useEffect sync); the network capture portion was inconclusive because localStorage.clear() between super-admin and clinic-admin runs broke the auth session — main agent can self-verify in browser.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/admin/catalogs/icd10/import-csv?commit=true",
+        "issue": "100% commit failure: 'Could not find the created_at column of icd10_codes in the schema cache' (PGRST204). Backend transform unconditionally sets doc['created_at']=now_iso() for all catalogs, but icd10_codes table has no created_at column. valid_rows reported correctly but imported=0; response is misleading: committed=true, valid_rows=2, imported=0, error_rows=1 with error in errors[]. Dry-run is unaffected. Reproduction: POST any 2-row icd10 CSV with commit=true → response contains errors[0].message='Error al insertar lote 1: ...created_at column...'.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "Backend: GET /api/auth/me with doctor.test → user_type=clinic_member, role=doctor, clinic_id=c0321ed8…, member_id=dee8138c… — PASS",
+    "Backend: GET /api/auth/me with recepcion.test → user_type=clinic_member, role=receptionist, clinic_id=c0321ed8…, member_id=7988bbdc… — PASS",
+    "Backend: GET /api/clinic/dashboard (doctor) → admin_stats={} (empty) and my_commissions_month present — PASS",
+    "Backend: GET /api/clinic/dashboard (receptionist) → admin_stats has no sales/AR/inventory aggregates (forbidden keys absent) — PASS",
+    "Backend: GET /api/clinic/dashboard (clinic_admin) regression — admin_stats populated — PASS",
+    "Backend: GET /admin/catalogs/{medications,lab-studies,icd10}/csv-template → 200 with required headers + example row — PASS (3 parametrized)",
+    "Backend: csv-template unknown catalog → 400 — PASS",
+    "Backend: csv-template with clinic_admin token → 403 — PASS",
+    "Backend: medications import-csv dry-run (3 rows: 2 valid + 1 missing required) → valid_rows=2, error_rows=1, errors[0].field=generic_name, committed=false, imported=0 — PASS",
+    "Backend: medications import-csv commit=true → imported=2, committed=true — PASS",
+    "Backend: medications re-commit dedup → duplicates_skipped=2, imported=0 — PASS",
+    "Backend: medications malformed CSV (missing required generic_name column) → 400 with detail mentioning 'requeridas' — PASS",
+    "Backend: medications import-csv with clinic_admin token → 403 — PASS",
+    "Backend: lab-studies dry-run + commit (2 rows) → imported=2 — PASS",
+    "Backend: lab-studies missing required name column → 400 — PASS",
+    "Backend: icd10 dry-run (2 rows) → valid_rows=2 — PASS",
+    "Backend: icd10 missing required column → 400 — PASS",
+    "Backend regression: 95/95 baseline tests (P2/P3 21 + branch_filter_p1 11 + phase2_refactor_regression 44 + dashboard_a9 19) — PASS",
+    "Frontend: super-admin /admin/catalogos page renders CSV button on Medicamentos tab — PASS",
+    "Frontend: clicking CSV opens [data-testid=csv-import-dialog] — PASS",
+    "Frontend: dropzone + Plantilla button visible — PASS",
+    "Frontend: uploading 3-row CSV triggers dry-run, shows [data-testid=csv-dryrun-results] with Total=3 / Válidas=2 / Duplicadas=0 / Errores=1 — PASS",
+    "Frontend: error table renders 'Fila 3 generic_name Campo requerido vacío' — PASS",
+    "Frontend: preview table shows 2 valid rows (UI-TestE2E-A, UI-TestE2E-B) — PASS",
+    "Frontend: Cancelar button closes dialog without inserting — PASS",
+    "Static check: ReportsPage 4 tabs use activeBranch?.id default + useEffect sync — VERIFIED",
+    "Static check: ExpensesPage ListTab + CategoryReportTab use activeBranch?.id default + useEffect sync — VERIFIED"
+  ],
+  "failed_tests": [
+    "Backend: TestCsvImportIcd10::test_commit_then_dedup → icd10 commit returns imported=0 due to created_at schema mismatch (real BUG, not test issue)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_p2_csv_import.py",
+    "/app/test_reports/pytest/iteration_23_p2_csv.xml",
+    "/app/test_reports/pytest/iteration_23_regression.xml"
+  ],
+  "action_items": [
+    "FIX: backend/routes/catalogs.py CSV import — drop the `doc['created_at'] = now_iso()` line (or guard it) for icd10_codes table, since that table has no `created_at` column. Suggested patch: only add created_at when schema['table'] != 'icd10_codes' (mirror the existing clinic_id guard around line 394-395), OR add `created_at` column to icd10_codes table in Supabase. Currently the user-facing failure is silent (imported=0 with errors[] hidden inside response).",
+    "Consider returning HTTP 207/422 (or surfacing first error in detail) when commit=true succeeds at validation but fails during DB insert — current 200 with imported=0 + committed=true is confusing.",
+    "Optional hardening: validate file size + MIME type server-side (currently only frontend states '5MB max'). UploadFile doesn't enforce."
+  ],
+  "critical_code_review_comments": [
+    "catalogs.py CSV importer is well-structured (delimiter sniff, encoding fallbacks, header normalization, in-file dedup, batch insert). The required-field validation and dedup work correctly per tests.",
+    "The unconditional `doc['created_at'] = now_iso()` at line 392 doesn't match icd10_codes schema — same-shape pattern as `clinic_id` guard immediately below at line 394 should be applied to created_at as well.",
+    "transform lambdas correctly handle missing keys with `(row.get(...) or '').strip()` — robust against partially-filled rows.",
+    "errors[] is capped at 50 (good), but lot-level commit errors append to the same array with row=-1 — UI may render this awkwardly. Consider separate `commit_errors` field.",
+    "ReportsPage/ExpensesPage initialization pattern `useState(activeBranch?.id || 'all')` + `useEffect(...)` sync is correct. Note: the useEffect only runs on activeBranch.id change, so if BranchContext takes >1 render to populate activeBranch, the initial value is 'all' until it syncs — acceptable since BranchContext loads on mount.",
+    "Role-aware dashboard correctly hides admin_stats sales/AR/inventory aggregates for receptionist; doctor receives empty admin_stats {} as expected. my_commissions_month present for doctor.",
+    "CsvImportDialog component renders [data-testid=csv-import-dialog] and [data-testid=csv-dryrun-results] correctly — good testability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_p2_csv_import.py (new, 22 tests)"
+  ],
+  "success_rate": {"backend": "95.5% (21/22 new + 95/95 regression = 116/117 = 99.1%)", "frontend": "100% on tested CSV dialog flow; Reports/Expenses branch-default verified statically only"},
+  "test_credentials": "Super Admin info@cortexiagt.com / Armagedon1980$ ; Clinic Admin carlos@lasalud.gt / Test123456! ; Doctor doctor.test@lasalud.gt / Test123456! ; Receptionist recepcion.test@lasalud.gt / Test123456! — all login OK.",
+  "seed_data_creation": "Test inserted ~4 medications (TestE2E-…) and ~2 lab_studies (TestE2E-…) into global catalog (clinic_id=null) during commit tests. Cleanup test (TestZZ_Cleanup) ran via supabase admin client and best-effort deleted them; cleanup uses LIKE 'TestE2E-%' on generic_name/name. No icd10 rows remain because their commits all failed due to the created_at bug.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "P2 batch (option b) — 1 backend bug found: icd10 CSV commit fails 100% with PGRST204 (missing created_at column on icd10_codes table). All other CSV flows (medications, lab-studies) work end-to-end including dedup. Role-aware dashboard for doctor (empty admin_stats + my_commissions_month) and receptionist (admin_stats sans sales/AR/inventory) verified at API level. Reports/Expenses branch-default code is correct on inspection but full e2e network capture was blocked by a session-clear timing issue in the playwright run — main agent can verify in real browser by logging in as carlos@lasalud.gt, checking active branch in sidebar, opening /reports and /expenses, and inspecting Network tab for branch_id=<MAIN-uuid> on /api/clinic/reports/* and /api/clinic/expenses* calls. New file: /app/backend/tests/test_iter23_p2_csv_import.py (22 tests). XML: /app/test_reports/pytest/iteration_23_p2_csv.xml. Use this for regression in iter 24+ once icd10 created_at bug is fixed (then test_commit_then_dedup will pass).",
+  "rca of the issue": "icd10 CSV commit bug RCA: in /app/backend/routes/catalogs.py around line 392 inside the row-processing loop, the code does `doc['created_at'] = now_iso()` for every catalog. Two lines below at line 394 there is a `if schema['table'] != 'icd10_codes'` guard that correctly skips clinic_id assignment for icd10. The same guard is missing for created_at. The Supabase Postgres table icd10_codes apparently has no created_at column, so the insert is rejected by PostgREST with PGRST204 and 'Could not find the created_at column of icd10_codes in the schema cache'. The error is caught and appended to errors[] (row=-1) but the HTTP response stays 200 with `committed=true, imported=0`, which is misleading. Reproduction: super-admin POST any 2-row icd10 CSV (e.g., 'code,description_es\\nZ57A,Test\\nZ57B,Test2') with commit=true → response.imported=0, response.errors[0].message starts with 'Error al insertar lote 1: ...created_at...'. Mitigation: either (a) wrap created_at assignment with same `if schema['table'] != 'icd10_codes':` guard as clinic_id, or (b) ALTER TABLE icd10_codes ADD COLUMN created_at timestamptz DEFAULT now() in Supabase migration. Option (a) is the cleaner 1-line fix."
+}

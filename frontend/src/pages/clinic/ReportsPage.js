@@ -29,7 +29,7 @@ const PAY_LABEL = { cash: 'Efectivo', credit_card: 'Tarjeta crédito', debit_car
 
 export default function ReportsPage() {
   const { getAuthHeaders } = useAuth();
-  const { branches } = useBranch();
+  const { branches, activeBranch } = useBranch();
   const { hasFeature } = useFeatures();
   const headers = getAuthHeaders();
   const [tab, setTab] = useState('summary');
@@ -47,10 +47,10 @@ export default function ReportsPage() {
             <TabsTrigger value="inventory" data-testid="rep-tab-inventory"><Package className="w-3.5 h-3.5 mr-1" />Inventario</TabsTrigger>
             {hasFeature('multi_branch') && <TabsTrigger value="branch" data-testid="rep-tab-branch"><Building2 className="w-3.5 h-3.5 mr-1" />Por sucursal</TabsTrigger>}
           </TabsList>
-          <TabsContent value="summary"><SummaryTab headers={headers} branches={branches} /></TabsContent>
-          <TabsContent value="income"><IncomeTab headers={headers} branches={branches} /></TabsContent>
-          <TabsContent value="pnl"><PnLTab headers={headers} branches={branches} /></TabsContent>
-          <TabsContent value="inventory"><InventoryTab headers={headers} branches={branches} /></TabsContent>
+          <TabsContent value="summary"><SummaryTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
+          <TabsContent value="income"><IncomeTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
+          <TabsContent value="pnl"><PnLTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
+          <TabsContent value="inventory"><InventoryTab headers={headers} branches={branches} activeBranch={activeBranch} /></TabsContent>
           {hasFeature('multi_branch') && <TabsContent value="branch"><BranchTab headers={headers} /></TabsContent>}
         </Tabs>
       </div>
@@ -106,13 +106,15 @@ function buildParams({ period, dateFrom, dateTo, branchId, ...rest }) {
 }
 
 /* ============ SUMMARY TAB ============ */
-function SummaryTab({ headers, branches }) {
+function SummaryTab({ headers, branches, activeBranch }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [branchId, setBranchId] = useState('all');
+  const [branchId, setBranchId] = useState(activeBranch?.id || 'all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -241,14 +243,16 @@ function EmptyChart() { return <div className="flex items-center justify-center 
 function Spinner() { return <div className="flex justify-center py-16"><div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>; }
 
 /* ============ INCOME TAB ============ */
-function IncomeTab({ headers, branches }) {
+function IncomeTab({ headers, branches, activeBranch }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [branchId, setBranchId] = useState('all');
+  const [branchId, setBranchId] = useState(activeBranch?.id || 'all');
   const [grouping, setGrouping] = useState('day');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -357,14 +361,16 @@ function IncomeTab({ headers, branches }) {
 }
 
 /* ============ P&L TAB ============ */
-function PnLTab({ headers, branches }) {
+function PnLTab({ headers, branches, activeBranch }) {
   const [period, setPeriod] = useState('current_month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [branchId, setBranchId] = useState('all');
+  const [branchId, setBranchId] = useState(activeBranch?.id || 'all');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [pdfLoading, setPdfLoading] = useState(false);
+
+  useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -454,11 +460,13 @@ function PnLTab({ headers, branches }) {
 }
 
 /* ============ INVENTORY TAB ============ */
-function InventoryTab({ headers, branches }) {
-  const [branchId, setBranchId] = useState('all');
+function InventoryTab({ headers, branches, activeBranch }) {
+  const [branchId, setBranchId] = useState(activeBranch?.id || 'all');
   const [days, setDays] = useState(60);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => { if (activeBranch?.id) setBranchId(activeBranch.id); }, [activeBranch?.id]);
 
   const load = useCallback(async () => {
     setLoading(true);

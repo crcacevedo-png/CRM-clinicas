@@ -271,3 +271,173 @@ async def seed_icd10_codes(user=Depends(require_super_admin)):
         "total_in_database": total.count or 0
     }
 
+
+# ============== CSV IMPORT ==============
+
+CATALOG_SCHEMAS = {
+    "medications": {
+        "table": "medications",
+        "required": ["generic_name"],
+        "optional": ["brand_name", "presentations", "category"],
+        "transform": lambda row: {
+            "generic_name": (row.get("generic_name") or "").strip(),
+            "brand_name": (row.get("brand_name") or "").strip(),
+            "presentations": parse_presentations(row.get("presentations") or ""),
+            "category": (row.get("category") or "").strip(),
+        },
+        "unique_field": "generic_name",  # case-insensitive dedup against existing global rows
+    },
+    "lab-studies": {
+        "table": "lab_studies",
+        "required": ["name"],
+        "optional": ["category", "preparation"],
+        "transform": lambda row: {
+            "name": (row.get("name") or "").strip(),
+            "category": (row.get("category") or "").strip(),
+            "preparation": (row.get("preparation") or "").strip(),
+        },
+        "unique_field": "name",
+    },
+    "icd10": {
+        "table": "icd10_codes",
+        "required": ["code", "description_es"],
+        "optional": ["category", "is_common"],
+        "transform": lambda row: {
+            "code": (row.get("code") or "").strip().upper(),
+            "description_es": (row.get("description_es") or "").strip(),
+            "category": (row.get("category") or "").strip() or None,
+            "is_common": str(row.get("is_common", "")).strip().lower() in ("1", "true", "yes", "si", "sí", "y"),
+        },
+        "unique_field": "code",
+    },
+}
+
+@router.post("/admin/catalogs/{catalog}/import-csv")
+async def import_catalog_csv(
+    catalog: str,
+    file: UploadFile = File(...),
+    commit: bool = False,
+    user=Depends(require_super_admin),
+):
+    """Generic CSV importer for super-admin catalogs (medications, lab-studies, icd10).
+
+    First call with commit=false to preview validation; second call with commit=true to insert.
+    Returns: { total, valid_rows, error_rows, errors: [{row, field, message}], preview, imported, skipped, duplicates }.
+    """
+    import csv as _csv
+    import io as _io
+
+    schema = CATALOG_SCHEMAS.get(catalog)
+    if not schema:
+        raise HTTPException(status_code=400, detail=f"Catálogo '{catalog}' no soportado")
+
+    # Read & decode file (utf-8 with bom fallback to latin-1)
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        raise HTTPException(status_code=400, detail="No se pudo decodificar el archivo (use UTF-8)")
+
+    # Auto-detect delimiter (, ; \t)
+    sample = text[:2048]
+    try:
+        dialect = _csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except _csv.Error:
+        dialect = _csv.excel  # default to comma
+
+    reader = _csv.DictReader(_io.StringIO(text), dialect=dialect)
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV no tiene encabezado")
+
+    # Normalize headers (lowercase, trim, replace spaces)
+    norm_headers = {h: (h or "").strip().lower().replace(" ", "_") for h in reader.fieldnames}
+    missing = [r for r in schema["required"] if r not in norm_headers.values()]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Faltan columnas requeridas: {', '.join(missing)}")
+
+    # Pre-fetch existing unique values for dedup (case-insensitive)
+    unique_field = schema["unique_field"]
+    existing_resp = sdb.table(schema["table"]).select(unique_field).is_('clinic_id', 'null').execute() if schema["table"] != "icd10_codes" else sdb.table(schema["table"]).select(unique_field).execute()
+    existing_set = {(r.get(unique_field) or "").strip().lower() for r in (existing_resp.data or [])}
+
+    rows_seen = []
+    errors = []
+    skipped_dup = 0
+    valid_rows = []
+
+    for idx, raw_row in enumerate(reader, start=2):  # row 1 = header
+        # Re-key with normalized header names
+        row = {norm_headers[k]: v for k, v in raw_row.items() if k in norm_headers}
+        try:
+            doc = schema["transform"](row)
+            # Required field non-empty check
+            for req in schema["required"]:
+                if not str(doc.get(req) or "").strip():
+                    errors.append({"row": idx, "field": req, "message": "Campo requerido vacío"})
+                    raise ValueError("missing required")
+            # Dedup
+            key = str(doc.get(unique_field) or "").strip().lower()
+            if key in existing_set:
+                skipped_dup += 1
+                continue
+            existing_set.add(key)  # in-file dedup as well
+            doc["id"] = str(uuid.uuid4())
+            doc["created_at"] = now_iso()
+            doc["is_active"] = True
+            if schema["table"] != "icd10_codes":
+                doc["clinic_id"] = None
+            valid_rows.append(doc)
+            if len(rows_seen) < 5:
+                rows_seen.append({k: v for k, v in doc.items() if k not in ("id", "created_at", "clinic_id", "is_active")})
+        except ValueError:
+            continue
+        except Exception as e:
+            errors.append({"row": idx, "field": "*", "message": str(e)[:120]})
+
+    imported = 0
+    if commit and valid_rows:
+        # Batch insert in chunks of 500 to stay within Supabase limits
+        BATCH = 500
+        for i in range(0, len(valid_rows), BATCH):
+            chunk = valid_rows[i:i + BATCH]
+            try:
+                sdb.table(schema["table"]).insert(chunk).execute()
+                imported += len(chunk)
+            except Exception as e:
+                errors.append({"row": -1, "field": "*", "message": f"Error al insertar lote {i//BATCH + 1}: {str(e)[:120]}"})
+
+    return {
+        "catalog": catalog,
+        "total": len(valid_rows) + len(errors) + skipped_dup,
+        "valid_rows": len(valid_rows),
+        "error_rows": len(errors),
+        "duplicates_skipped": skipped_dup,
+        "errors": errors[:50],  # cap response size
+        "preview": rows_seen,
+        "imported": imported,
+        "committed": commit,
+    }
+
+@router.get("/admin/catalogs/{catalog}/csv-template")
+async def csv_template(catalog: str, user=Depends(require_super_admin)):
+    """Return a CSV header template + 1 example row for the requested catalog."""
+    schema = CATALOG_SCHEMAS.get(catalog)
+    if not schema:
+        raise HTTPException(status_code=400, detail=f"Catálogo '{catalog}' no soportado")
+    headers = schema["required"] + schema["optional"]
+    examples = {
+        "medications": ["Paracetamol", "Tylenol", "500mg tableta, 250mg/5ml jarabe", "Analgésico"],
+        "lab-studies": ["Hemograma completo", "Hematología", "Ayuno de 8h"],
+        "icd10": ["A00", "Cólera", "Enfermedades infecciosas intestinales", "true"],
+    }
+    example = examples.get(catalog, [""] * len(headers))
+    csv_text = ",".join(headers) + "\n" + ",".join(f'"{v}"' for v in example) + "\n"
+    return {"filename": f"plantilla_{catalog}.csv", "headers": headers, "content": csv_text}
+
