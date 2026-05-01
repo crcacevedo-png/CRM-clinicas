@@ -14,7 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../compo
 import { toast } from 'sonner';
 import {
   ArrowLeft, ChevronDown, ChevronUp, Save, CheckCircle, Activity,
-  Heart, Thermometer, Wind, Droplets, Weight, Ruler, Search, X, AlertTriangle, FileStack
+  Heart, Thermometer, Wind, Droplets, Weight, Ruler, Search, X, AlertTriangle
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -245,8 +245,6 @@ export default function MedicalRecordForm() {
   const [patient, setPatient] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [templates, setTemplates] = useState([]);
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
 
   // Form state
   const [chiefComplaint, setChiefComplaint] = useState('');
@@ -281,12 +279,8 @@ export default function MedicalRecordForm() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [pRes, tRes] = await Promise.all([
-          axios.get(`${API}/clinic/patients/${patientId}`, { headers }),
-          axios.get(`${API}/clinic/templates`, { headers }),
-        ]);
+        const pRes = await axios.get(`${API}/clinic/patients/${patientId}`, { headers });
         setPatient(pRes.data.patient);
-        setTemplates(tRes.data || []);
 
         if (recordId) {
           const rRes = await axios.get(`${API}/clinic/medical-records/${recordId}`, { headers });
@@ -327,21 +321,6 @@ export default function MedicalRecordForm() {
     };
     load();
   }, [patientId, recordId, appointmentId]);
-
-  const applyTemplate = (template) => {
-    if (!template) return;
-    const td = template.template_data || {};
-    if (td.chief_complaint) setChiefComplaint(td.chief_complaint);
-    if (td.present_illness) setPresentIllness(td.present_illness);
-    if (td.review_of_systems) setReviewOfSystems(prev => ({ ...prev, ...td.review_of_systems }));
-    if (td.physical_exam) setPhysicalExam(prev => ({ ...prev, ...td.physical_exam }));
-    if (td.diagnoses) setDiagnoses(td.diagnoses);
-    if (td.treatment_plan) setTreatmentPlan(td.treatment_plan);
-    if (td.procedures) setProcedures(td.procedures);
-    if (td.notes) setNotes(td.notes);
-    setSelectedTemplate(template.id);
-    toast.success(`Plantilla "${template.name}" aplicada`);
-  };
 
   const buildPayload = (status) => {
     const payload = {
@@ -448,51 +427,6 @@ export default function MedicalRecordForm() {
         </div>
         {isFinalized && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Finalizada</Badge>}
       </div>
-
-      {/* Template selector - only for new records */}
-      {!recordId && !isFinalized && templates.length > 0 && (
-        <Card className="border border-slate-200 mb-4" data-testid="template-selector">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <FileStack className="w-4 h-4 text-teal-600" />
-              <span className="text-sm font-semibold text-slate-800">Usar plantilla</span>
-              <span className="text-xs text-slate-400">Pre-llena el formulario con datos de la plantilla</span>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-              {(() => {
-                const categories = { general: 'General', especialidad: 'Especialidades', urgencia: 'Urgencia', cronica: 'Crónicas', procedimiento: 'Procedimientos' };
-                const grouped = {};
-                templates.forEach(t => {
-                  const cat = t.category || 'general';
-                  if (!grouped[cat]) grouped[cat] = [];
-                  grouped[cat].push(t);
-                });
-                return Object.entries(grouped).map(([cat, items]) => (
-                  <div key={cat} className="space-y-1">
-                    <p className="text-xs font-semibold text-slate-500 uppercase">{categories[cat] || cat}</p>
-                    {items.map(t => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => applyTemplate(t)}
-                        className={`w-full text-left px-2.5 py-1.5 text-xs rounded-md border transition-all
-                          ${selectedTemplate === t.id
-                            ? 'bg-teal-50 border-teal-300 text-teal-700 font-medium'
-                            : 'bg-white border-slate-200 text-slate-600 hover:border-teal-300 hover:bg-teal-50/50'
-                          }`}
-                        data-testid={`template-${t.id}`}
-                      >
-                        {t.name}
-                        {t.clinic_id && <span className="text-xs text-teal-500 ml-1">(Clínica)</span>}
-                      </button>
-                    ))}
-                  </div>
-                ));
-              })()}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <div className="space-y-3">
         {/* 1. Motivo de consulta */}

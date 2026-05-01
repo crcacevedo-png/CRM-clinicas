@@ -174,5 +174,13 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Recordatorios WhatsApp via n8n (24h/2h antes) - P1
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
+## Cambios recientes
+- **2026-05-01 — Eliminación módulo Plantillas de Consulta**: Removido por solicitud del usuario.
+  - Backend: borrados endpoints `GET/POST/PUT/DELETE /api/clinic/templates` y modelo `TemplateCreate` de `routes/medical_records.py`.
+  - Frontend: removida sección "Usar plantilla" de `MedicalRecordForm.js` (estados `templates`, `selectedTemplate`, función `applyTemplate`, fetch `/clinic/templates`, import `FileStack`).
+  - DB: 28 filas eliminadas vía admin API. Tabla `consultation_templates` queda vacía; SQL para drop manual en `/app/sql/drop_consultation_templates.sql` (sin FK externas, drop seguro).
+  - Tests: eliminado `tests/test_consultation_templates.py`.
+  - Verificado: `GET /api/clinic/templates` → 404; lint pass FE+BE; ningún otro módulo afectado.
+
 ## Credenciales
 Ver `/app/memory/test_credentials.md`
