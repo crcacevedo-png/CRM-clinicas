@@ -380,6 +380,8 @@ function SettingsTab({ headers }) {
 }
 
 function RuleFormDialog({ open, onClose, edit, members, services, products, headers, onDone }) {
+  const activeServices = (services || []).filter(s => s.is_active !== false);
+  const activeProducts = (products || []).filter(p => (p.is_active !== false) && (p.sale_price !== null || p.total_stock > 0));
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -441,18 +443,33 @@ function RuleFormDialog({ open, onClose, edit, members, services, products, head
             <div>
               <Label className="text-xs">Servicio *</Label>
               <Select value={form.service_id || ''} onValueChange={v => uf('service_id', v)}>
-                <SelectTrigger className="mt-1 text-sm"><SelectValue placeholder="Seleccionar" /></SelectTrigger>
-                <SelectContent>{services.map(s => <SelectItem key={s.id} value={s.id}>{s.name} (Q{s.price})</SelectItem>)}</SelectContent>
+                <SelectTrigger className="mt-1 text-sm" data-testid="rule-service-select"><SelectValue placeholder={activeServices.length === 0 ? 'Sin servicios disponibles' : 'Seleccionar'} /></SelectTrigger>
+                <SelectContent>{activeServices.map(s => <SelectItem key={s.id} value={s.id}>{s.name} (Q{(s.price || 0).toFixed(2)})</SelectItem>)}</SelectContent>
               </Select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                ¿No aparece el servicio? Créalo en <a href="/dashboard/ventas" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline font-medium">Ventas → Servicios</a>
+              </p>
             </div>
           )}
           {form.applies_to === 'product' && (
             <div>
               <Label className="text-xs">Producto *</Label>
               <Select value={form.product_id || ''} onValueChange={v => uf('product_id', v)}>
-                <SelectTrigger className="mt-1 text-sm"><SelectValue placeholder="Seleccionar" /></SelectTrigger>
-                <SelectContent>{products.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+                <SelectTrigger className="mt-1 text-sm" data-testid="rule-product-select"><SelectValue placeholder={activeProducts.length === 0 ? 'Sin productos disponibles' : 'Seleccionar'} /></SelectTrigger>
+                <SelectContent>{activeProducts.map(p => <SelectItem key={p.id} value={p.id}>{p.name}{p.sale_price ? ` (Q${(p.sale_price || 0).toFixed(2)})` : ''}</SelectItem>)}</SelectContent>
               </Select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                ¿No aparece el producto? Créalo en <a href="/dashboard/inventario" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline font-medium">Inventario → Productos</a>
+              </p>
+            </div>
+          )}
+          {(form.applies_to === 'all_consultations' || form.applies_to === 'all_products') && (
+            <div className="p-2.5 bg-slate-50 border border-slate-200 rounded text-xs text-slate-600">
+              {form.applies_to === 'all_consultations' ? (
+                <>La comisión se aplicará a <strong>todos los servicios/consultas</strong> que venda este médico. Para gestionar el catálogo visita <a href="/dashboard/ventas" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline font-medium">Ventas → Servicios</a>.</>
+              ) : (
+                <>La comisión se aplicará a <strong>todos los productos</strong> que venda este médico. Para gestionar el catálogo visita <a href="/dashboard/inventario" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline font-medium">Inventario → Productos</a>.</>
+              )}
             </div>
           )}
           <Separator />
