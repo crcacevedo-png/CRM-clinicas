@@ -41,6 +41,33 @@ supabase_anon: Client = supabase_user
 # Shorthand for DB operations (service role bypasses RLS)
 sdb = supabase_admin
 
+# ============== POSTGRES DDL CONNECTION (for migrations) ==============
+# supabase-py only supports PostgREST (DML). For DDL (CREATE/DROP/ALTER TABLE,
+# RLS policies, indices, etc.) use this direct pooler connection.
+
+_db_url = os.environ.get('SUPABASE_DB_URL', '')
+
+def run_sql(sql: str, params: tuple | None = None, fetch: bool = False):
+    """Execute raw SQL against the Supabase Postgres pooler.
+
+    Use ONLY for DDL or one-off admin queries — for regular CRUD use `sdb.table(...)`.
+    Returns rows when fetch=True, else None. Auto-commits each call.
+    """
+    if not _db_url:
+        raise RuntimeError("SUPABASE_DB_URL is not configured in backend/.env")
+    import psycopg2
+    conn = psycopg2.connect(_db_url, connect_timeout=10)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            if fetch and cur.description:
+                cols = [d[0] for d in cur.description]
+                return [dict(zip(cols, row)) for row in cur.fetchall()]
+            return None
+    finally:
+        conn.close()
+
 # ============== LOGGING ==============
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

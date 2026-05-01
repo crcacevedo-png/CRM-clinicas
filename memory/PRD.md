@@ -178,9 +178,15 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **2026-05-01 — Eliminación módulo Plantillas de Consulta**: Removido por solicitud del usuario.
   - Backend: borrados endpoints `GET/POST/PUT/DELETE /api/clinic/templates` y modelo `TemplateCreate` de `routes/medical_records.py`.
   - Frontend: removida sección "Usar plantilla" de `MedicalRecordForm.js` (estados `templates`, `selectedTemplate`, función `applyTemplate`, fetch `/clinic/templates`, import `FileStack`).
-  - DB: 28 filas eliminadas vía admin API. Tabla `consultation_templates` queda vacía; SQL para drop manual en `/app/sql/drop_consultation_templates.sql` (sin FK externas, drop seguro).
+  - DB: tabla `consultation_templates` eliminada vía `DROP TABLE CASCADE` (28 filas + estructura). Sin FKs externas, drop seguro.
   - Tests: eliminado `tests/test_consultation_templates.py`.
-  - Verificado: `GET /api/clinic/templates` → 404; lint pass FE+BE; ningún otro módulo afectado.
+  - Verificado: `GET /api/clinic/templates` → 404; `information_schema` confirma tabla inexistente; lint pass FE+BE.
+
+- **2026-05-01 — Conexión Postgres directa (DDL automático)**:
+  - Añadida `SUPABASE_DB_URL` a `backend/.env` (Session Pooler, IPv4 compatible).
+  - Helper `core.run_sql(sql, params, fetch)` para ejecutar DDL desde el código (DROP/CREATE/ALTER TABLE, RLS policies, índices, migraciones).
+  - `psycopg2-binary` ya estaba instalado.
+  - Cualquier futura modificación de schema puede ejecutarse sin pasar por el SQL Editor.
 
 ## Credenciales
 Ver `/app/memory/test_credentials.md`
