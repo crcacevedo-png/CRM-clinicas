@@ -167,8 +167,8 @@ async def create_expense(data: dict, ctx=Depends(require_clinic_member)):
     if ps not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Estado inválido: {ps}")
     try:
-        amount = float(data.get("amount") or 0)
-        tax = float(data.get("tax_amount") or 0)
+        amount = round(float(data.get("amount") or 0), 2)
+        tax = round(float(data.get("tax_amount") or 0), 2)
         total = round(amount + tax, 2)
         now = now_iso()
         from datetime import date as dt_date

@@ -156,21 +156,21 @@ async def open_cash_session(data: dict, ctx=Depends(require_clinic_member)):
 async def close_cash_session(session_id: str, data: dict, ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
     member_id = ctx["member"]["id"]
-    actual_amount = float(data.get("actual_amount", 0))
+    actual_amount = round(float(data.get("actual_amount", 0)), 2)
     try:
         session = sdb.table('cash_sessions').select('*').eq('id', session_id).eq('clinic_id', clinic_id).single().execute().data
         if session['status'] != 'open':
             raise HTTPException(status_code=400, detail="Sesión ya cerrada")
         # Calculate expected = opening + sum of cash payments during this session
-        opening = float(session.get('opening_amount') or 0)
+        opening = round(float(session.get('opening_amount') or 0), 2)
         sales_in_session = sdb.table('sales').select('id').eq('cash_session_id', session_id).neq('status', 'cancelled').execute()
         sale_ids = [s['id'] for s in (sales_in_session.data or [])]
         cash_total = 0.0
         if sale_ids:
             pays = sdb.table('payments').select('amount,payment_method').in_('sale_id', sale_ids).eq('payment_method', 'cash').execute()
-            cash_total = sum(float(p.get('amount') or 0) for p in (pays.data or []))
-        expected = opening + cash_total
-        difference = actual_amount - expected
+            cash_total = round(sum(float(p.get('amount') or 0) for p in (pays.data or [])), 2)
+        expected = round(opening + cash_total, 2)
+        difference = round(actual_amount - expected, 2)
         sdb.table('cash_sessions').update({
             "status": "closed", "closed_at": now_iso(), "closed_by": member_id,
             "expected_amount": expected, "actual_amount": actual_amount,
@@ -197,15 +197,16 @@ async def cash_session_summary(session_id: str, ctx=Depends(require_clinic_membe
                 m = p.get('payment_method') or 'other'
                 key = m if m in totals else 'other'
                 totals[key] = totals.get(key, 0) + float(p.get('amount') or 0)
-        opening = float(session.get('opening_amount') or 0)
-        expected = opening + totals['cash']
+        opening = round(float(session.get('opening_amount') or 0), 2)
+        totals = {k: round(v, 2) for k, v in totals.items()}
+        expected = round(opening + totals['cash'], 2)
         return {
             "session": session,
             "opening": opening,
             "totals": totals,
             "expected": expected,
             "sales_count": len(sale_ids),
-            "sales_total": sum(float(s.get('total') or 0) for s in (sales_in.data or [])),
+            "sales_total": round(sum(float(s.get('total') or 0) for s in (sales_in.data or [])), 2),
         }
     except Exception as e:
         logger.error(f"Cash session summary error: {e}")
@@ -386,7 +387,7 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
 
             # Insert payments
             for p in payments:
-                amt = float(p.get("amount") or 0)
+                amt = round(float(p.get("amount") or 0), 2)
                 if amt <= 0:
                     continue
                 sdb.table('payments').insert({

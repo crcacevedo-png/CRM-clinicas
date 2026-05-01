@@ -7,6 +7,7 @@ import { Label } from '../../../components/ui/label';
 import { Separator } from '../../../components/ui/separator';
 import { toast } from 'sonner';
 import { API } from './constants';
+import { round2 } from '../../../lib/money';
 
 export default function CloseSessionDialog({ open, onClose, session, headers, onClosed }) {
   const [summary, setSummary] = useState(null);
@@ -19,7 +20,7 @@ export default function CloseSessionDialog({ open, onClose, session, headers, on
       try {
         const r = await axios.get(`${API}/clinic/sales/cash-session/${session.id}/summary`, { headers });
         setSummary(r.data);
-        setActual(r.data.expected || 0);
+        setActual(round2(r.data.expected || 0));
       } catch { /* ignore */ }
     })();
   }, [open, session, headers]);
@@ -27,7 +28,7 @@ export default function CloseSessionDialog({ open, onClose, session, headers, on
   const handleClose = async () => {
     setClosing(true);
     try {
-      await axios.post(`${API}/clinic/sales/cash-session/${session.id}/close`, { actual_amount: actual }, { headers });
+      await axios.post(`${API}/clinic/sales/cash-session/${session.id}/close`, { actual_amount: round2(actual) }, { headers });
       toast.success('Caja cerrada');
       onClosed();
     } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
@@ -35,7 +36,7 @@ export default function CloseSessionDialog({ open, onClose, session, headers, on
   };
 
   if (!summary) return null;
-  const diff = (parseFloat(actual) || 0) - (summary.expected || 0);
+  const diff = round2((parseFloat(actual) || 0) - (summary.expected || 0));
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -50,7 +51,7 @@ export default function CloseSessionDialog({ open, onClose, session, headers, on
           <div className="flex justify-between text-base"><span className="font-bold">Total esperado en caja:</span><span className="font-bold text-teal-600">Q{(summary.expected || 0).toFixed(2)}</span></div>
           <div>
             <Label className="text-xs">Monto físico contado</Label>
-            <Input type="number" step="0.01" className="mt-1" value={actual} onChange={e => setActual(parseFloat(e.target.value) || 0)} data-testid="actual-amount-input" />
+            <Input type="number" step="0.01" className="mt-1" value={actual} onChange={e => setActual(round2(parseFloat(e.target.value) || 0))} data-testid="actual-amount-input" />
           </div>
           <div className={`flex justify-between p-2 rounded ${Math.abs(diff) < 0.01 ? 'bg-emerald-50 text-emerald-700' : diff > 0 ? 'bg-blue-50 text-blue-700' : 'bg-red-50 text-red-700'}`}>
             <span className="font-bold">{diff > 0 ? 'Sobrante' : diff < 0 ? 'Faltante' : 'Cuadrado'}:</span>
