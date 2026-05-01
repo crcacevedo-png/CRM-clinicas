@@ -77,7 +77,11 @@ export default function RecordDetail({ record, onAddAddendum }) {
           <div className="space-y-1">
             {record.diagnoses.map((d, i) => (
               <div key={i} className="flex items-center gap-2">
-                <Badge variant="outline" className={`text-xs font-mono ${d.type === 'primary' ? 'bg-teal-50 text-teal-700 border-teal-200' : ''}`}>{d.code}</Badge>
+                {d.code ? (
+                  <Badge variant="outline" className={`text-xs font-mono ${d.type === 'primary' ? 'bg-teal-50 text-teal-700 border-teal-200' : ''}`}>{d.code}</Badge>
+                ) : (
+                  <Badge variant="outline" className={`text-xs italic ${d.type === 'primary' ? 'bg-teal-50 text-teal-700 border-teal-200' : 'bg-slate-100 text-slate-600'}`}>Alterno</Badge>
+                )}
                 <span className="text-sm text-slate-700">{d.description}</span>
                 {d.type === 'primary' && <Badge className="bg-teal-600 text-white text-xs">Principal</Badge>}
               </div>

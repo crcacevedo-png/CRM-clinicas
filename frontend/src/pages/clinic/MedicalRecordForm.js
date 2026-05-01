@@ -107,6 +107,7 @@ function ICD10Search({ selected, onSelect, onRemove, headers }) {
   const [results, setResults] = useState([]);
   const [showResults, setShowResults] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [altText, setAltText] = useState('');
   const debounceRef = useRef(null);
 
   const search = useCallback(async (q) => {
@@ -129,13 +130,23 @@ function ICD10Search({ selected, onSelect, onRemove, headers }) {
   const addDiagnosis = (code, type = 'secondary') => {
     if (selected.find(d => d.code === code.code)) return;
     const diagType = selected.length === 0 ? 'primary' : type;
-    onSelect([...selected, { code: code.code, description: code.description_es, type: diagType }]);
+    onSelect([...selected, { code: code.code, description: code.description_es, type: diagType, source: 'icd10' }]);
     setQuery('');
     setShowResults(false);
   };
 
+  const addAltDiagnosis = () => {
+    const text = altText.trim();
+    if (!text) return;
+    if (selected.find(d => !d.code && d.description === text)) return;
+    const diagType = selected.length === 0 ? 'primary' : 'secondary';
+    onSelect([...selected, { code: null, description: text, type: diagType, source: 'alt' }]);
+    setAltText('');
+  };
+
   return (
     <div className="space-y-2">
+      <p className="text-xs font-semibold text-slate-600 mt-1">Buscar CIE-10</p>
       <div className="relative">
         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
         <Input
@@ -166,13 +177,42 @@ function ICD10Search({ selected, onSelect, onRemove, headers }) {
         </div>
       )}
 
+      <div className="pt-2 border-t border-slate-100">
+        <p className="text-xs font-semibold text-slate-600 mb-1">Diagnóstico alterno <span className="font-normal text-slate-400">(sin código CIE-10)</span></p>
+        <div className="flex gap-2">
+          <Input
+            value={altText}
+            onChange={e => setAltText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addAltDiagnosis(); } }}
+            placeholder="Ej: Contractura muscular lumbar leve"
+            className="text-sm flex-1"
+            data-testid="alt-diagnosis-input"
+          />
+          <button
+            type="button"
+            onClick={addAltDiagnosis}
+            disabled={!altText.trim()}
+            className="px-3 text-xs font-medium rounded-md bg-teal-50 text-teal-700 hover:bg-teal-100 disabled:opacity-40 disabled:cursor-not-allowed border border-teal-200"
+            data-testid="add-alt-diagnosis-btn"
+          >
+            + Agregar
+          </button>
+        </div>
+      </div>
+
       {selected.length > 0 && (
-        <div className="space-y-1.5 mt-2">
+        <div className="space-y-1.5 mt-3">
           {selected.map((d, i) => (
             <div key={i} className={`flex items-center gap-2 p-2 rounded-md border ${d.type === 'primary' ? 'bg-teal-50 border-teal-200' : 'bg-slate-50 border-slate-200'}`}>
-              <Badge variant="outline" className={`text-xs font-mono shrink-0 ${d.type === 'primary' ? 'bg-teal-100 text-teal-700' : ''}`}>
-                {d.code}
-              </Badge>
+              {d.code ? (
+                <Badge variant="outline" className={`text-xs font-mono shrink-0 ${d.type === 'primary' ? 'bg-teal-100 text-teal-700' : ''}`}>
+                  {d.code}
+                </Badge>
+              ) : (
+                <Badge variant="outline" className={`text-xs shrink-0 italic ${d.type === 'primary' ? 'bg-teal-100 text-teal-700' : 'bg-slate-100 text-slate-600'}`}>
+                  Alterno
+                </Badge>
+              )}
               <span className="text-sm text-slate-700 flex-1 truncate">{d.description}</span>
               {d.type === 'primary' && <Badge className="bg-teal-600 text-white text-xs">Principal</Badge>}
               {d.type !== 'primary' && (
@@ -181,7 +221,7 @@ function ICD10Search({ selected, onSelect, onRemove, headers }) {
                   onSelect(updated);
                 }}>Hacer principal</button>
               )}
-              <button type="button" onClick={() => onRemove(i)} className="p-0.5 hover:bg-red-100 rounded">
+              <button type="button" onClick={() => onRemove(i)} className="p-0.5 hover:bg-red-100 rounded" data-testid={`remove-diagnosis-${i}`}>
                 <X className="w-3.5 h-3.5 text-red-500" />
               </button>
             </div>
@@ -569,7 +609,7 @@ export default function MedicalRecordForm() {
         </Section>
 
         {/* 5. Diagnóstico */}
-        <Section title="Diagnóstico CIE-10" defaultOpen={true}>
+        <Section title="Diagnósticos (CIE-10 o alterno)" defaultOpen={true}>
           <div className="relative">
             <ICD10Search
               selected={diagnoses}
