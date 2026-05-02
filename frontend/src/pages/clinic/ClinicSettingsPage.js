@@ -18,7 +18,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { toast } from 'sonner';
 import {
   Building2, Calendar, Link2, Unlink, RefreshCw, CheckCircle, Users,
-  UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image
+  UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image,
+  Download, Database, Loader2
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -198,6 +199,39 @@ export default function ClinicSettingsPage() {
 
   const uf = (field, value) => setClinicForm(prev => ({ ...prev, [field]: value }));
 
+  // Derived: is current member a clinic_admin?
+  const currentMember = members.find(m => m.id === currentMemberId);
+  const isClinicAdmin = currentMember?.role === 'clinic_admin';
+
+  const [downloadingExport, setDownloadingExport] = useState(false);
+  const downloadFullExport = async () => {
+    if (!window.confirm('¿Descargar export completo de la clínica? Puede tardar varios segundos según el volumen de datos.')) return;
+    setDownloadingExport(true);
+    try {
+      const res = await axios.get(`${API}/clinic/export/full`, { headers, responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.download = `clinic_export_${ts}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      const numTables = res.headers['x-export-tables'];
+      const numFiles = res.headers['x-export-files'];
+      toast.success(`Export descargado (${numTables} tablas, ${numFiles} archivos)`);
+    } catch (e) {
+      const msg = e?.response?.status === 403
+        ? 'Solo el administrador de clínica puede exportar datos'
+        : 'Error al generar export';
+      toast.error(msg);
+    } finally {
+      setDownloadingExport(false);
+    }
+  };
+
   if (loading) return <div className="flex justify-center items-center h-96"><div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>;
 
   const usedStorage = 0; // placeholder
@@ -215,6 +249,9 @@ export default function ClinicSettingsPage() {
           <TabsTrigger value="prescriptions" data-testid="tab-prescriptions"><FileText className="w-3.5 h-3.5 mr-1.5" />Recetas</TabsTrigger>
           <TabsTrigger value="billing" data-testid="tab-billing"><CreditCard className="w-3.5 h-3.5 mr-1.5" />Plan</TabsTrigger>
           <TabsTrigger value="integrations" data-testid="tab-integrations"><Calendar className="w-3.5 h-3.5 mr-1.5" />Integraciones</TabsTrigger>
+          {isClinicAdmin && (
+            <TabsTrigger value="data" data-testid="tab-data"><Database className="w-3.5 h-3.5 mr-1.5" />Datos</TabsTrigger>
+          )}
         </TabsList>
 
         {/* ===== CLINIC DATA ===== */}
@@ -523,6 +560,47 @@ export default function ClinicSettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ===== DATA EXPORT (clinic_admin only) ===== */}
+        {isClinicAdmin && (
+          <TabsContent value="data">
+            <Card className="border border-slate-200" data-testid="data-export-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-teal-500" />Export completo de datos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
+                  <p className="text-sm text-slate-700">
+                    Descarga un archivo <span className="font-semibold">ZIP</span> con toda la información de tu clínica:
+                  </p>
+                  <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
+                    <li>Un archivo <code className="bg-white px-1 rounded">JSON</code> por cada tabla (pacientes, citas, consultas, recetas, ventas, inventario, contabilidad, etc.).</li>
+                    <li>Todos los archivos adjuntos de pacientes (estudios de laboratorio, recetas digitalizadas) bajo <code className="bg-white px-1 rounded">files/</code>.</li>
+                    <li><code className="bg-white px-1 rounded">manifest.json</code> con metadata y conteos de filas.</li>
+                  </ul>
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+                    <Shield className="w-3 h-3 inline mr-1" />
+                    El archivo contiene información médica sensible. Guárdalo en un lugar seguro y cifrado.
+                  </p>
+                </div>
+                <Button
+                  onClick={downloadFullExport}
+                  disabled={downloadingExport}
+                  className="bg-teal-600 hover:bg-teal-700"
+                  data-testid="download-full-export-btn"
+                >
+                  {downloadingExport ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando export…</>
+                  ) : (
+                    <><Download className="w-4 h-4 mr-2" />Descargar export (ZIP)</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

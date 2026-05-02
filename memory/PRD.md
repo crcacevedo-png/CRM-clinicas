@@ -175,6 +175,17 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-02 — Export completo de clínica (clinic_admin)**: Nueva función para que el administrador descargue todos los datos de su clínica.
+  - Backend: `routes/clinic_export.py` — endpoint `GET /api/clinic/export/full` (require_clinic_admin) genera un ZIP en memoria con:
+    - 28 tablas con `clinic_id` directo (clinics, branches, members, patients, appointments, medical_records, prescriptions, lab_orders, products, services, inventory_*, suppliers, purchase_orders, sales, payments, accounts_receivable, cash_*, expenses, commissions_*, attachments, activity_logs, notification_logs, etc.)
+    - 6 tablas hijas vía join con padres (sale_items, prescription_items, lab_order_items, purchase_order_items, member_branches, payment_plan_installments)
+    - Archivos del bucket Storage `patient-files` bajo `files/<storage_path>`
+    - `manifest.json` (versión, clinic_id, conteos por tabla, errores) y `README.md`
+  - Frontend: tab "Datos" agregado a `ClinicSettingsPage.js` (visible solo para clinic_admin); botón descarga ZIP con `responseType: 'blob'`, toast con conteos, advertencia HIPAA-friendly de info sensible.
+  - Verificado: clinic_admin → 200 ZIP (36 archivos, 34 tablas, 1.9s); doctor/recepcionista → 403; sin auth → 403; tab "Datos" no aparece para roles no-admin.
+
+- **2026-05-01 — Hardening DB**: REVOKE TRUNCATE de roles `anon` y `authenticated` sobre 46 tablas + ALTER DEFAULT PRIVILEGES (cierra vector de DoS por TRUNCATE que ignora RLS).
+
 - **2026-05-01 — Eliminación módulo Plantillas de Consulta**: Removido por solicitud del usuario.
   - Backend: borrados endpoints `GET/POST/PUT/DELETE /api/clinic/templates` y modelo `TemplateCreate` de `routes/medical_records.py`.
   - Frontend: removida sección "Usar plantilla" de `MedicalRecordForm.js` (estados `templates`, `selectedTemplate`, función `applyTemplate`, fetch `/clinic/templates`, import `FileStack`).
