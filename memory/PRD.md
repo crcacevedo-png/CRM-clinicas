@@ -175,6 +175,14 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-10 — Receta médica rediseñada (A5 landscape)**: 
+  - Cambio de tamaño: `letter` → `landscape(A5)` (210×148mm) para imprimir más rápido y ahorrar papel.
+  - Logo de la clínica reposicionado: ahora a la **derecha del header** (alineado con clinic name+contacto a la izquierda en una tabla 2 columnas).
+  - Eliminado campo **DPI** del bloque de paciente.
+  - Bloque doctor/paciente/fecha colapsado a **1 sola fila** (3 columnas) en lugar de 2 filas con etiquetas separadas, ocupando ~50% menos altura.
+  - Reducidos paddings/spacers en todas las secciones (header, Rx, items, firma) — el contenido ahora cabe holgadamente en A5 horizontal.
+  - Verificado: PDF de 595×419 pts con logo arriba-derecha, sin DPI, layout horizontal limpio.
+
 - **2026-05-10 — Horarios partidos (split schedules)**: cada día puede tener múltiples bloques de horario (ej. 08:00-12:00 + 14:00-18:00 para clínicas con almuerzo).
   - **DB**: `working_hours[iso]` ahora acepta un array de bloques `[{start,end},...]` o un dict simple `{start,end}` (compatible con el formato anterior).
   - **Backend**: `core.get_clinic_day_hours()` retorna lista de bloques. Validación de citas verifica que `[start_time, end_time]` caiga dentro de **algún** bloque del día. Mensaje de error muestra todos los bloques disponibles.

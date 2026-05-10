@@ -270,7 +270,7 @@ async def mark_prescription_sent(presc_id: str, ctx=Depends(require_clinic_membe
 async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[str]:
     """Generate a prescription PDF and upload to Supabase Storage"""
     try:
-        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.pagesizes import A5, landscape
         from reportlab.lib.units import inch, mm
         from reportlab.lib import colors
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table as RLTable, TableStyle, HRFlowable
@@ -285,62 +285,68 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
         clinic = sdb.table('clinics').select('name,address,city,phone,email,prescription_footer,logo_url').eq('id', clinic_id).single().execute().data
         items = sdb.table('prescription_items').select('*').eq('prescription_id', presc_id).order('sort_order').execute().data or []
 
-        # Calculate age
-        age_str = ""
-        if patient.get('date_of_birth'):
-            from datetime import date
-            dob = date.fromisoformat(patient['date_of_birth'])
-            today = date.today()
-            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-            age_str = f"{age} años"
-
-        # Build PDF
+        # Build PDF — A5 landscape (210x148mm) for compact, professional prescription
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=letter,
-                                topMargin=20*mm, bottomMargin=25*mm,
-                                leftMargin=20*mm, rightMargin=20*mm)
+        doc = SimpleDocTemplate(
+            buffer, pagesize=landscape(A5),
+            topMargin=8*mm, bottomMargin=8*mm,
+            leftMargin=12*mm, rightMargin=12*mm,
+        )
 
         styles = getSampleStyleSheet()
-        styles.add(ParagraphStyle(name='ClinicName', fontSize=16, leading=20, alignment=TA_CENTER, fontName='Helvetica-Bold', textColor=colors.HexColor('#0D9488')))
-        styles.add(ParagraphStyle(name='ClinicInfo', fontSize=8, leading=10, alignment=TA_CENTER, textColor=colors.grey))
-        styles.add(ParagraphStyle(name='DoctorInfo', fontSize=9, leading=12, alignment=TA_LEFT, textColor=colors.HexColor('#334155')))
+        styles.add(ParagraphStyle(name='ClinicName', fontSize=14, leading=16, alignment=TA_LEFT, fontName='Helvetica-Bold', textColor=colors.HexColor('#0D9488')))
+        styles.add(ParagraphStyle(name='ClinicInfo', fontSize=7.5, leading=9, alignment=TA_LEFT, textColor=colors.grey))
+        styles.add(ParagraphStyle(name='DoctorInfo', fontSize=8.5, leading=11, alignment=TA_LEFT, textColor=colors.HexColor('#334155')))
         styles.add(ParagraphStyle(name='PatientLabel', fontSize=8, leading=10, textColor=colors.grey))
         styles.add(ParagraphStyle(name='PatientValue', fontSize=10, leading=13, fontName='Helvetica-Bold'))
-        styles.add(ParagraphStyle(name='RxSymbol', fontSize=28, leading=32, fontName='Helvetica-Bold', textColor=colors.HexColor('#0D9488')))
-        styles.add(ParagraphStyle(name='MedName', fontSize=10, leading=13, fontName='Helvetica-Bold', textColor=colors.HexColor('#1E293B')))
-        styles.add(ParagraphStyle(name='MedDetail', fontSize=9, leading=11, textColor=colors.HexColor('#475569')))
-        styles.add(ParagraphStyle(name='Footer', fontSize=8, leading=10, alignment=TA_CENTER, textColor=colors.grey))
-        styles.add(ParagraphStyle(name='SignLine', fontSize=10, leading=14, alignment=TA_CENTER, fontName='Helvetica-Bold'))
+        styles.add(ParagraphStyle(name='RxSymbol', fontSize=22, leading=24, fontName='Helvetica-Bold', textColor=colors.HexColor('#0D9488')))
+        styles.add(ParagraphStyle(name='MedName', fontSize=9.5, leading=12, fontName='Helvetica-Bold', textColor=colors.HexColor('#1E293B')))
+        styles.add(ParagraphStyle(name='MedDetail', fontSize=8.5, leading=10.5, textColor=colors.HexColor('#475569')))
+        styles.add(ParagraphStyle(name='Footer', fontSize=7.5, leading=9, alignment=TA_CENTER, textColor=colors.grey))
+        styles.add(ParagraphStyle(name='SignLine', fontSize=9, leading=12, alignment=TA_CENTER, fontName='Helvetica-Bold'))
 
         elements = []
 
-        # --- HEADER ---
-        logo_flow = fetch_clinic_logo_image(clinic.get('logo_url'), max_h_mm=20)
-        if logo_flow is not None:
-            elements.append(logo_flow)
-            elements.append(Spacer(1, 2*mm))
-        elements.append(Paragraph(clinic.get('name', 'Clínica'), styles['ClinicName']))
+        # --- HEADER: clinic name+contact on the LEFT, logo on the RIGHT ---
         clinic_addr = ', '.join(filter(None, [clinic.get('address'), clinic.get('city')]))
         clinic_contact = ' | '.join(filter(None, [clinic.get('phone'), clinic.get('email')]))
+        left_lines = [Paragraph(clinic.get('name', 'Clínica'), styles['ClinicName'])]
         if clinic_addr:
-            elements.append(Paragraph(clinic_addr, styles['ClinicInfo']))
+            left_lines.append(Paragraph(clinic_addr, styles['ClinicInfo']))
         if clinic_contact:
-            elements.append(Paragraph(clinic_contact, styles['ClinicInfo']))
-        elements.append(Spacer(1, 4*mm))
+            left_lines.append(Paragraph(clinic_contact, styles['ClinicInfo']))
+
+        logo_flow = fetch_clinic_logo_image(clinic.get('logo_url'), max_h_mm=15)
+        right_cell = logo_flow if logo_flow is not None else ""
+        if logo_flow is not None:
+            logo_flow.hAlign = 'RIGHT'
+
+        # Table widths: ~186mm available content width on A5 landscape with 12mm margins
+        header_tbl = RLTable([[left_lines, right_cell]], colWidths=[130*mm, 56*mm])
+        header_tbl.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        elements.append(header_tbl)
+        elements.append(Spacer(1, 2*mm))
         elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#0D9488')))
-        elements.append(Spacer(1, 4*mm))
+        elements.append(Spacer(1, 2*mm))
 
-        # --- DOCTOR INFO ---
-        dr_name = f"Dr. {doctor.get('first_name', '')} {doctor.get('last_name', '')}"
-        dr_lines = [dr_name]
+        # --- DOCTOR + PATIENT + DATE in a single compact row ---
+        dr_name = f"Dr. {doctor.get('first_name', '')} {doctor.get('last_name', '')}".strip()
+        dr_sub_parts = []
         if doctor.get('specialty'):
-            dr_lines.append(doctor['specialty'])
+            dr_sub_parts.append(doctor['specialty'])
         if doctor.get('license_number'):
-            dr_lines.append(f"No. Colegiado: {doctor['license_number']}")
-        elements.append(Paragraph('<br/>'.join(dr_lines), styles['DoctorInfo']))
-        elements.append(Spacer(1, 4*mm))
+            dr_sub_parts.append(f"Col. {doctor['license_number']}")
+        dr_sub = ' · '.join(dr_sub_parts)
+        doctor_block = f"<b>{dr_name}</b>" + (f"<br/><font color='#64748B' size='7.5'>{dr_sub}</font>" if dr_sub else "")
 
-        # --- PATIENT & DATE ---
+        # Date
         issued = presc.get('issued_at') or presc.get('created_at', '')
         date_str = ""
         if issued:
@@ -348,39 +354,57 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
             try:
                 d = dt.fromisoformat(issued.replace('Z', '+00:00'))
                 date_str = d.strftime('%d/%m/%Y')
-            except:
+            except Exception:
                 date_str = issued[:10]
 
-        patient_name = f"{patient.get('first_name', '')} {patient.get('last_name', '')}"
-        patient_data = [
-            ['Paciente:', patient_name, 'Fecha:', date_str],
-            ['Edad:', age_str, 'DPI:', patient.get('national_id', '—')],
-        ]
-        pt = RLTable(patient_data, colWidths=[55, 200, 45, 150])
-        pt.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica'),
-            ('FONTNAME', (2, 0), (2, -1), 'Helvetica'),
-            ('FONTNAME', (1, 0), (1, -1), 'Helvetica-Bold'),
-            ('FONTNAME', (3, 0), (3, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('TEXTCOLOR', (0, 0), (0, -1), colors.grey),
-            ('TEXTCOLOR', (2, 0), (2, -1), colors.grey),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ]))
-        elements.append(pt)
-        elements.append(Spacer(1, 3*mm))
+        patient_name = f"{patient.get('first_name', '')} {patient.get('last_name', '')}".strip()
 
-        # --- DIAGNOSIS ---
+        # Calculate age
+        age_str = ""
+        if patient.get('date_of_birth'):
+            from datetime import date
+            try:
+                dob = date.fromisoformat(patient['date_of_birth'])
+                today = date.today()
+                age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                age_str = f"{age} años"
+            except Exception:
+                age_str = ""
+
+        patient_block_lines = ["<font color='#64748B' size='7.5'>Paciente</font>", f"<b>{patient_name}</b>"]
+        if age_str:
+            patient_block_lines.append(f"<font color='#64748B' size='7.5'>{age_str}</font>")
+        patient_block = '<br/>'.join(patient_block_lines)
+
+        date_block = f"<font color='#64748B' size='7.5'>Fecha</font><br/><b>{date_str}</b>"
+
+        info_tbl = RLTable(
+            [[Paragraph(doctor_block, styles['DoctorInfo']),
+              Paragraph(patient_block, styles['DoctorInfo']),
+              Paragraph(date_block, styles['DoctorInfo'])]],
+            colWidths=[78*mm, 78*mm, 30*mm]
+        )
+        info_tbl.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 1),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+        ]))
+        elements.append(info_tbl)
+        elements.append(Spacer(1, 2*mm))
+
+        # --- DIAGNOSIS (inline, compact) ---
         if presc.get('diagnosis'):
             elements.append(Paragraph(f"<b>Diagnóstico:</b> {presc['diagnosis']}", styles['MedDetail']))
-            elements.append(Spacer(1, 3*mm))
+            elements.append(Spacer(1, 1.5*mm))
 
         elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#CBD5E1')))
-        elements.append(Spacer(1, 4*mm))
+        elements.append(Spacer(1, 2*mm))
 
         # --- Rx SYMBOL ---
         elements.append(Paragraph("Rx", styles['RxSymbol']))
-        elements.append(Spacer(1, 3*mm))
+        elements.append(Spacer(1, 1.5*mm))
 
         # --- MEDICATIONS ---
         for idx, item in enumerate(items, 1):
@@ -403,20 +427,20 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
                 elements.append(Paragraph(' | '.join(details), styles['MedDetail']))
             if item.get('instructions'):
                 elements.append(Paragraph(f"<i>{item['instructions']}</i>", styles['MedDetail']))
-            elements.append(Spacer(1, 3*mm))
+            elements.append(Spacer(1, 1.5*mm))
 
         # --- GENERAL INSTRUCTIONS ---
         if presc.get('general_instructions'):
-            elements.append(Spacer(1, 3*mm))
+            elements.append(Spacer(1, 1.5*mm))
             elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#CBD5E1')))
-            elements.append(Spacer(1, 3*mm))
+            elements.append(Spacer(1, 1.5*mm))
             elements.append(Paragraph("<b>Indicaciones generales:</b>", styles['MedDetail']))
             elements.append(Paragraph(presc['general_instructions'], styles['MedDetail']))
 
         # --- SIGNATURE ---
-        elements.append(Spacer(1, 20*mm))
-        elements.append(HRFlowable(width="40%", thickness=0.5, color=colors.black, hAlign='CENTER'))
-        elements.append(Spacer(1, 2*mm))
+        elements.append(Spacer(1, 10*mm))
+        elements.append(HRFlowable(width="35%", thickness=0.5, color=colors.black, hAlign='CENTER'))
+        elements.append(Spacer(1, 1*mm))
         elements.append(Paragraph(dr_name, styles['SignLine']))
         if doctor.get('license_number'):
             elements.append(Paragraph(f"Colegiado No. {doctor['license_number']}", styles['Footer']))
@@ -424,7 +448,7 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
         # --- FOOTER ---
         footer_text = clinic.get('prescription_footer')
         if footer_text:
-            elements.append(Spacer(1, 10*mm))
+            elements.append(Spacer(1, 3*mm))
             elements.append(Paragraph(footer_text, styles['Footer']))
 
         doc.build(elements)
