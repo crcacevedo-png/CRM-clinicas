@@ -237,45 +237,36 @@ async def disconnect_google_calendar(ctx=Depends(require_clinic_member)):
         logger.error(f"Disconnect error: {e}")
         raise HTTPException(status_code=500, detail="Error al desconectar")
 
-async def sync_appointment_to_gcal(appointment_data: dict, action: str = "create"):
-    """Sync an appointment to Google Calendar for the doctor"""
+async def _push_to_gcal_for_user(user_id: str, appointment_data: dict, action: str, target_label: str = ""):
+    """Sync a single appointment to a single user's Google Calendar.
+
+    Returns the google_event_id created/updated, or None on no-op.
+    Logs (info) success and (error) failures, never raises.
+    """
     try:
-        doctor_id = appointment_data.get('doctor_id')
-        if not doctor_id:
-            return
-
-        # Get doctor's user_id
-        member = sdb.table('clinic_members').select('user_id').eq('id', doctor_id).maybe_single().execute()
-        if not member.data or not member.data.get('user_id'):
-            return
-
-        user_id = member.data['user_id']
-
-        # Check if doctor has active Google Calendar integration
         integration = sdb.table('user_integrations').select('*').eq('user_id', user_id).eq('provider', 'google_calendar').eq('is_active', True).maybe_single().execute()
-        if not integration.data:
-            return
+        integ_data = getattr(integration, 'data', None) if integration else None
+        if not integ_data:
+            return None
 
-        access_token = decrypt_token(integration.data.get('access_token', ''))
-        refresh_token = decrypt_token(integration.data.get('refresh_token', ''))
+        access_token = decrypt_token(integ_data.get('access_token', ''))
+        refresh_token = decrypt_token(integ_data.get('refresh_token', ''))
         if not access_token:
-            return
+            return None
 
-        calendar_id = integration.data.get('calendar_id') or 'primary'
-
+        calendar_id = integ_data.get('calendar_id') or 'primary'
         service, creds = get_google_service(access_token, refresh_token)
 
-        # Update tokens if refreshed
-        if creds.token != access_token:
+        # Persist refreshed access token if changed
+        if creds.token and creds.token != access_token:
             sdb.table('user_integrations').update({
                 "access_token": encrypt_token(creds.token),
                 "token_expires_at": creds.expiry.isoformat() if creds.expiry else None,
                 "updated_at": now_iso(),
-            }).eq('id', integration.data['id']).execute()
+            }).eq('id', integ_data['id']).execute()
 
         patient_name = appointment_data.get('patient_name', 'Paciente')
         reason = appointment_data.get('reason', '')
-
         event_body = {
             'summary': f"Cita: {patient_name}",
             'description': f"Motivo: {reason}" if reason else "Cita médica",
@@ -286,24 +277,85 @@ async def sync_appointment_to_gcal(appointment_data: dict, action: str = "create
         if action == "create":
             event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
             event_id = event.get('id')
-            if event_id:
-                sdb.table('appointments').update({"google_event_id": event_id}).eq('id', appointment_data['id']).execute()
-            logger.info(f"Google Calendar event created: {event_id}")
+            logger.info(f"GCal event created [{target_label}]: {event_id}")
+            return event_id
 
-        elif action == "update":
+        if action == "update":
             google_event_id = appointment_data.get('google_event_id')
             if google_event_id:
-                service.events().update(calendarId=calendar_id, eventId=google_event_id, body=event_body).execute()
-                logger.info(f"Google Calendar event updated: {google_event_id}")
+                try:
+                    service.events().update(calendarId=calendar_id, eventId=google_event_id, body=event_body).execute()
+                    logger.info(f"GCal event updated [{target_label}]: {google_event_id}")
+                    return google_event_id
+                except Exception as e:
+                    # Event missing on this calendar — try to insert as new
+                    if 'Not Found' in str(e) or '404' in str(e):
+                        event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+                        new_id = event.get('id')
+                        logger.info(f"GCal event recreated [{target_label}]: {new_id}")
+                        return new_id
+                    raise
 
-        elif action == "delete":
+        if action == "delete":
             google_event_id = appointment_data.get('google_event_id')
             if google_event_id:
                 try:
                     service.events().delete(calendarId=calendar_id, eventId=google_event_id).execute()
-                    logger.info(f"Google Calendar event deleted: {google_event_id}")
-                except Exception:
-                    pass
+                    logger.info(f"GCal event deleted [{target_label}]: {google_event_id}")
+                except Exception as e:
+                    logger.warning(f"GCal delete skipped [{target_label}]: {e}")
+            return None
+
+    except Exception as e:
+        logger.error(f"GCal push failed [{target_label}] user={user_id}: {e}")
+        return None
+
+
+async def sync_appointment_to_gcal(appointment_data: dict, action: str = "create"):
+    """Sync an appointment to Google Calendar.
+
+    Strategy: try the doctor's calendar first (so the doctor sees their
+    schedule on their phone). If the doctor has not connected, fall back to
+    the appointment's creator (e.g., a receptionist or clinic_admin who set
+    up the appointment) so the user who connected GCal actually sees it.
+    Stores the resulting `google_event_id` in `appointments`.
+    """
+    try:
+        targets = []  # list of (user_id, label)
+        seen_users = set()
+
+        # Target 1: doctor's user
+        doctor_id = appointment_data.get('doctor_id')
+        if doctor_id:
+            member = sdb.table('clinic_members').select('user_id').eq('id', doctor_id).maybe_single().execute()
+            mdata = getattr(member, 'data', None) if member else None
+            doc_uid = (mdata or {}).get('user_id')
+            if doc_uid:
+                targets.append((doc_uid, "doctor"))
+                seen_users.add(doc_uid)
+
+        # Target 2: creator's user (only if different from doctor, and present)
+        created_by = appointment_data.get('created_by')
+        if created_by:
+            creator_member = sdb.table('clinic_members').select('user_id').eq('id', created_by).maybe_single().execute()
+            cdata = getattr(creator_member, 'data', None) if creator_member else None
+            creator_uid = (cdata or {}).get('user_id')
+            if creator_uid and creator_uid not in seen_users:
+                targets.append((creator_uid, "creator"))
+                seen_users.add(creator_uid)
+
+        if not targets:
+            return
+
+        primary_event_id = None
+        for uid, label in targets:
+            evt_id = await _push_to_gcal_for_user(uid, appointment_data, action, target_label=label)
+            # Persist the first non-null event_id (used to update/delete later)
+            if evt_id and not primary_event_id and action == "create":
+                primary_event_id = evt_id
+
+        if primary_event_id and appointment_data.get('id'):
+            sdb.table('appointments').update({"google_event_id": primary_event_id}).eq('id', appointment_data['id']).execute()
 
     except Exception as e:
         logger.error(f"Google Calendar sync error: {e}")
