@@ -115,11 +115,12 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         end_time = local_end.strftime("%H:%M:%S")
         day_of_week = local_start.isoweekday()
 
-        day_hours = get_clinic_day_hours(c, day_of_week)
-        if day_hours is None:
+        day_blocks = get_clinic_day_hours(c, day_of_week)
+        if day_blocks is None:
             raise HTTPException(status_code=400, detail="La clinica no opera este dia")
-        if start_time < day_hours[0] or end_time > day_hours[1]:
-            raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({day_hours[0][:5]} - {day_hours[1][:5]})")
+        if not any(start_time >= b[0] and end_time <= b[1] for b in day_blocks):
+            ranges = ", ".join(f"{b[0][:5]}-{b[1][:5]}" for b in day_blocks)
+            raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({ranges})")
 
         # Check conflicts for this doctor — only within the same branch (cross-branch is allowed)
         conf_q = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat())
@@ -208,11 +209,12 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
             start_time = local_start.strftime("%H:%M:%S")
             end_time = local_end.strftime("%H:%M:%S")
             day_of_week = local_start.isoweekday()
-            day_hours = get_clinic_day_hours(c, day_of_week)
-            if day_hours is None:
+            day_blocks = get_clinic_day_hours(c, day_of_week)
+            if day_blocks is None:
                 raise HTTPException(status_code=400, detail="La clinica no opera este dia")
-            if start_time < day_hours[0] or end_time > day_hours[1]:
-                raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({day_hours[0][:5]} - {day_hours[1][:5]})")
+            if not any(start_time >= b[0] and end_time <= b[1] for b in day_blocks):
+                ranges = ", ".join(f"{b[0][:5]}-{b[1][:5]}" for b in day_blocks)
+                raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({ranges})")
 
             doctor_id = update_data.get("doctor_id", existing.data["doctor_id"])
             # Conflict check scoped to the same branch as the (updated) appointment

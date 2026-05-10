@@ -175,6 +175,12 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-10 — Horarios partidos (split schedules)**: cada día puede tener múltiples bloques de horario (ej. 08:00-12:00 + 14:00-18:00 para clínicas con almuerzo).
+  - **DB**: `working_hours[iso]` ahora acepta un array de bloques `[{start,end},...]` o un dict simple `{start,end}` (compatible con el formato anterior).
+  - **Backend**: `core.get_clinic_day_hours()` retorna lista de bloques. Validación de citas verifica que `[start_time, end_time]` caiga dentro de **algún** bloque del día. Mensaje de error muestra todos los bloques disponibles.
+  - **Frontend**: cada fila de día tiene botón "+ bloque" y "x" para eliminar; renderiza N inputs hora-inicio/fin por día.
+  - **Verificado E2E (8/8)**: dentro de bloque mañana ✓, en lunch break entre bloques ✗400, dentro de bloque tarde ✓, supera fin del último bloque ✗400, día cerrado ✗400, bloque único 09-17 ✓, etc.
+
 - **2026-05-10 — Horarios específicos por día de la semana**: Cada clínica puede ahora definir horario distinto para cada día (Lun-Dom) o cerrar días específicos.
   - **DB**: nueva columna `clinics.working_hours JSONB` (estructura `{"1":{"start":"08:00","end":"17:00"}, ...}` con keys 1-7 isoweekday). Día sin key = cerrado.
   - **Backend**: helper `core.get_clinic_day_hours(clinic, iso_dow)` con fallback a campos legacy (`schedule_start/end` + `working_days`). Validación de citas en `appointments.py` (create + update) ahora respeta el horario de cada día específico.

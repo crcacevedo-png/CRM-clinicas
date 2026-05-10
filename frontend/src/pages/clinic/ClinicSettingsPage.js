@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Building2, Calendar, Link2, Unlink, RefreshCw, CheckCircle, Users,
   UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image,
-  Download, Database, Loader2
+  Download, Database, Loader2, X
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -234,19 +234,37 @@ export default function ClinicSettingsPage() {
     });
   };
 
-  // ----- Per-day schedule helpers -----
+  // ----- Per-day schedule helpers (supports split schedules: multiple blocks per day) -----
   const isPerDayMode = !!clinicForm.working_hours;
 
+  // Internal canonical shape: working_hours[iso] = [{start,end}, ...] (array of blocks)
+  // Legacy single-block dict {start,end} is auto-promoted to a 1-element array on read.
+  const getDayBlocks = (iso) => {
+    const v = (clinicForm.working_hours || {})[String(iso)];
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object' && v.start && v.end) return [v];
+    return [];
+  };
+
+  const setDayBlocks = (iso, blocks) => {
+    setClinicForm(prev => {
+      const wh = { ...(prev.working_hours || {}) };
+      const key = String(iso);
+      if (!blocks || blocks.length === 0) delete wh[key];
+      else wh[key] = blocks;
+      return { ...prev, working_hours: wh };
+    });
+  };
+
   const enablePerDay = () => {
-    // Seed working_hours from current legacy fields
     const start = clinicForm.schedule_start || '08:00';
     const end = clinicForm.schedule_end || '17:00';
-    // Map legacy working_days (0=Sun..6=Sat) → iso 1..7
     const legacyToIso = (d) => (d === 0 ? 7 : d);
     const openIso = new Set((clinicForm.working_days || [1,2,3,4,5]).map(legacyToIso));
     const wh = {};
     [1,2,3,4,5,6,7].forEach(iso => {
-      if (openIso.has(iso)) wh[String(iso)] = { start, end };
+      if (openIso.has(iso)) wh[String(iso)] = [{ start, end }];
     });
     setClinicForm(prev => ({ ...prev, working_hours: wh }));
   };
@@ -255,26 +273,35 @@ export default function ClinicSettingsPage() {
     setClinicForm(prev => ({ ...prev, working_hours: null }));
   };
 
-  const setDayHours = (iso, field, value) => {
-    setClinicForm(prev => {
-      const wh = { ...(prev.working_hours || {}) };
-      const cur = wh[String(iso)] || { start: '08:00', end: '17:00' };
-      wh[String(iso)] = { ...cur, [field]: value };
-      return { ...prev, working_hours: wh };
-    });
+  const updateBlock = (iso, idx, field, value) => {
+    const blocks = getDayBlocks(iso).slice();
+    blocks[idx] = { ...blocks[idx], [field]: value };
+    setDayBlocks(iso, blocks);
+  };
+
+  const addBlock = (iso) => {
+    const blocks = getDayBlocks(iso).slice();
+    // Pick a sensible default for the next block: if the last block ends at e.g. 12:00, start there +2h
+    const last = blocks[blocks.length - 1];
+    const defStart = last ? last.end : '14:00';
+    const defEnd = last ? '18:00' : '18:00';
+    blocks.push({ start: defStart, end: defEnd });
+    setDayBlocks(iso, blocks);
+  };
+
+  const removeBlock = (iso, idx) => {
+    const blocks = getDayBlocks(iso).slice();
+    blocks.splice(idx, 1);
+    setDayBlocks(iso, blocks);
   };
 
   const toggleDayOpen = (iso) => {
-    setClinicForm(prev => {
-      const wh = { ...(prev.working_hours || {}) };
-      const key = String(iso);
-      if (wh[key]) {
-        delete wh[key];
-      } else {
-        wh[key] = { start: '08:00', end: '17:00' };
-      }
-      return { ...prev, working_hours: wh };
-    });
+    const blocks = getDayBlocks(iso);
+    if (blocks.length > 0) {
+      setDayBlocks(iso, []); // close
+    } else {
+      setDayBlocks(iso, [{ start: '08:00', end: '17:00' }]); // open with default
+    }
   };
 
   const uf = (field, value) => setClinicForm(prev => ({ ...prev, [field]: value }));
@@ -434,40 +461,69 @@ export default function ClinicSettingsPage() {
                       </div>
                     </div>
                     <div className="space-y-2 pt-2 border-t border-slate-200">
-                      <Label className="text-xs text-slate-500">Configuración por día</Label>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-slate-500">Configuración por día</Label>
+                        <span className="text-[10px] text-slate-400">Pulsa <span className="font-mono">+</span> para añadir un horario partido (ej. mañana + tarde)</span>
+                      </div>
                       {ISO_DAYS.map(({ iso, label }) => {
-                        const cur = (clinicForm.working_hours || {})[String(iso)];
-                        const isOpen = !!cur;
+                        const blocks = getDayBlocks(iso);
+                        const isOpen = blocks.length > 0;
                         return (
-                          <div key={iso} className="flex items-center gap-3 py-1" data-testid={`day-row-${iso}`}>
+                          <div key={iso} className="flex items-start gap-3 py-1" data-testid={`day-row-${iso}`}>
                             <button
                               type="button"
                               onClick={() => toggleDayOpen(iso)}
-                              className={`w-24 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${isOpen ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-400 border-slate-200 hover:border-teal-300'}`}
+                              className={`w-24 px-3 py-1.5 mt-1 rounded-lg text-xs font-medium border transition-all flex-shrink-0 ${isOpen ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-400 border-slate-200 hover:border-teal-300'}`}
                               data-testid={`day-toggle-${iso}`}
                             >
                               {label}
                             </button>
                             {isOpen ? (
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  type="time"
-                                  className="text-sm w-28"
-                                  value={cur.start || '08:00'}
-                                  onChange={e => setDayHours(iso, 'start', e.target.value)}
-                                  data-testid={`day-start-${iso}`}
-                                />
-                                <span className="text-slate-400 text-xs">a</span>
-                                <Input
-                                  type="time"
-                                  className="text-sm w-28"
-                                  value={cur.end || '17:00'}
-                                  onChange={e => setDayHours(iso, 'end', e.target.value)}
-                                  data-testid={`day-end-${iso}`}
-                                />
+                              <div className="flex-1 space-y-1.5">
+                                {blocks.map((b, idx) => (
+                                  <div key={idx} className="flex items-center gap-2" data-testid={`day-${iso}-block-${idx}`}>
+                                    <Input
+                                      type="time"
+                                      className="text-sm w-28"
+                                      value={b.start || '08:00'}
+                                      onChange={e => updateBlock(iso, idx, 'start', e.target.value)}
+                                      data-testid={`day-start-${iso}-${idx}`}
+                                    />
+                                    <span className="text-slate-400 text-xs">a</span>
+                                    <Input
+                                      type="time"
+                                      className="text-sm w-28"
+                                      value={b.end || '17:00'}
+                                      onChange={e => updateBlock(iso, idx, 'end', e.target.value)}
+                                      data-testid={`day-end-${iso}-${idx}`}
+                                    />
+                                    {blocks.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeBlock(iso, idx)}
+                                        className="ml-1 text-slate-400 hover:text-rose-500 transition-colors"
+                                        title="Eliminar este bloque"
+                                        data-testid={`day-${iso}-remove-${idx}`}
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    {idx === blocks.length - 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => addBlock(iso)}
+                                        className="ml-1 text-teal-600 hover:text-teal-700 text-xs font-semibold border border-teal-200 rounded px-1.5 py-0.5 hover:bg-teal-50 transition-colors"
+                                        title="Añadir bloque (horario partido)"
+                                        data-testid={`day-${iso}-add`}
+                                      >
+                                        + bloque
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             ) : (
-                              <span className="text-xs text-slate-400 italic">Cerrado</span>
+                              <span className="text-xs text-slate-400 italic mt-2">Cerrado</span>
                             )}
                           </div>
                         );
