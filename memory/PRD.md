@@ -175,6 +175,8 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-10 — Logo de la clínica en sidebar**: el header del sidebar (`ClinicLayout.js`) ahora muestra el logo de la clínica cuando `logo_url` está presente; si no, hace fallback al nombre de la clínica (no más "ClinicCRM" hardcoded). Fetch en mount via `/api/clinic/settings`. Verificado E2E con/sin logo.
+
 - **2026-05-02 — Export completo de clínica (clinic_admin)**: Nueva función para que el administrador descargue todos los datos de su clínica.
   - Backend: `routes/clinic_export.py` — endpoint `GET /api/clinic/export/full` (require_clinic_admin) genera un ZIP en memoria con:
     - 28 tablas con `clinic_id` directo (clinics, branches, members, patients, appointments, medical_records, prescriptions, lab_orders, products, services, inventory_*, suppliers, purchase_orders, sales, payments, accounts_receivable, cash_*, expenses, commissions_*, attachments, activity_logs, notification_logs, etc.)

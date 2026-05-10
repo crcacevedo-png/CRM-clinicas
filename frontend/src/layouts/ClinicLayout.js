@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useFeatures } from '../context/FeatureContext';
 import { useBranch } from '../context/BranchContext';
@@ -9,6 +11,8 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const allNavItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -27,10 +31,21 @@ const allNavItems = [
 ];
 
 export default function ClinicLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, getAuthHeaders } = useAuth();
   const { hasFeature } = useFeatures();
   const { branches, activeBranch, setActiveBranch, hasBranches } = useBranch();
   const navigate = useNavigate();
+
+  const [clinicBrand, setClinicBrand] = useState({ name: '', logo_url: null });
+  useEffect(() => {
+    if (!user) return;
+    let mounted = true;
+    axios.get(`${API}/clinic/settings`, { headers: getAuthHeaders() })
+      .then(res => { if (mounted) setClinicBrand({ name: res.data?.name || '', logo_url: res.data?.logo_url || null }); })
+      .catch(() => {});
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const handleLogout = async () => {
     await logout();
@@ -42,9 +57,29 @@ export default function ClinicLayout() {
   return (
     <div className="flex min-h-screen bg-[#FAFAFA]">
       <aside className="w-52 flex flex-col fixed h-full" style={{ backgroundColor: '#0F1A2E' }}>
-        <div className="p-4 border-b border-white/10">
-          <h1 className="text-lg font-bold text-white">ClinicCRM</h1>
-          <p className="text-xs text-teal-400">Panel Clínico</p>
+        <div className="p-4 border-b border-white/10" data-testid="clinic-brand">
+          {clinicBrand.logo_url ? (
+            <div className="flex flex-col items-center gap-1.5">
+              <img
+                src={clinicBrand.logo_url}
+                alt={clinicBrand.name || 'Logo'}
+                className="h-14 w-auto max-w-full object-contain"
+                data-testid="sidebar-clinic-logo"
+              />
+              {clinicBrand.name && (
+                <p className="text-[11px] text-teal-400 truncate w-full text-center" title={clinicBrand.name}>
+                  {clinicBrand.name}
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <h1 className="text-lg font-bold text-white truncate" title={clinicBrand.name || 'ClinicCRM'}>
+                {clinicBrand.name || 'ClinicCRM'}
+              </h1>
+              <p className="text-xs text-teal-400">Panel Clínico</p>
+            </>
+          )}
         </div>
 
         {hasBranches && (
