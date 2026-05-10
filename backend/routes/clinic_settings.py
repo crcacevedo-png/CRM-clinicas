@@ -67,6 +67,7 @@ class MemberInvite(BaseModel):
     last_name: str
     role: str = "doctor"
     specialty: Optional[str] = None
+    password: Optional[str] = None  # If empty, a random temp password is generated
 
 class MemberUpdate(BaseModel):
     role: Optional[str] = None
@@ -75,6 +76,9 @@ class MemberUpdate(BaseModel):
     specialty: Optional[str] = None
     license_number: Optional[str] = None
     phone: Optional[str] = None
+
+class MemberPasswordReset(BaseModel):
+    password: str
 
 @router.get("/clinic/settings")
 async def get_clinic_settings(ctx=Depends(require_clinic_member)):
@@ -161,7 +165,14 @@ async def invite_member(data: MemberInvite, ctx=Depends(require_clinic_member)):
             raise HTTPException(status_code=400, detail="Límite de usuarios alcanzado para su plan")
 
         # Create auth user or get existing
-        temp_password = f"Temp{uuid.uuid4().hex[:8]}!"
+        # If admin provided a custom password, use it (with validation); else generate temp
+        custom_pw = (data.password or "").strip()
+        if custom_pw:
+            if len(custom_pw) < 8:
+                raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
+            temp_password = custom_pw
+        else:
+            temp_password = f"Temp{uuid.uuid4().hex[:8]}!"
         try:
             auth_user = supabase_admin.auth.admin.create_user({
                 "email": data.email,
@@ -257,4 +268,37 @@ async def toggle_member(member_id: str, ctx=Depends(require_clinic_member)):
     except Exception as e:
         logger.error(f"Toggle member error: {e}")
         raise HTTPException(status_code=500, detail="Error")
+
+
+@router.put("/clinic/members/{member_id}/password")
+async def reset_member_password(member_id: str, data: MemberPasswordReset, ctx=Depends(require_clinic_member)):
+    """Set/reset a clinic member's Supabase Auth password.
+
+    Restricted to clinic_admin. Admin cannot change own password through this
+    endpoint (must use their own profile/auth flow) to prevent accidental lockout.
+    """
+    if ctx["member"]["role"] != "clinic_admin":
+        raise HTTPException(status_code=403, detail="Solo administradores pueden cambiar contraseñas")
+    if member_id == ctx["member"]["id"]:
+        raise HTTPException(status_code=400, detail="No puede cambiar su propia contraseña aquí; use su perfil")
+    pw = (data.password or "").strip()
+    if len(pw) < 8:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        member = sdb.table('clinic_members').select('id,user_id').eq('id', member_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        mdata = getattr(member, 'data', None) if member else None
+        if not mdata:
+            raise HTTPException(status_code=404, detail="Miembro no encontrado")
+        user_id = mdata.get('user_id')
+        if not user_id:
+            raise HTTPException(status_code=400, detail="El miembro no tiene cuenta de autenticación")
+
+        supabase_admin.auth.admin.update_user_by_id(user_id, {"password": pw})
+        return {"message": "Contraseña actualizada exitosamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reset member password error: {e}")
+        raise HTTPException(status_code=500, detail="Error al actualizar contraseña")
 

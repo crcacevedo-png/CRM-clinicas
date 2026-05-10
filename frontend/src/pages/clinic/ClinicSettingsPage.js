@@ -48,10 +48,12 @@ export default function ClinicSettingsPage() {
   // Members
   const [members, setMembers] = useState([]);
   const [showInvite, setShowInvite] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: '', first_name: '', last_name: '', role: 'doctor', specialty: '' });
+  const [inviteForm, setInviteForm] = useState({ email: '', first_name: '', last_name: '', role: 'doctor', specialty: '', password: '' });
   const [inviting, setInviting] = useState(false);
   const [editMember, setEditMember] = useState(null);
   const [editMemberForm, setEditMemberForm] = useState({});
+  const [editPassword, setEditPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
 
   // Google Calendar
   const [gcalStatus, setGcalStatus] = useState({ connected: false });
@@ -140,12 +142,20 @@ export default function ClinicSettingsPage() {
 
   const handleInvite = async () => {
     if (!inviteForm.email || !inviteForm.first_name || !inviteForm.last_name) { toast.error('Complete todos los campos'); return; }
+    if (inviteForm.password && inviteForm.password.length < 8) { toast.error('La contraseña debe tener al menos 8 caracteres'); return; }
     setInviting(true);
     try {
-      const res = await axios.post(`${API}/clinic/members/invite`, inviteForm, { headers });
-      toast.success(res.data.temp_password ? `Miembro invitado. Contraseña temporal: ${res.data.temp_password}` : 'Miembro invitado');
+      const payload = { ...inviteForm };
+      if (!payload.password) delete payload.password; // omit empty so backend auto-generates
+      const res = await axios.post(`${API}/clinic/members/invite`, payload, { headers });
+      const wasCustom = !!inviteForm.password;
+      toast.success(
+        wasCustom
+          ? 'Miembro invitado con la contraseña proporcionada'
+          : (res.data.temp_password ? `Miembro invitado. Contraseña temporal: ${res.data.temp_password}` : 'Miembro invitado')
+      );
       setShowInvite(false);
-      setInviteForm({ email: '', first_name: '', last_name: '', role: 'doctor', specialty: '' });
+      setInviteForm({ email: '', first_name: '', last_name: '', role: 'doctor', specialty: '', password: '' });
       fetchMembers();
     } catch (err) { toast.error(err.response?.data?.detail || 'Error al invitar'); }
     finally { setInviting(false); }
@@ -172,6 +182,22 @@ export default function ClinicSettingsPage() {
   const openEditMember = (m) => {
     setEditMember(m);
     setEditMemberForm({ first_name: m.first_name || '', last_name: m.last_name || '', specialty: m.specialty || '', license_number: m.license_number || '', phone: m.phone || '', role: m.role });
+    setEditPassword('');
+  };
+
+  const handleResetPassword = async () => {
+    if (!editMember) return;
+    if (!editPassword || editPassword.length < 8) { toast.error('La contraseña debe tener al menos 8 caracteres'); return; }
+    setSavingPassword(true);
+    try {
+      await axios.put(`${API}/clinic/members/${editMember.id}/password`, { password: editPassword }, { headers });
+      toast.success('Contraseña actualizada');
+      setEditPassword('');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al actualizar contraseña');
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   const connectGcal = async () => {
@@ -405,6 +431,19 @@ export default function ClinicSettingsPage() {
                   </Select>
                 </div>
                 <div><Label className="text-xs">Especialidad</Label><Input className="mt-1 text-sm" value={inviteForm.specialty} onChange={e => setInviteForm(p => ({ ...p, specialty: e.target.value }))} /></div>
+                <div>
+                  <Label className="text-xs">Contraseña <span className="text-slate-400">(opcional, mín. 8 caracteres)</span></Label>
+                  <Input
+                    type="text"
+                    className="mt-1 text-sm font-mono"
+                    placeholder="Dejar vacío para generar una contraseña temporal"
+                    value={inviteForm.password}
+                    onChange={e => setInviteForm(p => ({ ...p, password: e.target.value }))}
+                    autoComplete="new-password"
+                    data-testid="invite-password"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">Si la dejas vacía, el sistema generará una contraseña temporal y te la mostrará al confirmar.</p>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setShowInvite(false)}>Cancelar</Button>
@@ -440,6 +479,32 @@ export default function ClinicSettingsPage() {
                 <div><Label className="text-xs">Especialidad</Label><Input className="mt-1 text-sm" value={editMemberForm.specialty} onChange={e => setEditMemberForm(p => ({ ...p, specialty: e.target.value }))} /></div>
                 <div><Label className="text-xs">No. Colegiado</Label><Input className="mt-1 text-sm" value={editMemberForm.license_number} onChange={e => setEditMemberForm(p => ({ ...p, license_number: e.target.value }))} data-testid="edit-license" /></div>
                 <div><Label className="text-xs">Teléfono</Label><Input className="mt-1 text-sm" value={editMemberForm.phone} onChange={e => setEditMemberForm(p => ({ ...p, phone: e.target.value }))} /></div>
+                {editMember?.id !== currentMemberId && (
+                  <div className="border-t border-slate-200 pt-3 mt-2">
+                    <Label className="text-xs font-semibold text-slate-700">Cambiar contraseña</Label>
+                    <p className="text-[11px] text-slate-400 mb-2">Define una nueva contraseña para este usuario (mín. 8 caracteres). Útil si el miembro la olvidó.</p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="text"
+                        className="text-sm font-mono"
+                        placeholder="Nueva contraseña…"
+                        value={editPassword}
+                        onChange={e => setEditPassword(e.target.value)}
+                        autoComplete="new-password"
+                        data-testid="edit-password-input"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleResetPassword}
+                        disabled={savingPassword || !editPassword}
+                        data-testid="edit-password-save-btn"
+                      >
+                        {savingPassword ? 'Guardando…' : 'Aplicar'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEditMember(null)}>Cancelar</Button>

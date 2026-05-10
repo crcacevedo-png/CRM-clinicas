@@ -175,6 +175,16 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-10 — Gestión de contraseñas para miembros (clinic_admin)**: El admin de clínica ahora puede:
+  - **Invitar miembro** con contraseña personalizada (campo opcional, mín. 8 chars). Si se deja vacío, se mantiene el comportamiento actual de generar contraseña temporal.
+  - **Editar miembro** → sección "Cambiar contraseña" con input + botón "Aplicar" para resetearla. No disponible para sí mismo (debe usar su propio perfil).
+  - Backend: `MemberInvite.password` opcional + nuevo endpoint `PUT /api/clinic/members/{id}/password` (clinic_admin only) que invoca `supabase_admin.auth.admin.update_user_by_id`. Validaciones: rol, no-self, longitud mínima 8.
+  - Verificado E2E (9/9 tests): invite con custom pwd → login OK; reset pwd → nuevo login OK + viejo 401; doctor → 403; admin self → 400; pwd corta → 400.
+
+- **2026-05-10 — Bug fix Google Calendar sync**: el sync de citas solo intentaba al calendario del doctor; cuando el creador era el único con GCal conectado, no pasaba nada. Refactor a helper `_push_to_gcal_for_user` con fallback al creator. También: auto-recreate cuando el evento fue borrado manualmente desde Google (404 → insert).
+
+- **2026-05-10 — Bug fix Google Calendar OAuth**: `Missing code verifier` (PKCE) — deshabilitado en `get_google_flow()` ya que somos un cliente confidencial con `client_secret`. Más defensive null checks en `maybe_single().execute()`.
+
 - **2026-05-10 — Logo de clínica en PDFs de recetas y comprobantes de venta**: helper compartido `core.fetch_clinic_logo_image(logo_url, max_h_mm)` descarga el logo (cache en memoria), lo escala con aspect ratio preservado y devuelve un `Image` flowable de reportlab. Insertado al inicio del header en `routes/prescriptions.py::generate_prescription_pdf` (20mm) y `routes/sales.py::generate_sale_pdf` (18mm), antes del nombre de la clínica. Si el logo no existe o falla la descarga, el PDF se genera normalmente sin él (no se rompe). Verificado: ambos PDFs ahora muestran el logo embebido en el header.
 
 - **2026-05-10 — Logo de la clínica en sidebar**: el header del sidebar (`ClinicLayout.js`) ahora muestra el logo de la clínica cuando `logo_url` está presente; si no, hace fallback al nombre de la clínica (no más "ClinicCRM" hardcoded). Fetch en mount via `/api/clinic/settings`. Verificado E2E con/sin logo.
