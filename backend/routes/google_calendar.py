@@ -59,6 +59,11 @@ def get_google_flow():
     }
     flow = Flow.from_client_config(client_config, scopes=GOOGLE_SCOPES)
     flow.redirect_uri = os.environ.get('GOOGLE_REDIRECT_URI', '')
+    # Disable PKCE: we're a confidential client (server-side with client_secret),
+    # and PKCE requires preserving the code_verifier between the auth-url and
+    # callback requests, which fails because they are separate Flow instances.
+    flow.autogenerate_code_verifier = False
+    flow.code_verifier = None
     return flow
 
 def get_google_service(access_token: str, refresh_token: str):
@@ -114,9 +119,10 @@ async def google_calendar_callback(code: str = "", state: str = "", error: str =
 
         # Check if integration exists
         existing = sdb.table('user_integrations').select('id').eq('user_id', user_id).eq('provider', 'google_calendar').maybe_single().execute()
+        existing_data = getattr(existing, 'data', None) if existing else None
 
         now = now_iso()
-        if existing.data:
+        if existing_data:
             sdb.table('user_integrations').update({
                 "access_token": enc_access,
                 "refresh_token": enc_refresh,
@@ -124,7 +130,7 @@ async def google_calendar_callback(code: str = "", state: str = "", error: str =
                 "is_active": True,
                 "calendar_id": "primary",
                 "updated_at": now,
-            }).eq('id', existing.data['id']).execute()
+            }).eq('id', existing_data['id']).execute()
         else:
             sdb.table('user_integrations').insert({
                 "id": str(uuid.uuid4()),
@@ -152,8 +158,9 @@ async def google_calendar_status(ctx=Depends(require_clinic_member)):
     user_id = ctx["auth_user"].id
     try:
         result = sdb.table('user_integrations').select('id,is_active,calendar_id,created_at').eq('user_id', user_id).eq('provider', 'google_calendar').maybe_single().execute()
-        if result.data and result.data.get('is_active'):
-            return {"connected": True, "calendar_id": result.data.get('calendar_id', 'primary'), "since": result.data.get('created_at')}
+        data = getattr(result, 'data', None) if result else None
+        if data and data.get('is_active'):
+            return {"connected": True, "calendar_id": data.get('calendar_id', 'primary'), "since": data.get('created_at')}
         return {"connected": False}
     except Exception as e:
         logger.error(f"Google calendar status error: {e}")
