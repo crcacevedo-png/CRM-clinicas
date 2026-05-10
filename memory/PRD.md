@@ -175,6 +175,13 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-10 — Horarios específicos por día de la semana**: Cada clínica puede ahora definir horario distinto para cada día (Lun-Dom) o cerrar días específicos.
+  - **DB**: nueva columna `clinics.working_hours JSONB` (estructura `{"1":{"start":"08:00","end":"17:00"}, ...}` con keys 1-7 isoweekday). Día sin key = cerrado.
+  - **Backend**: helper `core.get_clinic_day_hours(clinic, iso_dow)` con fallback a campos legacy (`schedule_start/end` + `working_days`). Validación de citas en `appointments.py` (create + update) ahora respeta el horario de cada día específico.
+  - **Frontend**: toggle "Mismo horario / Por día" en `ClinicSettingsPage.js` Tab Clínica → card "Horario de atención". En modo per-day: 7 filas (Lun-Dom) con botón abrir/cerrar + inputs hora-inicio/fin. Al activar, semilla automática desde valores legacy.
+  - **Backward compatible**: si `working_hours` es null, sigue usando el comportamiento clásico (válido para clínicas existentes que no migran).
+  - Verificado E2E (5/5 escenarios): cita en hora válida ✓, antes del horario del día ✗400, día cerrado ✗400, después del horario ✗400, hora válida en día con horario corto ✓.
+
 - **2026-05-10 — Gestión de contraseñas para miembros (clinic_admin)**: El admin de clínica ahora puede:
   - **Invitar miembro** con contraseña personalizada (campo opcional, mín. 8 chars). Si se deja vacío, se mantiene el comportamiento actual de generar contraseña temporal.
   - **Editar miembro** → sección "Cambiar contraseña" con input + botón "Aplicar" para resetearla. No disponible para sí mismo (debe usar su propio perfil).

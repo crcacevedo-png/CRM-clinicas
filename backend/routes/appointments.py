@@ -11,7 +11,7 @@ router = APIRouter()
 from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
-    get_plan_limits, parse_presentations,
+    get_plan_limits, parse_presentations, get_clinic_day_hours,
     require_clinic_member, require_super_admin, get_current_user,
     LoginRequest, LoginResponse, ClinicCreate, ClinicUpdate, ClinicMemberCreate, UserUpdate,
     MedicationCreate, MedicationBulkImport, LabStudyCreate, LabStudyBulkImport,
@@ -102,7 +102,7 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         ends = starts + timedelta(minutes=data.duration_minutes)
 
         # Validate clinic hours
-        clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,timezone').eq('id', clinic_id).single().execute()
+        clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,working_hours,timezone').eq('id', clinic_id).single().execute()
         c = clinic.data
 
         # Convert to clinic local time for validation
@@ -115,11 +115,11 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         end_time = local_end.strftime("%H:%M:%S")
         day_of_week = local_start.isoweekday()
 
-        if day_of_week not in (c.get("working_days") or [1,2,3,4,5]):
+        day_hours = get_clinic_day_hours(c, day_of_week)
+        if day_hours is None:
             raise HTTPException(status_code=400, detail="La clinica no opera este dia")
-
-        if start_time < c["schedule_start"] or end_time > c["schedule_end"]:
-            raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({c['schedule_start']} - {c['schedule_end']})")
+        if start_time < day_hours[0] or end_time > day_hours[1]:
+            raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({day_hours[0][:5]} - {day_hours[1][:5]})")
 
         # Check conflicts for this doctor — only within the same branch (cross-branch is allowed)
         conf_q = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat())
@@ -200,7 +200,7 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
             update_data["ends_at"] = ends.isoformat()
 
             # Validate clinic hours in clinic timezone
-            clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,timezone').eq('id', clinic_id).single().execute()
+            clinic = sdb.table('clinics').select('schedule_start,schedule_end,working_days,working_hours,timezone').eq('id', clinic_id).single().execute()
             c = clinic.data
             clinic_tz = ZoneInfo(c.get('timezone') or 'America/Guatemala')
             local_start = starts.astimezone(clinic_tz)
@@ -208,10 +208,11 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
             start_time = local_start.strftime("%H:%M:%S")
             end_time = local_end.strftime("%H:%M:%S")
             day_of_week = local_start.isoweekday()
-            if day_of_week not in (c.get("working_days") or [1,2,3,4,5]):
+            day_hours = get_clinic_day_hours(c, day_of_week)
+            if day_hours is None:
                 raise HTTPException(status_code=400, detail="La clinica no opera este dia")
-            if start_time < c["schedule_start"] or end_time > c["schedule_end"]:
-                raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({c['schedule_start']} - {c['schedule_end']})")
+            if start_time < day_hours[0] or end_time > day_hours[1]:
+                raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({day_hours[0][:5]} - {day_hours[1][:5]})")
 
             doctor_id = update_data.get("doctor_id", existing.data["doctor_id"])
             # Conflict check scoped to the same branch as the (updated) appointment

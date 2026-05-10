@@ -26,7 +26,7 @@ from core import (
 async def get_clinic_config(ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
     try:
-        clinic = sdb.table('clinics').select('id,name,schedule_start,schedule_end,slot_duration,working_days,timezone').eq('id', clinic_id).single().execute()
+        clinic = sdb.table('clinics').select('id,name,schedule_start,schedule_end,slot_duration,working_days,working_hours,timezone').eq('id', clinic_id).single().execute()
 
         members = sdb.table('clinic_members').select('id,first_name,last_name,role,specialty').eq('clinic_id', clinic_id).eq('is_active', True).execute()
 
@@ -58,6 +58,7 @@ class ClinicSettingsUpdate(BaseModel):
     schedule_end: Optional[str] = None
     slot_duration: Optional[int] = None
     working_days: Optional[list] = None
+    working_hours: Optional[dict] = None  # {"1": {"start":"08:00","end":"17:00"}, ...} keyed by isoweekday 1-7
     prescription_footer: Optional[str] = None
     prescription_validity_days: Optional[int] = None
 
@@ -98,7 +99,9 @@ async def update_clinic_settings(data: ClinicSettingsUpdate, ctx=Depends(require
         raise HTTPException(status_code=403, detail="Solo administradores pueden editar configuración")
     clinic_id = ctx["member"]["clinic_id"]
     try:
-        update = {k: v for k, v in data.model_dump().items() if v is not None}
+        # Use exclude_unset so fields the client did not send are not touched.
+        # Fields explicitly sent as null (e.g. working_hours -> null to disable per-day) are kept.
+        update = data.model_dump(exclude_unset=True)
         update["updated_at"] = now_iso()
         sdb.table('clinics').update(update).eq('id', clinic_id).execute()
         return {"message": "Configuración actualizada"}

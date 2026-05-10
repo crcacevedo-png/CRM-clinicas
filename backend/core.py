@@ -107,6 +107,39 @@ def parse_presentations(val) -> list:
         return [p.strip() for p in val.split(',') if p.strip()]
     return []
 
+
+def get_clinic_day_hours(clinic_row: dict, iso_dow: int) -> tuple | None:
+    """Return (start_hhmmss, end_hhmmss) for the given iso weekday (1=Mon..7=Sun).
+
+    Resolution order:
+      1) `working_hours` JSON: {"1":{"start":"08:00","end":"17:00"}, ...}
+         (presence of the key = open; absence = closed).
+      2) Fallback to legacy `working_days` + `schedule_start`/`schedule_end`.
+    Returns None if the clinic is closed that day.
+    """
+    wh = clinic_row.get('working_hours') or None
+    if isinstance(wh, dict) and wh:
+        entry = wh.get(str(iso_dow)) or wh.get(iso_dow)
+        if not entry:
+            return None
+        s = (entry.get('start') or '').strip()
+        e = (entry.get('end') or '').strip()
+        if not s or not e:
+            return None
+        # Normalize HH:MM -> HH:MM:SS for comparison with stored TIME columns
+        if len(s) == 5:
+            s = s + ":00"
+        if len(e) == 5:
+            e = e + ":00"
+        return (s, e)
+    # Fallback to legacy fields
+    days = clinic_row.get('working_days') or [1, 2, 3, 4, 5]
+    if iso_dow not in days:
+        return None
+    s = clinic_row.get('schedule_start') or '08:00:00'
+    e = clinic_row.get('schedule_end') or '17:00:00'
+    return (s, e)
+
 # Cache for clinic logo bytes during a single process lifetime (per logo_url)
 _logo_cache: dict = {}
 

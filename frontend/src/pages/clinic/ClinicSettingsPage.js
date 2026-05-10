@@ -25,6 +25,16 @@ import {
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const DAY_LABELS = { 0: 'Dom', 1: 'Lun', 2: 'Mar', 3: 'Mié', 4: 'Jue', 5: 'Vie', 6: 'Sáb' };
+// ISO weekday labels used by the per-day schedule editor (matches backend isoweekday: 1=Mon..7=Sun)
+const ISO_DAYS = [
+  { iso: 1, label: 'Lunes' },
+  { iso: 2, label: 'Martes' },
+  { iso: 3, label: 'Miércoles' },
+  { iso: 4, label: 'Jueves' },
+  { iso: 5, label: 'Viernes' },
+  { iso: 6, label: 'Sábado' },
+  { iso: 7, label: 'Domingo' },
+];
 const SLOT_OPTIONS = [15, 20, 30, 45, 60];
 const ROLE_LABELS = { clinic_admin: 'Administrador', doctor: 'Doctor', assistant: 'Asistente', receptionist: 'Recepcionista' };
 const PLAN_LABELS = { free: 'Free', professional: 'Professional', enterprise: 'Enterprise' };
@@ -88,6 +98,7 @@ export default function ClinicSettingsPage() {
           schedule_end: c.schedule_end?.substring(0, 5) || '17:00',
           slot_duration: c.slot_duration || 30,
           working_days: c.working_days || [1, 2, 3, 4, 5],
+          working_hours: c.working_hours || null,
           prescription_footer: c.prescription_footer || '',
           prescription_validity_days: c.prescription_validity_days || 30,
         });
@@ -223,6 +234,49 @@ export default function ClinicSettingsPage() {
     });
   };
 
+  // ----- Per-day schedule helpers -----
+  const isPerDayMode = !!clinicForm.working_hours;
+
+  const enablePerDay = () => {
+    // Seed working_hours from current legacy fields
+    const start = clinicForm.schedule_start || '08:00';
+    const end = clinicForm.schedule_end || '17:00';
+    // Map legacy working_days (0=Sun..6=Sat) → iso 1..7
+    const legacyToIso = (d) => (d === 0 ? 7 : d);
+    const openIso = new Set((clinicForm.working_days || [1,2,3,4,5]).map(legacyToIso));
+    const wh = {};
+    [1,2,3,4,5,6,7].forEach(iso => {
+      if (openIso.has(iso)) wh[String(iso)] = { start, end };
+    });
+    setClinicForm(prev => ({ ...prev, working_hours: wh }));
+  };
+
+  const disablePerDay = () => {
+    setClinicForm(prev => ({ ...prev, working_hours: null }));
+  };
+
+  const setDayHours = (iso, field, value) => {
+    setClinicForm(prev => {
+      const wh = { ...(prev.working_hours || {}) };
+      const cur = wh[String(iso)] || { start: '08:00', end: '17:00' };
+      wh[String(iso)] = { ...cur, [field]: value };
+      return { ...prev, working_hours: wh };
+    });
+  };
+
+  const toggleDayOpen = (iso) => {
+    setClinicForm(prev => {
+      const wh = { ...(prev.working_hours || {}) };
+      const key = String(iso);
+      if (wh[key]) {
+        delete wh[key];
+      } else {
+        wh[key] = { start: '08:00', end: '17:00' };
+      }
+      return { ...prev, working_hours: wh };
+    });
+  };
+
   const uf = (field, value) => setClinicForm(prev => ({ ...prev, [field]: value }));
 
   // Derived: is current member a clinic_admin?
@@ -326,29 +380,101 @@ export default function ClinicSettingsPage() {
 
             {/* Schedule */}
             <Card className="border border-slate-200">
-              <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><Clock className="w-4 h-4 text-teal-500" />Horario de atención</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><Clock className="w-4 h-4 text-teal-500" />Horario de atención</CardTitle>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className={!isPerDayMode ? 'text-teal-600 font-medium' : 'text-slate-400'}>Mismo horario</span>
+                    <button
+                      type="button"
+                      onClick={() => isPerDayMode ? disablePerDay() : enablePerDay()}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${isPerDayMode ? 'bg-teal-600' : 'bg-slate-300'}`}
+                      data-testid="toggle-per-day-schedule"
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${isPerDayMode ? 'translate-x-5' : 'translate-x-1'}`} />
+                    </button>
+                    <span className={isPerDayMode ? 'text-teal-600 font-medium' : 'text-slate-400'}>Por día</span>
+                  </div>
+                </div>
+              </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-3 gap-3">
-                  <div><Label className="text-xs">Hora inicio</Label><Input type="time" className="mt-1 text-sm" value={clinicForm.schedule_start} onChange={e => uf('schedule_start', e.target.value)} data-testid="schedule-start" /></div>
-                  <div><Label className="text-xs">Hora fin</Label><Input type="time" className="mt-1 text-sm" value={clinicForm.schedule_end} onChange={e => uf('schedule_end', e.target.value)} data-testid="schedule-end" /></div>
-                  <div>
-                    <Label className="text-xs">Duración de cita</Label>
-                    <Select value={String(clinicForm.slot_duration)} onValueChange={v => uf('slot_duration', parseInt(v))}>
-                      <SelectTrigger className="mt-1 text-sm" data-testid="slot-duration"><SelectValue /></SelectTrigger>
-                      <SelectContent>{SLOT_OPTIONS.map(m => <SelectItem key={m} value={String(m)}>{m} min</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs mb-2 block">Días laborales</Label>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5, 6, 0].map(d => (
-                      <button key={d} type="button" onClick={() => toggleDay(d)}
-                        className={`w-10 h-10 rounded-lg text-xs font-medium border transition-all ${(clinicForm.working_days || []).includes(d) ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:border-teal-300'}`}
-                        data-testid={`day-${d}`}>{DAY_LABELS[d]}</button>
-                    ))}
-                  </div>
-                </div>
+                {!isPerDayMode ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><Label className="text-xs">Hora inicio</Label><Input type="time" className="mt-1 text-sm" value={clinicForm.schedule_start} onChange={e => uf('schedule_start', e.target.value)} data-testid="schedule-start" /></div>
+                      <div><Label className="text-xs">Hora fin</Label><Input type="time" className="mt-1 text-sm" value={clinicForm.schedule_end} onChange={e => uf('schedule_end', e.target.value)} data-testid="schedule-end" /></div>
+                      <div>
+                        <Label className="text-xs">Duración de cita</Label>
+                        <Select value={String(clinicForm.slot_duration)} onValueChange={v => uf('slot_duration', parseInt(v))}>
+                          <SelectTrigger className="mt-1 text-sm" data-testid="slot-duration"><SelectValue /></SelectTrigger>
+                          <SelectContent>{SLOT_OPTIONS.map(m => <SelectItem key={m} value={String(m)}>{m} min</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs mb-2 block">Días laborales</Label>
+                      <div className="flex gap-2">
+                        {[1, 2, 3, 4, 5, 6, 0].map(d => (
+                          <button key={d} type="button" onClick={() => toggleDay(d)}
+                            className={`w-10 h-10 rounded-lg text-xs font-medium border transition-all ${(clinicForm.working_days || []).includes(d) ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-500 border-slate-200 hover:border-teal-300'}`}
+                            data-testid={`day-${d}`}>{DAY_LABELS[d]}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="max-w-[200px]">
+                        <Label className="text-xs">Duración de cita</Label>
+                        <Select value={String(clinicForm.slot_duration)} onValueChange={v => uf('slot_duration', parseInt(v))}>
+                          <SelectTrigger className="mt-1 text-sm" data-testid="slot-duration-perday"><SelectValue /></SelectTrigger>
+                          <SelectContent>{SLOT_OPTIONS.map(m => <SelectItem key={m} value={String(m)}>{m} min</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-2 pt-2 border-t border-slate-200">
+                      <Label className="text-xs text-slate-500">Configuración por día</Label>
+                      {ISO_DAYS.map(({ iso, label }) => {
+                        const cur = (clinicForm.working_hours || {})[String(iso)];
+                        const isOpen = !!cur;
+                        return (
+                          <div key={iso} className="flex items-center gap-3 py-1" data-testid={`day-row-${iso}`}>
+                            <button
+                              type="button"
+                              onClick={() => toggleDayOpen(iso)}
+                              className={`w-24 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${isOpen ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-slate-400 border-slate-200 hover:border-teal-300'}`}
+                              data-testid={`day-toggle-${iso}`}
+                            >
+                              {label}
+                            </button>
+                            {isOpen ? (
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  type="time"
+                                  className="text-sm w-28"
+                                  value={cur.start || '08:00'}
+                                  onChange={e => setDayHours(iso, 'start', e.target.value)}
+                                  data-testid={`day-start-${iso}`}
+                                />
+                                <span className="text-slate-400 text-xs">a</span>
+                                <Input
+                                  type="time"
+                                  className="text-sm w-28"
+                                  value={cur.end || '17:00'}
+                                  onChange={e => setDayHours(iso, 'end', e.target.value)}
+                                  data-testid={`day-end-${iso}`}
+                                />
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-400 italic">Cerrado</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 
