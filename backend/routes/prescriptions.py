@@ -287,9 +287,14 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
 
         # Build PDF — A5 landscape (210x148mm) for compact, professional prescription
         buffer = io.BytesIO()
+        # Page dimensions for landscape A5
+        page_w, page_h = landscape(A5)  # ~595.28 x 419.53 pts
+        # Leave bottom space (~28mm) for the signature block, drawn via canvas callback
+        SIG_BAND_HEIGHT = 28 * mm
         doc = SimpleDocTemplate(
             buffer, pagesize=landscape(A5),
-            topMargin=8*mm, bottomMargin=8*mm,
+            topMargin=8*mm,
+            bottomMargin=SIG_BAND_HEIGHT + 4*mm,
             leftMargin=12*mm, rightMargin=12*mm,
         )
 
@@ -437,21 +442,37 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
             elements.append(Paragraph("<b>Indicaciones generales:</b>", styles['MedDetail']))
             elements.append(Paragraph(presc['general_instructions'], styles['MedDetail']))
 
-        # --- SIGNATURE ---
-        elements.append(Spacer(1, 10*mm))
-        elements.append(HRFlowable(width="35%", thickness=0.5, color=colors.black, hAlign='CENTER'))
-        elements.append(Spacer(1, 1*mm))
-        elements.append(Paragraph(dr_name, styles['SignLine']))
-        if doctor.get('license_number'):
-            elements.append(Paragraph(f"Colegiado No. {doctor['license_number']}", styles['Footer']))
+        # --- SIGNATURE & FOOTER drawn at fixed bottom of page (always anchored, regardless of content length) ---
+        footer_text = clinic.get('prescription_footer') or ""
+        license_no = doctor.get('license_number') or ""
 
-        # --- FOOTER ---
-        footer_text = clinic.get('prescription_footer')
-        if footer_text:
-            elements.append(Spacer(1, 3*mm))
-            elements.append(Paragraph(footer_text, styles['Footer']))
+        def _draw_signature(canvas, _doc):
+            from reportlab.lib import colors as _c
+            canvas.saveState()
+            # Signature line: centered, ~35% width, at y ≈ 22mm from bottom
+            line_width = page_w * 0.35
+            line_x = (page_w - line_width) / 2
+            line_y = 22 * mm
+            canvas.setStrokeColorRGB(0, 0, 0)
+            canvas.setLineWidth(0.5)
+            canvas.line(line_x, line_y, line_x + line_width, line_y)
+            # Doctor name (bold, centered) just below the line
+            canvas.setFont('Helvetica-Bold', 9)
+            canvas.setFillColor(_c.black)
+            canvas.drawCentredString(page_w / 2, line_y - 5 * mm, dr_name)
+            # Colegiado number (smaller, grey)
+            if license_no:
+                canvas.setFont('Helvetica', 7.5)
+                canvas.setFillColor(_c.grey)
+                canvas.drawCentredString(page_w / 2, line_y - 9 * mm, f"Colegiado No. {license_no}")
+            # Clinic footer at very bottom (centered, grey)
+            if footer_text:
+                canvas.setFont('Helvetica', 7.5)
+                canvas.setFillColor(_c.grey)
+                canvas.drawCentredString(page_w / 2, 6 * mm, footer_text[:200])
+            canvas.restoreState()
 
-        doc.build(elements)
+        doc.build(elements, onFirstPage=_draw_signature, onLaterPages=_draw_signature)
         pdf_bytes = buffer.getvalue()
         buffer.close()
 

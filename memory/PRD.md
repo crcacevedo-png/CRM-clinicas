@@ -175,6 +175,8 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-10 — Firma anclada al pie de la receta**: la firma del doctor + nº colegiado + footer de la clínica ahora se dibujan vía `canvas` callback (`onFirstPage`/`onLaterPages`) en posición fija ~22mm del borde inferior, en lugar de fluir como `Spacer(20mm)` después de los medicamentos. Ventaja: el espacio entre los medicamentos y la firma se expande automáticamente al fondo del A5 — la firma siempre queda anclada al pie, dando aire visual y aspecto profesional independientemente de cuántos medicamentos tenga la receta.
+
 - **2026-05-10 — Receta médica rediseñada (A5 landscape)**: 
   - Cambio de tamaño: `letter` → `landscape(A5)` (210×148mm) para imprimir más rápido y ahorrar papel.
   - Logo de la clínica reposicionado: ahora a la **derecha del header** (alineado con clinic name+contacto a la izquierda en una tabla 2 columnas).
