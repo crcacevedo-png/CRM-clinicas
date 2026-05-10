@@ -107,6 +107,52 @@ def parse_presentations(val) -> list:
         return [p.strip() for p in val.split(',') if p.strip()]
     return []
 
+# Cache for clinic logo bytes during a single process lifetime (per logo_url)
+_logo_cache: dict = {}
+
+def fetch_clinic_logo_image(logo_url: str | None, max_h_mm: float = 18.0):
+    """Return a reportlab Image flowable (centered) for the clinic logo, or None.
+
+    Downloads the logo bytes once per URL (cached in process memory) so repeated
+    PDF generations don't re-fetch. Falls back to None on any failure so PDF
+    generation never breaks because of a missing/broken logo.
+    """
+    if not logo_url:
+        return None
+    try:
+        from reportlab.platypus import Image as RLImage
+        from reportlab.lib.units import mm
+        import io as _io
+        import httpx
+        if logo_url in _logo_cache:
+            data = _logo_cache[logo_url]
+        else:
+            r = httpx.get(logo_url, timeout=8.0, follow_redirects=True)
+            if r.status_code != 200 or not r.content:
+                return None
+            data = r.content
+            _logo_cache[logo_url] = data
+        img = RLImage(_io.BytesIO(data))
+        # Constrain to max height keeping aspect ratio
+        try:
+            iw, ih = img.imageWidth, img.imageHeight
+            target_h = max_h_mm * mm
+            scale = target_h / float(ih) if ih else 1
+            img.drawHeight = target_h
+            img.drawWidth = float(iw) * scale
+            # Cap width to avoid super-wide logos breaking layout
+            max_w = 80 * mm
+            if img.drawWidth > max_w:
+                img.drawWidth = max_w
+                img.drawHeight = max_w * (float(ih) / float(iw)) if iw else target_h
+        except Exception:
+            pass
+        img.hAlign = 'CENTER'
+        return img
+    except Exception as e:
+        logger.warning(f"fetch_clinic_logo_image failed for {logo_url[:60]}…: {e}")
+        return None
+
 def get_auth_users_map() -> dict:
     """Get map of user_id -> {email, last_sign_in_at} from Supabase Auth"""
     users = supabase_admin.auth.admin.list_users()

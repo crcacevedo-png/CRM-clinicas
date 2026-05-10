@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 router = APIRouter()
 
-from core import sdb, supabase_admin, require_clinic_member, now_iso, logger, validate_uuid
+from core import sdb, supabase_admin, require_clinic_member, now_iso, logger, validate_uuid, fetch_clinic_logo_image
 
 from routes.commissions import _compute_commissions_for_sale
 
@@ -652,7 +652,7 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
         sale = sdb.table('sales').select('*').eq('id', sale_id).single().execute().data
         items = sdb.table('sale_items').select('*').eq('sale_id', sale_id).order('sort_order').execute().data or []
         payments = sdb.table('payments').select('*').eq('sale_id', sale_id).execute().data or []
-        clinic = sdb.table('clinics').select('name,address,city,phone,email').eq('id', clinic_id).single().execute().data
+        clinic = sdb.table('clinics').select('name,address,city,phone,email,logo_url').eq('id', clinic_id).single().execute().data
         cashier = None
         if sale.get('cashier_id'):
             cashier_res = sdb.table('clinic_members').select('first_name,last_name').eq('id', sale['cashier_id']).maybe_single().execute()
@@ -669,6 +669,10 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
         styles.add(ParagraphStyle(name='Footer2', fontSize=8, leading=10, alignment=TA_CENTER, textColor=colors.grey))
 
         elements = []
+        logo_flow = fetch_clinic_logo_image(clinic.get('logo_url'), max_h_mm=18)
+        if logo_flow is not None:
+            elements.append(logo_flow)
+            elements.append(Spacer(1, 2*mm))
         elements.append(Paragraph(clinic.get('name', 'Clínica'), styles['ClinicName2']))
         addr = ', '.join(filter(None, [clinic.get('address'), clinic.get('city')]))
         contact = ' | '.join(filter(None, [clinic.get('phone'), clinic.get('email')]))

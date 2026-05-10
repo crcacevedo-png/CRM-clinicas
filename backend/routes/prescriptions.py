@@ -11,7 +11,7 @@ router = APIRouter()
 from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
-    get_plan_limits, parse_presentations,
+    get_plan_limits, parse_presentations, fetch_clinic_logo_image,
     require_clinic_member, require_super_admin, get_current_user,
     LoginRequest, LoginResponse, ClinicCreate, ClinicUpdate, ClinicMemberCreate, UserUpdate,
     MedicationCreate, MedicationBulkImport, LabStudyCreate, LabStudyBulkImport,
@@ -282,7 +282,7 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
         presc = sdb.table('prescriptions').select('*').eq('id', presc_id).single().execute().data
         patient = sdb.table('patients').select('*').eq('id', presc['patient_id']).single().execute().data
         doctor = sdb.table('clinic_members').select('first_name,last_name,specialty,license_number').eq('id', presc['doctor_id']).single().execute().data
-        clinic = sdb.table('clinics').select('name,address,city,phone,email,prescription_footer').eq('id', clinic_id).single().execute().data
+        clinic = sdb.table('clinics').select('name,address,city,phone,email,prescription_footer,logo_url').eq('id', clinic_id).single().execute().data
         items = sdb.table('prescription_items').select('*').eq('prescription_id', presc_id).order('sort_order').execute().data or []
 
         # Calculate age
@@ -315,6 +315,10 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
         elements = []
 
         # --- HEADER ---
+        logo_flow = fetch_clinic_logo_image(clinic.get('logo_url'), max_h_mm=20)
+        if logo_flow is not None:
+            elements.append(logo_flow)
+            elements.append(Spacer(1, 2*mm))
         elements.append(Paragraph(clinic.get('name', 'Clínica'), styles['ClinicName']))
         clinic_addr = ', '.join(filter(None, [clinic.get('address'), clinic.get('city')]))
         clinic_contact = ' | '.join(filter(None, [clinic.get('phone'), clinic.get('email')]))
