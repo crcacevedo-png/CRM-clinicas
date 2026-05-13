@@ -175,6 +175,17 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-13 — Submódulo Comunicación (Super Admin → Clínicas)**: anuncios globales con banner en dashboard de clínica.
+  - **DB**: nuevas tablas `super_announcements` (con `segment_plans[]`, `segment_countries[]`, `segment_clinic_ids[]`, `severity`, `cta_label/url`, ventana `starts_at`/`ends_at`) y `announcement_dismissals` (PK: announcement_id+user_id). RLS habilitado + policies de lectura para `authenticated`.
+  - **Backend** (`routes/announcements.py`):
+    - Super admin: `GET/POST/PUT/DELETE /api/admin/announcements` (con contador de dismissals).
+    - Clínica: `GET /api/clinic/announcements` (filtra por segmentación + ventana de tiempo + no dismissed por usuario). `POST /api/clinic/announcements/{id}/dismiss`.
+    - Lógica de matching: plan-restricted, country-restricted, clinic-id-allowlist; null/empty = sin filtro.
+  - **Frontend**:
+    - Super admin: nueva página `/admin/comunicacion` con listado, creación/edición con segmentación (planes/países togglables), CTA, severidad (info/success/warning/critical), ventana de tiempo, activar/desactivar, contador de dismissals.
+    - Clínicas: componente `AnnouncementsBanner` montado al inicio del dashboard. Estilos por severidad (azul/verde/ámbar/rojo), icono megaphone, botón CTA, botón X de descartar (optimistic UI + persistencia).
+  - Verificado E2E (6/6 backend tests + smoke UI): global visible para todos, free-only oculto en clínica professional, premium-only visible para professional, dismiss persiste, doctor → 403, super admin → CRUD completo.
+
 - **2026-05-10 — Firma anclada al pie de la receta**: la firma del doctor + nº colegiado + footer de la clínica ahora se dibujan vía `canvas` callback (`onFirstPage`/`onLaterPages`) en posición fija ~22mm del borde inferior, en lugar de fluir como `Spacer(20mm)` después de los medicamentos. Ventaja: el espacio entre los medicamentos y la firma se expande automáticamente al fondo del A5 — la firma siempre queda anclada al pie, dando aire visual y aspecto profesional independientemente de cuántos medicamentos tenga la receta.
 
 - **2026-05-10 — Receta médica rediseñada (A5 landscape)**: 

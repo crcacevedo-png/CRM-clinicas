@@ -15,6 +15,7 @@ import {
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
+import AnnouncementsBanner from '../../components/AnnouncementsBanner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -355,6 +356,9 @@ export default function ClinicDashboardPage() {
 
   return (
     <div className="p-6 lg:p-8" data-testid="clinic-dashboard">
+      {/* Global announcements banner (super admin → all clinics) */}
+      <AnnouncementsBanner />
+
       {/* Greeting */}
       <div className="mb-6 flex items-center justify-between">
         <div>
