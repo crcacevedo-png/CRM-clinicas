@@ -20,7 +20,16 @@ export default function AnnouncementsBanner() {
     if (!user || !token) return;
     let cancelled = false;
     axios.get(`${API}/clinic/announcements`, { headers: getAuthHeaders() })
-      .then((res) => { if (!cancelled) setItems(res.data || []); })
+      .then((res) => {
+        if (cancelled) return;
+        const arr = res.data || [];
+        setItems(arr);
+        // Fire-and-forget view tracking for each visible announcement.
+        // Backend dedupes per (user,announcement) and increments view_count.
+        arr.forEach((a) => {
+          axios.post(`${API}/clinic/announcements/${a.id}/view`, {}, { headers: getAuthHeaders() }).catch(() => {});
+        });
+      })
       .catch(() => {});
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

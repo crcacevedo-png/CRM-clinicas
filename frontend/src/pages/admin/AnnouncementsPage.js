@@ -12,7 +12,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
-import { Megaphone, Plus, Trash2, Edit, X, AlertTriangle, Info, CheckCircle, Zap } from 'lucide-react';
+import { Megaphone, Plus, Trash2, Edit, X, AlertTriangle, Info, CheckCircle, Zap, BarChart3, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -49,6 +49,22 @@ export default function AnnouncementsPage() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [metrics, setMetrics] = useState(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+
+  const openMetrics = async (a) => {
+    setMetrics({ announcement: { id: a.id, title: a.title, severity: a.severity }, totals: null });
+    setMetricsLoading(true);
+    try {
+      const res = await axios.get(`${API}/admin/announcements/${a.id}/metrics`, { headers });
+      setMetrics(res.data);
+    } catch {
+      toast.error('Error al cargar métricas');
+      setMetrics(null);
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
 
   const fetchItems = async () => {
     setLoading(true);
@@ -198,14 +214,20 @@ export default function AnnouncementsPage() {
                       )}
                     </div>
                     <p className="text-xs text-slate-600 mt-1 whitespace-pre-wrap">{a.body}</p>
-                    <div className="flex items-center gap-4 mt-1.5 text-[11px] text-slate-400">
+                    <div className="flex items-center gap-3 mt-1.5 text-[11px] text-slate-400 flex-wrap">
                       {a.segment_plans?.length > 0 && <span>Planes: {a.segment_plans.join(', ')}</span>}
                       {a.segment_countries?.length > 0 && <span>Países: {a.segment_countries.join(', ')}</span>}
                       {a.cta_label && <span>CTA: "{a.cta_label}" → {a.cta_url}</span>}
-                      <span>Descartado por: {a.dismissals_count || 0}</span>
+                      <span className="flex items-center gap-1" title="Clínicas distintas que han visto el anuncio">
+                        <Eye className="w-3 h-3" /> {a.clinics_reached || 0} clínicas · {a.users_viewed || 0} usuarios · {a.total_views || 0} vistas
+                      </span>
+                      <span>· {a.users_dismissed || 0} descartado(s)</span>
                     </div>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
+                    <Button variant="ghost" size="sm" onClick={() => openMetrics(a)} title="Métricas detalladas" data-testid={`metrics-${a.id}`}>
+                      <BarChart3 className="w-3.5 h-3.5" />
+                    </Button>
                     <Button variant="ghost" size="sm" onClick={() => toggleActive(a)} title={a.is_active ? 'Desactivar' : 'Activar'} data-testid={`toggle-${a.id}`}>
                       {a.is_active ? 'Desactivar' : 'Activar'}
                     </Button>
@@ -299,6 +321,108 @@ export default function AnnouncementsPage() {
             <Button className="bg-teal-600 hover:bg-teal-700" onClick={save} disabled={saving} data-testid="save-announcement">
               {saving ? 'Guardando…' : (editingId ? 'Actualizar' : 'Crear')}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Metrics dialog */}
+      <Dialog open={!!metrics} onOpenChange={(o) => !o && setMetrics(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><BarChart3 className="w-4 h-4 text-teal-600" /> Métricas — {metrics?.announcement?.title}</DialogTitle>
+          </DialogHeader>
+          {metricsLoading || !metrics?.totals ? (
+            <p className="text-sm text-slate-400 py-6 text-center">Cargando métricas…</p>
+          ) : (
+            <div className="space-y-4">
+              {/* KPIs */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  { label: 'Clínicas alcanzadas', value: metrics.totals.clinics_reached, sub: `de ${metrics.totals.eligible_clinics} elegibles` },
+                  { label: '% Cobertura', value: `${metrics.totals.reach_pct}%`, sub: 'clínicas que vieron' },
+                  { label: 'Usuarios que vieron', value: metrics.totals.users_viewed, sub: `${metrics.totals.total_views} vistas totales` },
+                  { label: 'Tasa de descarte', value: `${metrics.totals.dismiss_rate_pct}%`, sub: `${metrics.totals.clinics_dismissed} clínicas` },
+                ].map((k) => (
+                  <div key={k.label} className="rounded-lg border border-slate-200 bg-slate-50 p-3" data-testid={`metric-${k.label}`}>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">{k.label}</p>
+                    <p className="text-xl font-bold text-slate-800 mt-0.5">{k.value}</p>
+                    <p className="text-[11px] text-slate-400">{k.sub}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* By Plan */}
+              <div className="border border-slate-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-slate-700 mb-2">Por plan</p>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-slate-200">
+                      <th className="text-left py-1">Plan</th>
+                      <th className="text-right">Elegibles</th>
+                      <th className="text-right">Vieron</th>
+                      <th className="text-right">Descartaron</th>
+                      <th className="text-right">% Cobertura</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metrics.by_plan.map((p) => (
+                      <tr key={p.plan} className="border-b border-slate-100 last:border-0">
+                        <td className="py-1 capitalize">{p.plan}</td>
+                        <td className="text-right">{p.eligible}</td>
+                        <td className="text-right font-semibold text-teal-700">{p.viewed}</td>
+                        <td className="text-right text-rose-600">{p.dismissed}</td>
+                        <td className="text-right">{p.eligible ? Math.round((p.viewed / p.eligible) * 100) : 0}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* By Country */}
+              <div className="border border-slate-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-slate-700 mb-2">Por país</p>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-slate-200">
+                      <th className="text-left py-1">País</th>
+                      <th className="text-right">Elegibles</th>
+                      <th className="text-right">Vieron</th>
+                      <th className="text-right">Descartaron</th>
+                      <th className="text-right">% Cobertura</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {metrics.by_country.map((c) => (
+                      <tr key={c.country} className="border-b border-slate-100 last:border-0">
+                        <td className="py-1 capitalize">{c.country?.replace('_', ' ') || '—'}</td>
+                        <td className="text-right">{c.eligible}</td>
+                        <td className="text-right font-semibold text-teal-700">{c.viewed}</td>
+                        <td className="text-right text-rose-600">{c.dismissed}</td>
+                        <td className="text-right">{c.eligible ? Math.round((c.viewed / c.eligible) * 100) : 0}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Recent clinics */}
+              {metrics.recent_clinics?.length > 0 && (
+                <div className="border border-slate-200 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-slate-700 mb-2">Clínicas más recientes que vieron</p>
+                  <ul className="space-y-1">
+                    {metrics.recent_clinics.map((c) => (
+                      <li key={c.clinic_id} className="text-xs flex items-center justify-between">
+                        <span className="text-slate-700">{c.clinic_name}</span>
+                        <span className="text-slate-400">{c.plan} · {c.country} · {new Date(c.last_viewed_at).toLocaleString('es-GT')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMetrics(null)}>Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

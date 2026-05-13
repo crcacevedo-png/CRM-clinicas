@@ -65,15 +65,33 @@ async def list_announcements(user=Depends(require_super_admin)):
     try:
         res = sdb.table('super_announcements').select('*').order('created_at', desc=True).execute()
         rows = res.data or []
-        # Add dismissal counts for analytics
         ids = [r['id'] for r in rows]
-        counts = {}
+        # Aggregate views (users + distinct clinics + total views) and dismissals per announcement
+        views_by_ann: dict = {}
+        dismissals_by_ann: dict = {}
         if ids:
-            d = sdb.table('announcement_dismissals').select('announcement_id').in_('announcement_id', ids).execute()
-            for x in (d.data or []):
-                counts[x['announcement_id']] = counts.get(x['announcement_id'], 0) + 1
+            v = sdb.table('announcement_views').select('announcement_id,clinic_id,user_id,view_count').in_('announcement_id', ids).execute()
+            for x in (v.data or []):
+                aid = x['announcement_id']
+                d = views_by_ann.setdefault(aid, {'users': set(), 'clinics': set(), 'total_views': 0})
+                d['users'].add(x['user_id'])
+                d['clinics'].add(x['clinic_id'])
+                d['total_views'] += int(x.get('view_count') or 0)
+            d_res = sdb.table('announcement_dismissals').select('announcement_id,clinic_id,user_id').in_('announcement_id', ids).execute()
+            for x in (d_res.data or []):
+                aid = x['announcement_id']
+                d = dismissals_by_ann.setdefault(aid, {'users': set(), 'clinics': set()})
+                d['users'].add(x['user_id'])
+                d['clinics'].add(x['clinic_id'])
         for r in rows:
-            r['dismissals_count'] = counts.get(r['id'], 0)
+            v = views_by_ann.get(r['id'], {'users': set(), 'clinics': set(), 'total_views': 0})
+            d = dismissals_by_ann.get(r['id'], {'users': set(), 'clinics': set()})
+            r['users_viewed'] = len(v['users'])
+            r['clinics_reached'] = len(v['clinics'])
+            r['total_views'] = v['total_views']
+            r['users_dismissed'] = len(d['users'])
+            r['clinics_dismissed'] = len(d['clinics'])
+            r['dismissals_count'] = len(d['users'])  # back-compat with previous field name
         return rows
     except Exception as e:
         logger.error(f"list_announcements: {e}")
@@ -220,6 +238,130 @@ async def get_clinic_announcements(ctx=Depends(require_clinic_member)):
         logger.error(f"get_clinic_announcements: {e}")
         # Don't break the dashboard if announcements query fails
         return []
+
+
+@router.post("/clinic/announcements/{announcement_id}/view")
+async def record_view(announcement_id: str, ctx=Depends(require_clinic_member)):
+    """Record that the current user has seen an announcement.
+
+    Idempotent: increments `view_count` and updates `last_viewed_at` if the row
+    already exists; inserts otherwise.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    user_id = getattr(ctx.get("auth_user"), "id", None)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Sesión inválida")
+    try:
+        existing = sdb.table('announcement_views').select('view_count').eq('announcement_id', announcement_id).eq('user_id', user_id).maybe_single().execute()
+        existing_data = getattr(existing, 'data', None) if existing else None
+        if existing_data:
+            sdb.table('announcement_views').update({
+                "view_count": (existing_data.get('view_count') or 0) + 1,
+                "last_viewed_at": now_iso(),
+            }).eq('announcement_id', announcement_id).eq('user_id', user_id).execute()
+        else:
+            sdb.table('announcement_views').insert({
+                "announcement_id": announcement_id,
+                "clinic_id": clinic_id,
+                "user_id": user_id,
+                "first_viewed_at": now_iso(),
+                "last_viewed_at": now_iso(),
+                "view_count": 1,
+            }).execute()
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"record_view: {e}")
+        # Don't break the dashboard — views are non-critical
+        return {"ok": False}
+
+
+@router.get("/admin/announcements/{announcement_id}/metrics")
+async def announcement_metrics(announcement_id: str, user=Depends(require_super_admin)):
+    """Detailed metrics for one announcement.
+
+    Includes:
+      - totals (clinics_reached, users_viewed, total_views, users_dismissed)
+      - reach % vs. eligible clinics (clinics matching segmentation)
+      - breakdown by plan and by country (clinics reached)
+      - top-10 most recent clinics that saw it
+    """
+    try:
+        ann = sdb.table('super_announcements').select('*').eq('id', announcement_id).maybe_single().execute()
+        ann_data = getattr(ann, 'data', None) if ann else None
+        if not ann_data:
+            raise HTTPException(status_code=404, detail="Anuncio no encontrado")
+
+        # Eligible clinics (apply segmentation)
+        all_clinics = sdb.table('clinics').select('id,name,plan,country').execute().data or []
+        eligible = [c for c in all_clinics if _matches_segment(ann_data, c)]
+        eligible_ids = {c['id'] for c in eligible}
+
+        # Views and dismissals
+        views = sdb.table('announcement_views').select('clinic_id,user_id,view_count,last_viewed_at').eq('announcement_id', announcement_id).execute().data or []
+        dismissals = sdb.table('announcement_dismissals').select('clinic_id,user_id,dismissed_at').eq('announcement_id', announcement_id).execute().data or []
+
+        clinics_viewed_ids = {v['clinic_id'] for v in views if v['clinic_id'] in eligible_ids}
+        clinics_dismissed_ids = {d['clinic_id'] for d in dismissals if d['clinic_id'] in eligible_ids}
+
+        # Breakdown by plan
+        by_plan: dict = {}
+        by_country: dict = {}
+        clinic_meta = {c['id']: c for c in all_clinics}
+        for c in eligible:
+            p = c.get('plan') or 'free'
+            co = c.get('country') or '—'
+            by_plan.setdefault(p, {'eligible': 0, 'viewed': 0, 'dismissed': 0})['eligible'] += 1
+            by_country.setdefault(co, {'eligible': 0, 'viewed': 0, 'dismissed': 0})['eligible'] += 1
+            if c['id'] in clinics_viewed_ids:
+                by_plan[p]['viewed'] += 1
+                by_country[co]['viewed'] += 1
+            if c['id'] in clinics_dismissed_ids:
+                by_plan[p]['dismissed'] += 1
+                by_country[co]['dismissed'] += 1
+
+        # Recent clinics (top 10 by most recent last_viewed_at)
+        latest_by_clinic: dict = {}
+        for v in views:
+            cid = v['clinic_id']
+            cur = latest_by_clinic.get(cid)
+            if cur is None or (v.get('last_viewed_at') or '') > (cur.get('last_viewed_at') or ''):
+                latest_by_clinic[cid] = v
+        recent = sorted(latest_by_clinic.values(), key=lambda x: x.get('last_viewed_at') or '', reverse=True)[:10]
+        recent_out = []
+        for v in recent:
+            meta = clinic_meta.get(v['clinic_id']) or {}
+            recent_out.append({
+                "clinic_id": v['clinic_id'],
+                "clinic_name": meta.get('name'),
+                "plan": meta.get('plan'),
+                "country": meta.get('country'),
+                "last_viewed_at": v.get('last_viewed_at'),
+            })
+
+        eligible_n = len(eligible)
+        users_viewed = len({v['user_id'] for v in views})
+        users_dismissed = len({d['user_id'] for d in dismissals})
+        return {
+            "announcement": {"id": ann_data['id'], "title": ann_data['title'], "severity": ann_data.get('severity')},
+            "totals": {
+                "eligible_clinics": eligible_n,
+                "clinics_reached": len(clinics_viewed_ids),
+                "clinics_dismissed": len(clinics_dismissed_ids),
+                "users_viewed": users_viewed,
+                "users_dismissed": users_dismissed,
+                "total_views": sum(int(v.get('view_count') or 0) for v in views),
+                "reach_pct": round((len(clinics_viewed_ids) / eligible_n) * 100, 1) if eligible_n else 0,
+                "dismiss_rate_pct": round((len(clinics_dismissed_ids) / len(clinics_viewed_ids)) * 100, 1) if clinics_viewed_ids else 0,
+            },
+            "by_plan": [{"plan": k, **v} for k, v in sorted(by_plan.items())],
+            "by_country": [{"country": k, **v} for k, v in sorted(by_country.items())],
+            "recent_clinics": recent_out,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"announcement_metrics: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener métricas")
 
 
 @router.post("/clinic/announcements/{announcement_id}/dismiss")

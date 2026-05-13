@@ -175,6 +175,18 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-13 — Métricas de anuncios (Comunicación)**: tracking completo de vistas/cobertura.
+  - **DB**: nueva tabla `announcement_views` (PK announcement+user, columnas `first_viewed_at`, `last_viewed_at`, `view_count`, `clinic_id`). RLS habilitado con políticas para que cada usuario gestione su propia fila.
+  - **Backend**:
+    - `POST /api/clinic/announcements/{id}/view` — idempotente, incrementa `view_count` y actualiza `last_viewed_at`.
+    - `GET /api/admin/announcements` ampliado: cada fila trae `clinics_reached`, `users_viewed`, `total_views`, `users_dismissed`, `clinics_dismissed`.
+    - `GET /api/admin/announcements/{id}/metrics` — endpoint detallado con totales (cobertura %, tasa de descarte %), breakdown por plan y por país, top-10 clínicas más recientes.
+  - **Frontend**:
+    - Banner clínico envía `POST .../view` automáticamente al renderizar (fire-and-forget, no bloquea UI).
+    - Lista de anuncios super admin muestra métricas inline: `1 clínicas · 2 usuarios · 4 vistas · 0 descartado(s)`.
+    - Nuevo botón **📊 Métricas** abre diálogo con KPIs (4 tarjetas), tabla por plan, tabla por país, top-10 clínicas recientes.
+  - Verificado: 3 POST view → `view_count=3`, métricas detalladas correctas (1/7 elegibles = 14.3%, Professional 100%, Free 0%).
+
 - **2026-05-13 — Submódulo Comunicación (Super Admin → Clínicas)**: anuncios globales con banner en dashboard de clínica.
   - **DB**: nuevas tablas `super_announcements` (con `segment_plans[]`, `segment_countries[]`, `segment_clinic_ids[]`, `severity`, `cta_label/url`, ventana `starts_at`/`ends_at`) y `announcement_dismissals` (PK: announcement_id+user_id). RLS habilitado + policies de lectura para `authenticated`.
   - **Backend** (`routes/announcements.py`):
