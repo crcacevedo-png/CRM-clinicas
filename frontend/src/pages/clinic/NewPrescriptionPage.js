@@ -259,7 +259,10 @@ export default function NewPrescriptionPage() {
       }
 
       if (status === 'issued' && res.data.pdf_url) {
-        toast.success('Receta emitida y PDF generado');
+        const hasEmail = patient?.email && patient.email.includes('@');
+        toast.success(hasEmail
+          ? `Receta emitida — PDF generado y enviado por email a ${patient.email}`
+          : 'Receta emitida y PDF generado (paciente sin email registrado)');
         window.open(res.data.pdf_url, '_blank');
       } else {
         toast.success(status === 'issued' ? 'Receta emitida' : 'Borrador guardado');

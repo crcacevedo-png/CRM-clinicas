@@ -70,6 +70,31 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Startup error: {e}")
 
+    # Apply pending DDL migrations (idempotent, defensive)
+    try:
+        from services.migrations import run_pending_migrations
+        result = run_pending_migrations()
+        if result.get('applied'):
+            logger.info(f"Migrations applied: {result['applied']}")
+    except Exception as e:
+        logger.warning(f"Migrations runner failed (will retry next startup): {e}")
+
+    # Start background scheduler for appointment reminders (non-blocking)
+    try:
+        from services.reminder_scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.warning(f"Reminder scheduler failed to start: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    try:
+        from services.reminder_scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
+
 # ============== UTILITY ROUTES ==============
 
 @api_router.get("/")

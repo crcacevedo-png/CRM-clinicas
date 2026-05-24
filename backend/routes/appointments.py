@@ -604,3 +604,76 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
     except Exception as e:
         logger.error(f"Clinic dashboard error: {e}")
         raise HTTPException(status_code=500, detail="Error al obtener dashboard")
+
+
+@router.post("/clinic/appointments/{apt_id}/send-reminder")
+async def send_appointment_reminder_now(apt_id: str, ctx=Depends(require_clinic_member)):
+    """Manually send the email reminder for a single appointment.
+
+    Useful for the receptionist UI when they want to send the reminder ad-hoc
+    (e.g. patient just called, doctor changed schedule, etc.). The automatic
+    scheduler also runs every 10 minutes and sends 24h-before reminders.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        apt_res = sdb.table('appointments').select('*').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        apt = getattr(apt_res, 'data', None) if apt_res else None
+        if not apt:
+            raise HTTPException(status_code=404, detail="Cita no encontrada")
+
+        # Resolve patient, doctor, clinic, branch
+        patient = sdb.table('patients').select('id,first_name,last_name,email').eq('id', apt['patient_id']).maybe_single().execute().data or {}
+        patient_email = (patient.get('email') or '').strip()
+        if not patient_email or '@' not in patient_email:
+            raise HTTPException(status_code=400, detail="El paciente no tiene email registrado")
+
+        doctor = sdb.table('clinic_members').select('first_name,last_name').eq('id', apt['doctor_id']).maybe_single().execute().data or {}
+        clinic = sdb.table('clinics').select('name,timezone').eq('id', clinic_id).maybe_single().execute().data or {}
+        branch = None
+        if apt.get('branch_id'):
+            br = sdb.table('branches').select('name').eq('id', apt['branch_id']).maybe_single().execute().data
+            branch = (br or {}).get('name')
+
+        from zoneinfo import ZoneInfo
+        from datetime import datetime as _dt
+        tz = ZoneInfo(clinic.get('timezone') or 'America/Guatemala')
+        starts_dt = _dt.fromisoformat(apt['starts_at'].replace('Z', '+00:00'))
+        when_str = starts_dt.astimezone(tz).strftime('%d/%m/%Y %H:%M')
+
+        from services.email_service import send_email
+        from services.email_templates import appointment_reminder
+        tmpl = appointment_reminder(
+            patient_name=f"{patient.get('first_name','')} {patient.get('last_name','')}".strip() or "Paciente",
+            clinic_name=clinic.get('name') or "Cortexia Medical",
+            doctor_name=f"Dr. {doctor.get('first_name','')} {doctor.get('last_name','')}".strip(),
+            when_str=when_str,
+            branch=branch,
+            reason=apt.get('reason') or None,
+        )
+        send_result = await send_email(
+            to=patient_email,
+            subject=tmpl['subject'],
+            html=tmpl['html'],
+            text=tmpl['text'],
+        )
+        if not send_result.get('ok'):
+            raise HTTPException(status_code=502, detail=f"Error de envío: {send_result.get('error')}")
+
+        sdb.table('appointments').update({
+            "reminder_email_sent_at": now_iso(),
+            "updated_at": now_iso(),
+        }).eq('id', apt_id).execute()
+        return {"ok": True, "message": "Recordatorio enviado", "sent_to": patient_email, "message_id": send_result.get('id')}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Send reminder error: {e}")
+        raise HTTPException(status_code=500, detail="Error al enviar recordatorio")
+
+
+@router.post("/admin/reminders/run-now")
+async def admin_run_reminders_now(user=Depends(require_super_admin)):
+    """Super-admin helper to manually trigger a scheduler tick (for testing)."""
+    from services.reminder_scheduler import _send_due_reminders
+    counters = await _send_due_reminders()
+    return {"ok": True, "counters": counters}

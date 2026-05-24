@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Label } from '../../../components/ui/label';
 import { Textarea } from '../../../components/ui/textarea';
 import { toast } from 'sonner';
-import { Edit, Ban } from 'lucide-react';
+import { Edit, Ban, Mail } from 'lucide-react';
 import { API, STATUS_CONFIG, DOCTOR_COLORS } from './constants';
 
 export default function AppointmentDetailModal({ appointment, config, doctorMap, headers, onClose, onUpdated }) {
@@ -22,6 +22,20 @@ export default function AppointmentDetailModal({ appointment, config, doctorMap,
     notes: appointment.notes || '',
   });
   const [saving, setSaving] = useState(false);
+  const [sendingReminder, setSendingReminder] = useState(false);
+
+  const sendReminder = async () => {
+    setSendingReminder(true);
+    try {
+      const r = await axios.post(`${API}/clinic/appointments/${appointment.id}/send-reminder`, {}, { headers });
+      toast.success(`Recordatorio enviado a ${r.data.sent_to}`);
+      onUpdated();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al enviar recordatorio');
+    } finally {
+      setSendingReminder(false);
+    }
+  };
 
   const cfg = STATUS_CONFIG[appointment.status] || STATUS_CONFIG.scheduled;
   const drColor = doctorMap[appointment.doctor_id] || DOCTOR_COLORS[0];
@@ -151,6 +165,29 @@ export default function AppointmentDetailModal({ appointment, config, doctorMap,
                       <Ban className="w-3 h-3 mr-1" /> Cancelar
                     </Button>
                   </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-xs font-medium text-slate-600 mb-2">Recordatorio al paciente</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500">
+                      {appointment.reminder_email_sent_at
+                        ? `Enviado ${new Date(appointment.reminder_email_sent_at).toLocaleString('es-GT', { dateStyle: 'short', timeStyle: 'short' })}`
+                        : 'Aún no se ha enviado'}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7"
+                      onClick={sendReminder}
+                      disabled={sendingReminder}
+                      data-testid="send-reminder-btn"
+                    >
+                      <Mail className="w-3 h-3 mr-1" />
+                      {sendingReminder ? 'Enviando…' : (appointment.reminder_email_sent_at ? 'Reenviar' : 'Enviar ahora')}
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">El sistema envía automáticamente 24 h antes de la cita si el paciente tiene email.</p>
                 </div>
               </div>
             )}

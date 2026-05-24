@@ -377,3 +377,15 @@ async def reset_user_password(member_id: str, user=Depends(require_super_admin))
         logger.error(f"Reset password error: {e}")
         raise HTTPException(status_code=500, detail="Error al resetear contrasena")
 
+
+
+@router.post("/admin/migrations/run")
+async def admin_run_migrations(user=Depends(require_super_admin)):
+    """Force-apply any pending DDL migrations.
+
+    Useful when Supabase was down at startup and the auto-runner skipped them.
+    Idempotent — safe to call multiple times.
+    """
+    from services.migrations import run_pending_migrations
+    return run_pending_migrations()
+

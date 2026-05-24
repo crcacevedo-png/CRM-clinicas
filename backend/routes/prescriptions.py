@@ -487,6 +487,47 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
         # Save URL in prescription
         sdb.table('prescriptions').update({"pdf_url": pdf_url, "updated_at": now_iso()}).eq('id', presc_id).execute()
 
+        # Auto-send PDF to patient by email (best-effort, never blocks the response)
+        try:
+            patient_email = (patient.get('email') or '').strip()
+            if patient_email and '@' in patient_email:
+                from services.email_service import send_email
+                from services.email_templates import prescription_issued
+                # Compute display date in clinic locale (simple ISO -> dd/mm/yyyy)
+                _issued = presc.get('issued_at') or presc.get('created_at', '')
+                _date_display = _issued[:10]
+                try:
+                    from datetime import datetime as _dt
+                    _date_display = _dt.fromisoformat(_issued.replace('Z', '+00:00')).strftime('%d/%m/%Y')
+                except Exception:
+                    pass
+                tmpl = prescription_issued(
+                    patient_name=f"{patient.get('first_name','')} {patient.get('last_name','')}".strip() or "Paciente",
+                    clinic_name=clinic.get('name') or "Cortexia Medical",
+                    doctor_name=f"Dr. {doctor.get('first_name','')} {doctor.get('last_name','')}".strip(),
+                    date_str=_date_display,
+                    diagnosis=presc.get('diagnosis'),
+                    item_count=len(items),
+                )
+                send_result = await send_email(
+                    to=patient_email,
+                    subject=tmpl['subject'],
+                    html=tmpl['html'],
+                    text=tmpl['text'],
+                    attachments=[{"filename": f"receta-{presc_id[:8]}.pdf", "content": pdf_bytes}],
+                )
+                if send_result.get('ok'):
+                    sdb.table('prescriptions').update({
+                        "sent_via": "email",
+                        "sent_at": now_iso(),
+                        "updated_at": now_iso(),
+                    }).eq('id', presc_id).execute()
+                    logger.info(f"Prescription {presc_id} emailed to {patient_email} (msg_id={send_result.get('id')})")
+                else:
+                    logger.warning(f"Prescription {presc_id} email failed: {send_result.get('error')}")
+        except Exception as mail_err:
+            logger.warning(f"Prescription email side-effect failed: {mail_err}")
+
         return pdf_url
     except Exception as e:
         logger.error(f"Generate PDF error: {e}")

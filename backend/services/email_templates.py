@@ -102,6 +102,34 @@ def password_reset(*, user_name: str, new_password: str, login_url: str, set_by:
     }
 
 
+def prescription_issued(*, patient_name: str, clinic_name: str, doctor_name: str, date_str: str, diagnosis: str | None = None, item_count: int = 0) -> dict:
+    diag_block = ""
+    if diagnosis:
+        diag_block = f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Diagnóstico</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{diagnosis}</td></tr>'
+
+    items_label = f"{item_count} medicamento{'s' if item_count != 1 else ''}"
+    content = f"""
+<h2 style="margin:0 0 8px;font-size:20px;font-weight:700;color:{_TEXT};">Tu receta médica</h2>
+<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">Hola {patient_name}, adjuntamos la receta emitida por <strong>{doctor_name}</strong> en <strong>{clinic_name}</strong>.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;padding:14px;background:#F1F5F9;border-radius:8px;">
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Fecha</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{date_str}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Doctor/a</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{doctor_name}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Medicamentos</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{items_label}</td></tr>
+  {diag_block}
+</table>
+<div style="margin:18px 0;padding:12px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;font-size:12px;color:#92400E;line-height:1.5;">
+  <strong>Importante:</strong> revisa el PDF adjunto para conocer la dosificación, frecuencia e indicaciones completas. No alteres las dosis sin consultar a tu doctor/a.
+</div>
+<p style="margin:18px 0 0;font-size:12px;color:{_MUTED};">Si tienes dudas sobre el tratamiento, contacta directamente con la clínica.</p>
+"""
+    text = f"Hola {patient_name},\n\nTu receta de {clinic_name} (Dr. {doctor_name}) está adjunta como PDF.\nFecha: {date_str}\nMedicamentos: {items_label}\n"
+    return {
+        "subject": f"Tu receta médica — {clinic_name}",
+        "html": _wrapper(preheader=f"Receta de {doctor_name} adjunta en PDF.", content_html=content),
+        "text": text,
+    }
+
+
 def appointment_reminder(*, patient_name: str, clinic_name: str, doctor_name: str, when_str: str, branch: str | None = None, reason: str | None = None) -> dict:
     extra = ""
     if branch:
