@@ -194,11 +194,22 @@ async def update_patient(patient_id: str, data: PatientFullCreate, ctx=Depends(r
 async def toggle_patient_active(patient_id: str, ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
     try:
-        patient = sdb.table('patients').select('is_active').eq('id', patient_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        patient = sdb.table('patients').select('is_active,first_name,last_name').eq('id', patient_id).eq('clinic_id', clinic_id).maybe_single().execute()
         if not patient.data:
             raise HTTPException(status_code=404, detail="Paciente no encontrado")
         new_val = not patient.data['is_active']
         sdb.table('patients').update({"is_active": new_val, "updated_at": now_iso()}).eq('id', patient_id).execute()
+        try:
+            from services.audit import log_audit, actor_from_ctx
+            await log_audit(
+                action="patient_activated" if new_val else "patient_archived",
+                entity="patient",
+                entity_id=patient_id,
+                **actor_from_ctx(ctx),
+                meta={"name": f"{patient.data.get('first_name','')} {patient.data.get('last_name','')}".strip()},
+            )
+        except Exception:
+            pass
         return {"is_active": new_val}
     except HTTPException:
         raise

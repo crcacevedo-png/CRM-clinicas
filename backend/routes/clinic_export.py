@@ -203,6 +203,21 @@ async def export_full(ctx=Depends(require_clinic_admin)):
 
     buf.seek(0)
     filename = f"clinic_export_{clinic_id[:8]}_{started.strftime('%Y%m%d_%H%M%S')}.zip"
+    try:
+        from services.audit import log_audit, actor_from_ctx
+        await log_audit(
+            action="clinic_data_export",
+            entity="clinic",
+            entity_id=clinic_id,
+            **actor_from_ctx(ctx),
+            meta={
+                "tables": len(manifest["tables"]),
+                "files": manifest["storage"]["files_count"],
+                "total_bytes": manifest["storage"]["files_total_bytes"],
+            },
+        )
+    except Exception:
+        pass
     return StreamingResponse(
         buf,
         media_type="application/zip",

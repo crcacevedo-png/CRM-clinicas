@@ -215,6 +215,17 @@ async def invite_member(data: MemberInvite, ctx=Depends(require_clinic_member)):
             "last_name": data.last_name, "specialty": data.specialty,
             "is_active": True, "created_at": now_iso(), "updated_at": now_iso(),
         }).execute()
+        try:
+            from services.audit import log_audit, actor_from_ctx
+            await log_audit(
+                action="member_invited",
+                entity="clinic_member",
+                entity_id=member_id,
+                **actor_from_ctx(ctx),
+                new_values={"email": data.email, "role": data.role, "name": f"{data.first_name} {data.last_name}"},
+            )
+        except Exception:
+            pass
         return {"message": "Miembro invitado exitosamente", "id": member_id, "temp_password": temp_password}
     except HTTPException:
         raise
@@ -266,6 +277,16 @@ async def toggle_member(member_id: str, ctx=Depends(require_clinic_member)):
             raise HTTPException(status_code=404, detail="Miembro no encontrado")
         new_status = not existing.data.get('is_active', True)
         sdb.table('clinic_members').update({"is_active": new_status, "updated_at": now_iso()}).eq('id', member_id).execute()
+        try:
+            from services.audit import log_audit, actor_from_ctx
+            await log_audit(
+                action="member_activated" if new_status else "member_deactivated",
+                entity="clinic_member",
+                entity_id=member_id,
+                **actor_from_ctx(ctx),
+            )
+        except Exception:
+            pass
         return {"is_active": new_status, "message": "Miembro activado" if new_status else "Miembro desactivado"}
     except HTTPException:
         raise
@@ -299,6 +320,19 @@ async def reset_member_password(member_id: str, data: MemberPasswordReset, ctx=D
             raise HTTPException(status_code=400, detail="El miembro no tiene cuenta de autenticación")
 
         supabase_admin.auth.admin.update_user_by_id(user_id, {"password": pw})
+
+        # Audit log (sensitive: someone changed a credential)
+        try:
+            from services.audit import log_audit, actor_from_ctx
+            await log_audit(
+                action="member_password_reset",
+                entity="clinic_member",
+                entity_id=member_id,
+                **actor_from_ctx(ctx),
+                meta={"target_user_id": user_id, "target_name": f"{mdata.get('first_name','')} {mdata.get('last_name','')}".strip()},
+            )
+        except Exception:
+            pass
 
         # Send email notification to the affected user (best-effort, async)
         try:

@@ -206,7 +206,7 @@ async def get_clinic(clinic_id: str, user=Depends(require_super_admin)):
 @router.put("/admin/clinics/{clinic_id}")
 async def update_clinic(clinic_id: str, data: ClinicUpdate, user=Depends(require_super_admin)):
     try:
-        existing = sdb.table('clinics').select('id').eq('id', clinic_id).maybe_single().execute()
+        existing = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="Clinica no encontrada")
 
@@ -223,6 +223,46 @@ async def update_clinic(clinic_id: str, data: ClinicUpdate, user=Depends(require
         sdb.table('clinics').update(update_data).eq('id', clinic_id).execute()
 
         updated = sdb.table('clinics').select('*').eq('id', clinic_id).single().execute()
+
+        # Audit: capture which sensitive fields changed
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            sensitive_keys = ('plan', 'is_active', 'max_users', 'max_patients', 'max_storage_mb', 'max_branches', 'country', 'currency')
+            before = {k: existing.data.get(k) for k in sensitive_keys if k in existing.data}
+            after = {k: update_data.get(k, existing.data.get(k)) for k in sensitive_keys if k in update_data or k in existing.data}
+            changes = {k: {"from": before.get(k), "to": after.get(k)} for k in sensitive_keys if before.get(k) != after.get(k)}
+            if changes:
+                # Special-case plan change → its own action for easy filtering
+                if "plan" in changes:
+                    await log_audit(
+                        action="clinic_plan_change",
+                        entity="clinic",
+                        entity_id=clinic_id,
+                        clinic_id=clinic_id,
+                        **actor_from_super_admin(user),
+                        old_values={"plan": changes["plan"]["from"]},
+                        new_values={"plan": changes["plan"]["to"]},
+                    )
+                if "is_active" in changes:
+                    await log_audit(
+                        action="clinic_activated" if changes["is_active"]["to"] else "clinic_deactivated",
+                        entity="clinic",
+                        entity_id=clinic_id,
+                        clinic_id=clinic_id,
+                        **actor_from_super_admin(user),
+                    )
+                # Generic update event with all sensitive changes
+                await log_audit(
+                    action="clinic_update",
+                    entity="clinic",
+                    entity_id=clinic_id,
+                    clinic_id=clinic_id,
+                    **actor_from_super_admin(user),
+                    meta={"changes": changes},
+                )
+        except Exception:
+            pass
+
         return updated.data
     except HTTPException:
         raise
@@ -352,7 +392,7 @@ async def update_user(member_id: str, data: UserUpdate, user=Depends(require_sup
 @router.post("/admin/users/{member_id}/reset-password")
 async def reset_user_password(member_id: str, user=Depends(require_super_admin)):
     try:
-        member = sdb.table('clinic_members').select('user_id').eq('id', member_id).maybe_single().execute()
+        member = sdb.table('clinic_members').select('user_id,clinic_id,first_name,last_name,email').eq('id', member_id).maybe_single().execute()
         if not member.data:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
@@ -366,6 +406,23 @@ async def reset_user_password(member_id: str, user=Depends(require_super_admin))
         except Exception as e:
             logger.error(f"Reset password error: {e}")
             raise HTTPException(status_code=400, detail="Error al resetear contrasena")
+
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="member_password_reset",
+                entity="clinic_member",
+                entity_id=member_id,
+                clinic_id=member.data.get("clinic_id"),
+                **actor_from_super_admin(user),
+                meta={
+                    "target_email": member.data.get("email"),
+                    "target_name": f"{member.data.get('first_name','')} {member.data.get('last_name','')}".strip(),
+                    "by": "super_admin",
+                },
+            )
+        except Exception:
+            pass
 
         return {
             "message": "Contrasena reseteada exitosamente",

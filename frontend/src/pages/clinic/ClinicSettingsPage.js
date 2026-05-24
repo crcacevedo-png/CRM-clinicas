@@ -21,6 +21,7 @@ import {
   UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image,
   Download, Database, Loader2, X
 } from 'lucide-react';
+import AuditLogTable from '../../components/AuditLogTable';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -358,6 +359,9 @@ export default function ClinicSettingsPage() {
           <TabsTrigger value="integrations" data-testid="tab-integrations"><Calendar className="w-3.5 h-3.5 mr-1.5" />Integraciones</TabsTrigger>
           {isClinicAdmin && (
             <TabsTrigger value="data" data-testid="tab-data"><Database className="w-3.5 h-3.5 mr-1.5" />Datos</TabsTrigger>
+          )}
+          {isClinicAdmin && (
+            <TabsTrigger value="audit" data-testid="tab-audit"><Shield className="w-3.5 h-3.5 mr-1.5" />Bitácora</TabsTrigger>
           )}
         </TabsList>
 
@@ -846,6 +850,12 @@ export default function ClinicSettingsPage() {
                 </Button>
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {isClinicAdmin && (
+          <TabsContent value="audit">
+            <AuditLogTable scope="clinic" headers={headers} />
           </TabsContent>
         )}
       </Tabs>

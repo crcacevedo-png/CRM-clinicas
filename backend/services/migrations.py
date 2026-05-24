@@ -97,6 +97,78 @@ MIGRATIONS: list[tuple[str, str]] = [
             WITH CHECK (public.is_super_admin());
         """,
     ),
+    (
+        "2026_05_24_audit_log_v1",
+        """
+        -- ============================================================
+        -- AUDIT LOG v1 — append-only, immutable, RLS-scoped
+        -- ============================================================
+        CREATE TABLE IF NOT EXISTS public.audit_log (
+            id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            action        TEXT NOT NULL,          -- e.g. 'login', 'password_reset', 'plan_change'
+            entity        TEXT,                   -- e.g. 'clinic', 'patient', 'prescription'
+            entity_id     UUID,
+            clinic_id     UUID,                   -- nullable for super-admin global actions
+            actor_user_id UUID,                   -- auth.users.id, nullable for system events
+            actor_email   TEXT,
+            actor_role    TEXT,                   -- 'super_admin' | 'clinic_admin' | 'doctor' | ...
+            old_values    JSONB,
+            new_values    JSONB,
+            ip_address    INET,
+            user_agent    TEXT,
+            meta          JSONB                   -- arbitrary extra context
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_audit_log_clinic_time
+            ON public.audit_log (clinic_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_actor_time
+            ON public.audit_log (actor_user_id, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_entity
+            ON public.audit_log (entity, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_action_time
+            ON public.audit_log (action, occurred_at DESC);
+
+        -- Immutability trigger: nobody (not even service_role) can UPDATE or DELETE.
+        CREATE OR REPLACE FUNCTION public.audit_log_immutable()
+        RETURNS TRIGGER LANGUAGE plpgsql AS $f$
+        BEGIN
+            RAISE EXCEPTION 'audit_log is append-only (% blocked)', TG_OP;
+        END;
+        $f$;
+
+        DROP TRIGGER IF EXISTS audit_log_no_update ON public.audit_log;
+        CREATE TRIGGER audit_log_no_update
+            BEFORE UPDATE ON public.audit_log
+            FOR EACH ROW EXECUTE FUNCTION public.audit_log_immutable();
+
+        DROP TRIGGER IF EXISTS audit_log_no_delete ON public.audit_log;
+        CREATE TRIGGER audit_log_no_delete
+            BEFORE DELETE ON public.audit_log
+            FOR EACH ROW EXECUTE FUNCTION public.audit_log_immutable();
+
+        -- RLS: super admin sees all; clinic_admin sees only their clinic.
+        -- Backend writes via service_role (bypasses RLS for INSERT).
+        ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
+
+        DROP POLICY IF EXISTS audit_log_super_admin_all ON public.audit_log;
+        CREATE POLICY audit_log_super_admin_all
+            ON public.audit_log FOR SELECT TO public
+            USING (public.is_super_admin());
+
+        DROP POLICY IF EXISTS audit_log_clinic_admin_scoped ON public.audit_log;
+        CREATE POLICY audit_log_clinic_admin_scoped
+            ON public.audit_log FOR SELECT TO public
+            USING (
+                clinic_id IS NOT NULL
+                AND public.user_has_role(clinic_id, ARRAY['clinic_admin'::user_role])
+            );
+
+        -- Lock down anon completely
+        REVOKE ALL ON public.audit_log FROM anon;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.audit_log FROM authenticated;
+        """,
+    ),
 ]
 
 

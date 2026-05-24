@@ -191,6 +191,17 @@ async def create_prescription(data: PrescriptionCreate, ctx=Depends(require_clin
         pdf_url = None
         if data.status == "issued":
             pdf_url = await generate_prescription_pdf(presc_id, clinic_id)
+            try:
+                from services.audit import log_audit, actor_from_ctx
+                await log_audit(
+                    action="prescription_issued",
+                    entity="prescription",
+                    entity_id=presc_id,
+                    **actor_from_ctx(ctx),
+                    new_values={"patient_id": data.patient_id, "item_count": len(data.items), "diagnosis": data.diagnosis},
+                )
+            except Exception:
+                pass
 
         return {"id": presc_id, "pdf_url": pdf_url, "message": "Receta creada"}
     except HTTPException:

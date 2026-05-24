@@ -133,12 +133,13 @@ from routes import (
     clinic_export as _r_exp_full,
     announcements as _r_ann,
     admin_metrics as _r_metrics,
+    audit_log as _r_audit,
 )
 for _r in (
     _r_auth, _r_sa, _r_cat, _r_cs, _r_br, _r_ff,
     _r_pat, _r_apt, _r_mr, _r_pr, _r_lab, _r_gc,
     _r_inv, _r_exp, _r_comm, _r_sales, _r_ar, _r_rep,
-    _r_exp_full, _r_ann, _r_metrics,
+    _r_exp_full, _r_ann, _r_metrics, _r_audit,
 ):
     api_router.include_router(_r.router)
 

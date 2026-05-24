@@ -23,7 +23,8 @@ from core import (
 # ============== AUTH ROUTES ==============
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, http_request: Request):
+    from services.audit import log_audit
     try:
         response = supabase_user.auth.sign_in_with_password({
             "email": request.email,
@@ -31,6 +32,13 @@ async def login(request: LoginRequest):
         })
 
         if not response.session:
+            await log_audit(
+                action="login_failed",
+                entity="auth",
+                actor_email=request.email,
+                meta={"reason": "no_session"},
+                request=http_request,
+            )
             raise HTTPException(status_code=401, detail="Credenciales invalidas")
 
         user_id = response.user.id
@@ -38,6 +46,14 @@ async def login(request: LoginRequest):
         # Check user type in Supabase tables
         sa = sdb.table('super_admins').select('id').eq('user_id', user_id).execute()
         if sa.data:
+            await log_audit(
+                action="login_success",
+                entity="auth",
+                actor_user_id=user_id,
+                actor_email=request.email,
+                actor_role="super_admin",
+                request=http_request,
+            )
             return LoginResponse(
                 access_token=response.session.access_token,
                 refresh_token=response.session.refresh_token,
@@ -46,8 +62,17 @@ async def login(request: LoginRequest):
                 email=request.email
             )
 
-        cm = sdb.table('clinic_members').select('clinic_id').eq('user_id', user_id).eq('is_active', True).execute()
+        cm = sdb.table('clinic_members').select('clinic_id,role').eq('user_id', user_id).eq('is_active', True).execute()
         if cm.data:
+            await log_audit(
+                action="login_success",
+                entity="auth",
+                actor_user_id=user_id,
+                actor_email=request.email,
+                actor_role=cm.data[0].get('role'),
+                clinic_id=cm.data[0].get('clinic_id'),
+                request=http_request,
+            )
             return LoginResponse(
                 access_token=response.session.access_token,
                 refresh_token=response.session.refresh_token,
@@ -57,11 +82,26 @@ async def login(request: LoginRequest):
                 clinic_id=cm.data[0].get("clinic_id")
             )
 
+        await log_audit(
+            action="login_denied",
+            entity="auth",
+            actor_user_id=user_id,
+            actor_email=request.email,
+            meta={"reason": "no_role"},
+            request=http_request,
+        )
         raise HTTPException(status_code=403, detail="No tienes acceso al sistema")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Login error: {e}")
+        await log_audit(
+            action="login_failed",
+            entity="auth",
+            actor_email=request.email,
+            meta={"error": str(e)[:200]},
+            request=http_request,
+        )
         raise HTTPException(status_code=401, detail="Error de autenticacion")
 
 @router.post("/auth/logout")
