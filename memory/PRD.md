@@ -238,6 +238,9 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 
 - **2026-05-10 — Logo de clínica en PDFs de recetas y comprobantes de venta**: helper compartido `core.fetch_clinic_logo_image(logo_url, max_h_mm)` descarga el logo (cache en memoria), lo escala con aspect ratio preservado y devuelve un `Image` flowable de reportlab. Insertado al inicio del header en `routes/prescriptions.py::generate_prescription_pdf` (20mm) y `routes/sales.py::generate_sale_pdf` (18mm), antes del nombre de la clínica. Si el logo no existe o falla la descarga, el PDF se genera normalmente sin él (no se rompe). Verificado: ambos PDFs ahora muestran el logo embebido en el header.
 
+
+- **2026-05-24 — Resend dominio verificado (`mail.cortexiamedical.com`)**: el dominio `mail.cortexiamedical.com` quedó verified en Resend (status: verified, sending: enabled). `SENDER_EMAIL` en `backend/.env` cambiado de `onboarding@resend.dev` a `noreply@mail.cortexiamedical.com`. Probado envío real (`info@cortexiagt.com`) — Resend message id devuelto OK. Emails transaccionales (welcome, password reset, appointment reminder) ahora salen con remitente oficial `Cortexia Medical <noreply@mail.cortexiamedical.com>`.
+
 - **2026-05-10 — Logo de la clínica en sidebar**: el header del sidebar (`ClinicLayout.js`) ahora muestra el logo de la clínica cuando `logo_url` está presente; si no, hace fallback al nombre de la clínica (no más "ClinicCRM" hardcoded). Fetch en mount via `/api/clinic/settings`. Verificado E2E con/sin logo.
 
 - **2026-05-02 — Export completo de clínica (clinic_admin)**: Nueva función para que el administrador descargue todos los datos de su clínica.
