@@ -14,6 +14,22 @@ from core import sdb, logger, require_super_admin
 
 router = APIRouter()
 
+
+@router.post("/admin/email/test")
+async def test_email(to: str, user=Depends(require_super_admin)):
+    """Send a test email to verify Resend integration is working.
+
+    Usage:  POST /api/admin/email/test?to=you@example.com
+    """
+    from services.email_service import send_email
+    html = """<div style="font-family:sans-serif;padding:20px;">
+      <h2 style="color:#0D9488;">Cortexia Medical — Test email</h2>
+      <p>Si recibes este correo, la integración con Resend está funcionando correctamente. ✅</p>
+      <p style="color:#64748B;font-size:12px;margin-top:24px;">Enviado por Super Admin desde el panel de administración.</p>
+    </div>"""
+    result = await send_email(to=to, subject="Test: Cortexia Medical email", html=html, text="Resend integration OK")
+    return result
+
 # Fallback monthly prices per plan code (used when the `plans` table has no
 # `price_monthly` column). Adjust freely without touching DB.
 PLAN_MONTHLY_USD = {

@@ -1,4 +1,5 @@
 """Auto-extracted from server.py."""
+import os
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta, date
@@ -289,7 +290,7 @@ async def reset_member_password(member_id: str, data: MemberPasswordReset, ctx=D
         raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
     clinic_id = ctx["member"]["clinic_id"]
     try:
-        member = sdb.table('clinic_members').select('id,user_id').eq('id', member_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        member = sdb.table('clinic_members').select('id,user_id,first_name,last_name').eq('id', member_id).eq('clinic_id', clinic_id).maybe_single().execute()
         mdata = getattr(member, 'data', None) if member else None
         if not mdata:
             raise HTTPException(status_code=404, detail="Miembro no encontrado")
@@ -298,6 +299,25 @@ async def reset_member_password(member_id: str, data: MemberPasswordReset, ctx=D
             raise HTTPException(status_code=400, detail="El miembro no tiene cuenta de autenticación")
 
         supabase_admin.auth.admin.update_user_by_id(user_id, {"password": pw})
+
+        # Send email notification to the affected user (best-effort, async)
+        try:
+            from services.email_service import send_email
+            from services.email_templates import password_reset
+            # Resolve target email + names
+            target_user = supabase_admin.auth.admin.get_user_by_id(user_id)
+            target_email = getattr(getattr(target_user, "user", target_user), "email", None)
+            if target_email:
+                tpl = password_reset(
+                    user_name=f"{mdata.get('first_name','')} {mdata.get('last_name','')}".strip() or "Usuario",
+                    new_password=pw,
+                    login_url=os.environ.get('FRONTEND_URL', 'https://app.cortexiamedical.com'),
+                    set_by=f"{ctx['member'].get('first_name','')} {ctx['member'].get('last_name','')}".strip() or "Administrador",
+                )
+                await send_email(to=target_email, subject=tpl["subject"], html=tpl["html"], text=tpl["text"])
+        except Exception as _e:
+            logger.warning(f"reset_member_password: email notification failed: {_e}")
+
         return {"message": "Contraseña actualizada exitosamente"}
     except HTTPException:
         raise
