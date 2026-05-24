@@ -5,11 +5,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import {
   TrendingUp, TrendingDown, Users, Activity, Building2, DollarSign,
   Calendar, Pill, ShoppingCart, AlertTriangle, MapPin, Zap, CheckCircle2,
+  Download,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
+import { exportToCsv } from '../../lib/csv';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -57,6 +59,30 @@ function SectionTitle({ icon: Icon, children, hint }) {
   );
 }
 
+function CsvBtn({ onClick, testId, disabled }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-[10px] px-2 py-1 rounded border inline-flex items-center gap-1 transition-all ${disabled ? 'border-slate-200 text-slate-300 cursor-not-allowed' : 'border-slate-200 text-slate-500 hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50'}`}
+      title="Exportar a CSV"
+      data-testid={testId}
+    >
+      <Download className="w-3 h-3" /> CSV
+    </button>
+  );
+}
+
+function CardHeaderRow({ children, csv }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      {children}
+      {csv}
+    </div>
+  );
+}
+
 const PLAN_COLORS = { free: '#94A3B8', basic: '#60A5FA', professional: '#14B8A6', enterprise: '#A855F7' };
 const STATUS_COLORS = { scheduled: '#3B82F6', confirmed: '#14B8A6', completed: '#10B981', cancelled: '#94A3B8', no_show: '#EF4444', unknown: '#CBD5E1' };
 
@@ -86,9 +112,32 @@ export default function AdminDashboard() {
 
   return (
     <div className="p-6 space-y-2" data-testid="admin-dashboard">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Panel SaaS</h1>
-        <p className="text-sm text-slate-500">Métricas en tiempo real · Generado {new Date(data.generated_at).toLocaleString('es-GT')}</p>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Panel SaaS</h1>
+          <p className="text-sm text-slate-500">Métricas en tiempo real · Generado {new Date(data.generated_at).toLocaleString('es-GT')}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            // Exporta TODOS los datasets en un único CSV con secciones marcadas
+            const blob = new Blob(['\ufeff' + JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+            a.download = `saas_dashboard_snapshot_${ts}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          }}
+          className="text-xs px-3 py-1.5 rounded-md border border-slate-200 text-slate-600 hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50 inline-flex items-center gap-1.5"
+          title="Descargar snapshot completo en JSON"
+          data-testid="export-snapshot"
+        >
+          <Download className="w-3.5 h-3.5" /> Snapshot JSON
+        </button>
       </div>
 
       {/* ===== BLOQUE 1 — GROWTH ===== */}
@@ -103,7 +152,17 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
         {/* Funnel */}
         <Card className="border border-slate-200">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700">Funnel de onboarding</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-funnel" disabled={!g.funnel} onClick={() => {
+              const rows = [
+                { paso: 'Registradas', clinicas: g.funnel?.registered || 0 },
+                { paso: 'Con >=1 paciente', clinicas: g.funnel?.with_patient || 0 },
+                { paso: 'Con >=1 cita', clinicas: g.funnel?.with_appointment || 0 },
+                { paso: 'Con >=1 venta', clinicas: g.funnel?.with_sale || 0 },
+              ];
+              exportToCsv('funnel_onboarding', rows);
+            }} />
+          }><CardTitle className="text-sm font-semibold text-slate-700">Funnel de onboarding</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             {(() => {
               const steps = [
@@ -137,7 +196,14 @@ export default function AdminDashboard() {
 
         {/* Geographic */}
         <Card className="border border-slate-200">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />Distribución geográfica</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-geo" disabled={!g.geo?.length} onClick={() => exportToCsv('distribucion_geografica', g.geo || [], [
+              { key: 'country', label: 'Pais' },
+              { key: 'count', label: 'Total clinicas' },
+              { key: 'active', label: 'Activas' },
+              { key: 'mrr', label: 'MRR USD' },
+            ])} />
+          }><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><MapPin className="w-3.5 h-3.5" />Distribución geográfica</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             <div className="space-y-1.5 max-h-56 overflow-y-auto">
               {(g.geo || []).map((c) => (
@@ -162,7 +228,13 @@ export default function AdminDashboard() {
       </div>
 
       <Card className="border border-slate-200 mt-3">
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700">Adopción por módulo</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardHeaderRow csv={
+          <CsvBtn testId="csv-modules" disabled={!a.module_adoption?.length} onClick={() => exportToCsv('adopcion_por_modulo', a.module_adoption || [], [
+            { key: 'module', label: 'Modulo' },
+            { key: 'clinics', label: 'Clinicas que lo usan' },
+            { key: 'pct', label: '% de adopcion' },
+          ])} />
+        }><CardTitle className="text-sm font-semibold text-slate-700">Adopción por módulo</CardTitle></CardHeaderRow></CardHeader>
         <CardContent>
           <div className="space-y-1.5">
             {(a.module_adoption || []).map((m) => (
@@ -193,7 +265,13 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
         {/* Top 10 */}
         <Card className="border border-slate-200 lg:col-span-1">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700">Top 10 clínicas activas (30d)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-top10" disabled={!e.top10?.length} onClick={() => exportToCsv('top10_clinicas_activas', e.top10 || [], [
+              { key: 'name', label: 'Clinica' }, { key: 'plan', label: 'Plan' }, { key: 'country', label: 'Pais' },
+              { key: 'score', label: 'Score' }, { key: 'appointments', label: 'Citas 30d' },
+              { key: 'prescriptions', label: 'Recetas 30d' }, { key: 'sales', label: 'Ventas 30d' }, { key: 'patients', label: 'Pacientes 30d' },
+            ])} />
+          }><CardTitle className="text-sm font-semibold text-slate-700">Top 10 clínicas activas (30d)</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             <ol className="space-y-1.5">
               {(e.top10 || []).map((c, i) => (
@@ -212,7 +290,13 @@ export default function AdminDashboard() {
 
         {/* Bottom 10 (in-risk) */}
         <Card className="border border-slate-200">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 text-rose-500" />Bottom 10 — Outreach</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-bottom10" disabled={!e.bottom10?.length} onClick={() => exportToCsv('bottom10_clinicas_outreach', e.bottom10 || [], [
+              { key: 'name', label: 'Clinica' }, { key: 'plan', label: 'Plan' }, { key: 'country', label: 'Pais' },
+              { key: 'score', label: 'Score' }, { key: 'appointments', label: 'Citas 30d' },
+              { key: 'prescriptions', label: 'Recetas 30d' }, { key: 'sales', label: 'Ventas 30d' },
+            ])} />
+          }><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 text-rose-500" />Bottom 10 — Outreach</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             <ol className="space-y-1.5">
               {(e.bottom10 || []).map((c, i) => (
@@ -231,7 +315,11 @@ export default function AdminDashboard() {
 
         {/* Appointment status */}
         <Card className="border border-slate-200">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700">Estado de citas (30d)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-apt-status" disabled={!e.appointment_status?.length} onClick={() => exportToCsv('estado_de_citas_30d', e.appointment_status || [], [
+              { key: 'status', label: 'Estado' }, { key: 'count', label: 'Cantidad' }, { key: 'pct', label: '% del total' },
+            ])} />
+          }><CardTitle className="text-sm font-semibold text-slate-700">Estado de citas (30d)</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             {e.appointment_status?.length > 0 ? (
               <ResponsiveContainer width="100%" height={170}>
@@ -262,7 +350,11 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
         {/* MRR by plan */}
         <Card className="border border-slate-200">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700">MRR por plan</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-mrr-plan" disabled={!f.mrr_by_plan?.length} onClick={() => exportToCsv('mrr_por_plan', f.mrr_by_plan || [], [
+              { key: 'plan', label: 'Plan' }, { key: 'clinics', label: 'Clinicas activas' }, { key: 'mrr', label: 'MRR USD' },
+            ])} />
+          }><CardTitle className="text-sm font-semibold text-slate-700">MRR por plan</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             {f.mrr_by_plan?.length > 0 ? (
               <ResponsiveContainer width="100%" height={200}>
@@ -290,7 +382,11 @@ export default function AdminDashboard() {
 
         {/* Expiring plans */}
         <Card className="border border-slate-200">
-          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" />Planes próximos a vencer (30d)</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardHeaderRow csv={
+            <CsvBtn testId="csv-expiring" disabled={!f.expiring_soon_d30?.length} onClick={() => exportToCsv('planes_vencen_30d', f.expiring_soon_d30 || [], [
+              { key: 'name', label: 'Clinica' }, { key: 'plan', label: 'Plan' }, { key: 'days', label: 'Dias para vencer' },
+            ])} />
+          }><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" />Planes próximos a vencer (30d)</CardTitle></CardHeaderRow></CardHeader>
           <CardContent>
             {f.expiring_soon_d30?.length > 0 ? (
               <ul className="space-y-1.5 max-h-52 overflow-y-auto">
@@ -314,7 +410,12 @@ export default function AdminDashboard() {
       {/* ===== BLOQUE 6 — OPERATIONS ===== */}
       <SectionTitle icon={AlertTriangle} hint="Oportunidades de upsell y alertas técnicas">Operaciones</SectionTitle>
       <Card className="border border-slate-200">
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700">Clínicas cerca del límite del plan (pacientes)</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardHeaderRow csv={
+          <CsvBtn testId="csv-plan-warnings" disabled={!o.plan_limit_warnings?.length} onClick={() => exportToCsv('plan_limit_warnings', o.plan_limit_warnings || [], [
+            { key: 'name', label: 'Clinica' }, { key: 'plan', label: 'Plan' }, { key: 'metric', label: 'Metrica' },
+            { key: 'used', label: 'Usado' }, { key: 'limit', label: 'Limite' }, { key: 'pct', label: '% del limite' },
+          ])} />
+        }><CardTitle className="text-sm font-semibold text-slate-700">Clínicas cerca del límite del plan (pacientes)</CardTitle></CardHeaderRow></CardHeader>
         <CardContent>
           {o.plan_limit_warnings?.length > 0 ? (
             <table className="w-full text-xs">
