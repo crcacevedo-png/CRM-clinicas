@@ -175,6 +175,11 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - [ ] Stripe/dLocal facturacion (requiere keys del usuario) - P2
 
 ## Cambios recientes
+- **2026-05-24 — Dashboard SaaS Super Admin (Fase 1: Bloques 1, 2, 3, 4, 6)**: panel de métricas completo del SaaS.
+  - **Backend**: nuevo `routes/admin_metrics.py` con endpoint `GET /api/admin/dashboard/saas`. Agrega en un solo response: MRR/ARR (calculado de planes activos × precios), nuevas clínicas hoy/7d/30d con MoM%, funnel onboarding (registradas→pacientes→citas→ventas), distribución geográfica, DAU/WAU/MAU + sticky ratio (vía `activity_logs`), clínicas inactivas 7/14/30d, adopción por 9 módulos, engagement (citas/recetas/ventas/pacientes hoy/7d/30d), Top-10/Bottom-10 clínicas por score ponderado, distribución de estados de citas, MRR por plan, planes próximos a vencer, AR total, warnings de plan limit (clínicas free/basic/professional cerca del límite de pacientes).
+  - **Frontend**: `AdminDashboard.js` reescrito de cero — 5 secciones con ~30 widgets: 16 KPI cards, funnel visual, barras horizontales para adopción de módulos, PieChart para estados de citas, BarChart de MRR por plan, listas Top/Bottom 10, tabla de planes próximos a vencer y warnings de límite. Colores semánticos por severidad. Sticky ratio cambia color (verde >20%, ámbar <20%). Tabla con drill-down.
+  - **Estado**: código completo y linted; pendiente smoke test en cuanto Supabase Auth (caído por incidente Cloudflare 521 al momento) regrese.
+
 - **2026-05-13 — Métricas de anuncios (Comunicación)**: tracking completo de vistas/cobertura.
   - **DB**: nueva tabla `announcement_views` (PK announcement+user, columnas `first_viewed_at`, `last_viewed_at`, `view_count`, `clinic_id`). RLS habilitado con políticas para que cada usuario gestione su propia fila.
   - **Backend**:
