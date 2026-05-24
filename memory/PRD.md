@@ -250,6 +250,15 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 
 - **2026-05-10 — Logo de la clínica en sidebar**: el header del sidebar (`ClinicLayout.js`) ahora muestra el logo de la clínica cuando `logo_url` está presente; si no, hace fallback al nombre de la clínica (no más "ClinicCRM" hardcoded). Fetch en mount via `/api/clinic/settings`. Verificado E2E con/sin logo.
 
+
+- **2026-05-24 — RLS Hardening v1 (5 fixes)**: auditoría completa de seguridad RLS, 5 vulnerabilidades corregidas vía `services/migrations.py::2026_05_24_rls_hardening_v1` (idempotente, trackeada en `schema_migrations`).
+  - **(1) Vistas con SECURITY DEFINER → SECURITY INVOKER**: `v_daily_sales`, `v_expiring_products`, `v_low_stock_alerts`, `v_monthly_pnl` hacían bypass total de RLS (cualquier `authenticated` veía datos de TODAS las clínicas). Ahora ejecutan con los privilegios del invoker, RLS aplica.
+  - **(2) 44 policies UPDATE/ALL ahora con WITH CHECK = USING**: cierra cross-tenant write attack (ej. `UPDATE patients SET clinic_id='otra-clinica'`). DO block dinámico itera `pg_policies` y aplica `ALTER POLICY ... WITH CHECK` espejo del USING. Verificado: 0 policies bad ahora.
+  - **(3) REVOKE INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER de `anon`** en las 50 tablas+vistas de `public`. `anon` solo conserva SELECT (que RLS sigue bloqueando). `ALTER DEFAULT PRIVILEGES` aplicado para tablas futuras. Defense-in-depth: si una policy futura es buggy, anon igual no puede escribir.
+  - **(4) `schema_migrations` con RLS + policy super-admin-only**: cierra la única tabla sin RLS.
+  - **(5) Catálogos públicos documentados**: `features`, `icd10_codes`, `plan_features` mantienen `qual=true` para `public` (son catálogos read-only por diseño). Si se agregan columnas sensibles a futuro, reforzar.
+  - **Resultado**: 46/46 tablas con RLS, 131 policies, 0 bad policies, anon solo SELECT. Backend (service_role) sigue funcionando 100%, verificado via `/api/admin/dashboard`.
+
 - **2026-05-02 — Export completo de clínica (clinic_admin)**: Nueva función para que el administrador descargue todos los datos de su clínica.
   - Backend: `routes/clinic_export.py` — endpoint `GET /api/clinic/export/full` (require_clinic_admin) genera un ZIP en memoria con:
     - 28 tablas con `clinic_id` directo (clinics, branches, members, patients, appointments, medical_records, prescriptions, lab_orders, products, services, inventory_*, suppliers, purchase_orders, sales, payments, accounts_receivable, cash_*, expenses, commissions_*, attachments, activity_logs, notification_logs, etc.)
