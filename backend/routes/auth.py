@@ -3,7 +3,7 @@ import uuid
 import logging
 from datetime import datetime, timezone, timedelta, date
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Body, Request
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Body, Request, Response
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -27,15 +27,16 @@ from server import limiter
 
 @router.post("/auth/login", response_model=LoginResponse)
 @limiter.limit("5/minute")
-async def login(payload: LoginRequest, request: Request):
+async def login(payload: LoginRequest, request: Request, response: Response):
     from services.audit import log_audit
+    from core import ACCESS_TOKEN_COOKIE
     try:
-        response = supabase_user.auth.sign_in_with_password({
+        sb_response = supabase_user.auth.sign_in_with_password({
             "email": payload.email,
             "password": payload.password
         })
 
-        if not response.session:
+        if not sb_response.session:
             await log_audit(
                 action="login_failed",
                 entity="auth",
@@ -45,7 +46,24 @@ async def login(payload: LoginRequest, request: Request):
             )
             raise HTTPException(status_code=401, detail="Credenciales invalidas")
 
-        user_id = response.user.id
+        user_id = sb_response.user.id
+        access_token = sb_response.session.access_token
+        refresh_token = sb_response.session.refresh_token
+
+        # Fix #5: also set the access token as an httpOnly Secure SameSite=Strict
+        # cookie. The frontend still uses the Authorization header today (no
+        # breaking change), but the cookie is a parallel safety net: if XSS
+        # ever steals localStorage, the cookie remains unreadable to JS.
+        # SameSite=Strict provides inherent CSRF protection.
+        response.set_cookie(
+            key=ACCESS_TOKEN_COOKIE,
+            value=access_token,
+            httponly=True,
+            secure=True,
+            samesite="strict",
+            max_age=3600,  # 1h, matches Supabase access token lifetime
+            path="/",
+        )
 
         # Check user type in Supabase tables
         sa = sdb.table('super_admins').select('id').eq('user_id', user_id).execute()
@@ -59,8 +77,8 @@ async def login(payload: LoginRequest, request: Request):
                 request=request,
             )
             return LoginResponse(
-                access_token=response.session.access_token,
-                refresh_token=response.session.refresh_token,
+                access_token=access_token,
+                refresh_token=refresh_token,
                 user_type="super_admin",
                 user_id=user_id,
                 email=payload.email
@@ -78,14 +96,16 @@ async def login(payload: LoginRequest, request: Request):
                 request=request,
             )
             return LoginResponse(
-                access_token=response.session.access_token,
-                refresh_token=response.session.refresh_token,
+                access_token=access_token,
+                refresh_token=refresh_token,
                 user_type="clinic_member",
                 user_id=user_id,
                 email=payload.email,
                 clinic_id=cm.data[0].get("clinic_id")
             )
 
+        # No role — clear the cookie we just set
+        response.delete_cookie(ACCESS_TOKEN_COOKIE, path="/")
         await log_audit(
             action="login_denied",
             entity="auth",
@@ -108,13 +128,22 @@ async def login(payload: LoginRequest, request: Request):
         )
         raise HTTPException(status_code=401, detail="Error de autenticacion")
 
+
 @router.post("/auth/logout")
-async def logout(user=Depends(get_current_user)):
+async def logout(response: Response):
+    """Clear the auth cookie + Supabase session.
+
+    Frontend should ALSO drop its localStorage token. The cookie deletion
+    here handles Fix #5; the supabase_user.auth.sign_out() invalidates the
+    refresh token server-side.
+    """
+    from core import ACCESS_TOKEN_COOKIE
+    response.delete_cookie(ACCESS_TOKEN_COOKIE, path="/")
     try:
         supabase_user.auth.sign_out()
     except Exception:
         pass
-    return {"message": "Sesion cerrada correctamente"}
+    return {"ok": True, "message": "Sesion cerrada correctamente"}
 
 @router.get("/auth/me")
 async def auth_me(user=Depends(get_current_user)):

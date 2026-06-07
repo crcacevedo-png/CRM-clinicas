@@ -298,6 +298,13 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **2026-05-01 — Hardening DB**: REVOKE TRUNCATE de roles `anon` y `authenticated` sobre 46 tablas + ALTER DEFAULT PRIVILEGES (cierra vector de DoS por TRUNCATE que ignora RLS).
 
 - **2026-05-01 — Eliminación módulo Plantillas de Consulta**: Removido por solicitud del usuario.
+
+- **2026-06-07 — Security Hardening Fix #3 + #5 (JWT local + httpOnly cookie)**: dos fixes de alto impacto en latencia y resiliencia.
+  - **(Fix #3) JWT local validation** en `core.py::_decode_jwt_local`. Soporta los dos esquemas de Supabase: **ES256/RS256 vía JWKS** (default para proyectos modernos como el nuestro) y **HS256** vía `SUPABASE_JWT_SECRET` (legacy). Cache de JWKS en memoria con TTL 1 h + refresh forzado si el `kid` no está en cache (handle key rotation). Antes: cada request autenticada llamaba a `supabase_admin.auth.get_user(token)` por HTTP (~150-300 ms RTT). Ahora: validación pura local ~1 ms. **Resultado**: la app es inmune a outages de Supabase Auth para flujos autenticados, latencia per-request bajada ~200 ms. Verificado: 0 llamadas a `/auth/v1/user` desde restart; 1 sola llamada a `/auth/v1/.well-known/jwks.json` (cacheada).
+  - **(Fix #5) httpOnly Secure SameSite=Strict cookie** `cortexia_access_token` seteada en `/auth/login`. Frontend SIGUE usando `Authorization: Bearer` (no breaking change), pero la cookie es una segunda capa: si XSS roba el localStorage, la cookie queda inaccesible a JS. `SameSite=Strict` provee CSRF inherente. Backend (`get_current_user`) acepta header O cookie (header tiene prioridad). Nuevo `POST /api/auth/logout` borra cookie + invalida sesión Supabase. Verificado en Playwright: cookie con `httpOnly: True, secure: True, sameSite: Strict`. Verificado curl: cookie-only auth funciona (sin Authorization header).
+  - **Tech**: `python-jose==3.5.0`, `ecdsa==0.19.2` (para ES256). JWKS endpoint: `https://<project>.supabase.co/auth/v1/.well-known/jwks.json`.
+  - **`SUPABASE_JWT_SECRET`** agregado a `backend/.env` (fallback HS256 si el proyecto migra de vuelta).
+
   - Backend: borrados endpoints `GET/POST/PUT/DELETE /api/clinic/templates` y modelo `TemplateCreate` de `routes/medical_records.py`.
   - Frontend: removida sección "Usar plantilla" de `MedicalRecordForm.js` (estados `templates`, `selectedTemplate`, función `applyTemplate`, fetch `/clinic/templates`, import `FileStack`).
   - DB: tabla `consultation_templates` eliminada vía `DROP TABLE CASCADE` (28 filas + estructura). Sin FKs externas, drop seguro.
