@@ -4,6 +4,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { FeatureProvider } from "./context/FeatureContext";
 import { BranchProvider } from "./context/BranchContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { Toaster } from "./components/ui/sonner";
 
 // Pages
@@ -44,7 +45,8 @@ import ReportsPage from "./pages/clinic/ReportsPage";
 
 function App() {
   return (
-    <AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
       <FeatureProvider>
       <BranchProvider>
       <BrowserRouter>
@@ -110,6 +112,7 @@ function App() {
       </BranchProvider>
       </FeatureProvider>
     </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

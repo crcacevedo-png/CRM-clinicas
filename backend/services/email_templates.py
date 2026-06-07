@@ -4,8 +4,23 @@ All templates are inline-CSS only (best email client compatibility) and use
 table-based layouts. Each function returns a dict {subject, html, text}.
 
 Branding: teal accent (#0D9488), Cortexia Medical sender, support footer.
+
+Security: every user-supplied variable is HTML-escaped via `_esc()` before
+interpolation. Never concatenate raw user input into the HTML body.
 """
+import html as _html
 from datetime import datetime
+
+
+def _esc(value) -> str:
+    """Escape any value for safe HTML interpolation.
+
+    None becomes empty string. Numbers/dates are coerced to str first.
+    Quotes are escaped too so the value is safe in attribute contexts.
+    """
+    if value is None:
+        return ""
+    return _html.escape(str(value), quote=True)
 
 
 _BRAND_TEAL = "#0D9488"
@@ -48,18 +63,22 @@ def _wrapper(*, preheader: str, content_html: str, footer_extra: str = "") -> st
 # ============== TEMPLATES ==============
 
 def welcome_clinic(*, admin_name: str, clinic_name: str, login_url: str, temp_password: str | None = None) -> dict:
+    a_name = _esc(admin_name)
+    c_name = _esc(clinic_name)
+    url = _esc(login_url)
+    tp = _esc(temp_password) if temp_password else None
     content = f"""
-<h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:{_TEXT};">¡Bienvenido/a, {admin_name}!</h2>
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:{_TEXT};">¡Bienvenido/a, {a_name}!</h2>
 <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:{_TEXT};">
-  Tu clínica <strong>{clinic_name}</strong> ya está activa en Cortexia Medical. Estamos felices de tenerte a bordo.
+  Tu clínica <strong>{c_name}</strong> ya está activa en Cortexia Medical. Estamos felices de tenerte a bordo.
 </p>
 <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">
   Desde tu panel puedes gestionar pacientes, citas, recetas, ventas POS y reportes financieros — todo en un solo lugar.
 </p>
-{"<div style='margin:18px 0;padding:12px;background:#F1F5F9;border-radius:8px;font-size:13px;color:" + _TEXT + ";'><strong>Contraseña temporal:</strong> <code style='font-family:monospace;background:#FFFFFF;padding:2px 6px;border-radius:4px;'>" + temp_password + "</code><br><span style='font-size:11px;color:" + _MUTED + ";'>Cámbiala en tu primer ingreso.</span></div>" if temp_password else ""}
+{"<div style='margin:18px 0;padding:12px;background:#F1F5F9;border-radius:8px;font-size:13px;color:" + _TEXT + ";'><strong>Contraseña temporal:</strong> <code style='font-family:monospace;background:#FFFFFF;padding:2px 6px;border-radius:4px;'>" + tp + "</code><br><span style='font-size:11px;color:" + _MUTED + ";'>Cámbiala en tu primer ingreso.</span></div>" if tp else ""}
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0;">
   <tr><td style="background:{_BRAND_TEAL};border-radius:8px;">
-    <a href="{login_url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Ingresar al panel →</a>
+    <a href="{url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Ingresar al panel →</a>
   </td></tr>
 </table>
 <p style="margin:18px 0 0;font-size:12px;color:{_MUTED};">Si tienes dudas, responde directamente a este correo o escríbenos a soporte@cortexiamedical.com.</p>
@@ -69,27 +88,31 @@ def welcome_clinic(*, admin_name: str, clinic_name: str, login_url: str, temp_pa
         text += f"Contraseña temporal: {temp_password}\n"
     return {
         "subject": f"Bienvenido/a a Cortexia Medical, {clinic_name}",
-        "html": _wrapper(preheader=f"Tu clínica {clinic_name} ya está activa.", content_html=content),
+        "html": _wrapper(preheader=f"Tu clínica {c_name} ya está activa.", content_html=content),
         "text": text,
     }
 
 
 def password_reset(*, user_name: str, new_password: str, login_url: str, set_by: str) -> dict:
+    u = _esc(user_name)
+    pw = _esc(new_password)
+    url = _esc(login_url)
+    sb = _esc(set_by)
     content = f"""
 <h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:{_TEXT};">Tu contraseña fue actualizada</h2>
 <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:{_TEXT};">
-  Hola {user_name}, el administrador <strong>{set_by}</strong> acaba de definir una nueva contraseña para tu cuenta en Cortexia Medical.
+  Hola {u}, el administrador <strong>{sb}</strong> acaba de definir una nueva contraseña para tu cuenta en Cortexia Medical.
 </p>
 <div style="margin:18px 0;padding:14px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;">
   <p style="margin:0 0 6px;font-size:12px;color:#92400E;font-weight:600;">Tu nueva contraseña temporal:</p>
-  <code style="font-family:monospace;font-size:16px;background:#FFFFFF;padding:6px 10px;border-radius:4px;color:#7C2D12;">{new_password}</code>
+  <code style="font-family:monospace;font-size:16px;background:#FFFFFF;padding:6px 10px;border-radius:4px;color:#7C2D12;">{pw}</code>
 </div>
 <p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:{_MUTED};">
   Por seguridad, te recomendamos cambiarla por una propia tan pronto inicies sesión.
 </p>
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px 0;">
   <tr><td style="background:{_BRAND_TEAL};border-radius:8px;">
-    <a href="{login_url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Iniciar sesión →</a>
+    <a href="{url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Iniciar sesión →</a>
   </td></tr>
 </table>
 <p style="margin:18px 0 0;font-size:11px;color:{_MUTED};">Si no esperabas este cambio, contacta a tu administrador o a soporte@cortexiamedical.com inmediatamente.</p>
@@ -103,18 +126,23 @@ def password_reset(*, user_name: str, new_password: str, login_url: str, set_by:
 
 
 def prescription_issued(*, patient_name: str, clinic_name: str, doctor_name: str, date_str: str, diagnosis: str | None = None, item_count: int = 0) -> dict:
+    p = _esc(patient_name)
+    c = _esc(clinic_name)
+    d = _esc(doctor_name)
+    ds = _esc(date_str)
+    diag = _esc(diagnosis) if diagnosis else None
     diag_block = ""
-    if diagnosis:
-        diag_block = f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Diagnóstico</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{diagnosis}</td></tr>'
+    if diag:
+        diag_block = f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Diagnóstico</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{diag}</td></tr>'
 
-    items_label = f"{item_count} medicamento{'s' if item_count != 1 else ''}"
+    items_label = f"{int(item_count)} medicamento{'s' if item_count != 1 else ''}"
     content = f"""
 <h2 style="margin:0 0 8px;font-size:20px;font-weight:700;color:{_TEXT};">Tu receta médica</h2>
-<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">Hola {patient_name}, adjuntamos la receta emitida por <strong>{doctor_name}</strong> en <strong>{clinic_name}</strong>.</p>
+<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">Hola {p}, adjuntamos la receta emitida por <strong>{d}</strong> en <strong>{c}</strong>.</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;padding:14px;background:#F1F5F9;border-radius:8px;">
-  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Fecha</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{date_str}</td></tr>
-  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Doctor/a</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{doctor_name}</td></tr>
-  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Medicamentos</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{items_label}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Fecha</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{ds}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Doctor/a</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{d}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Medicamentos</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{_esc(items_label)}</td></tr>
   {diag_block}
 </table>
 <div style="margin:18px 0;padding:12px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;font-size:12px;color:#92400E;line-height:1.5;">
@@ -125,24 +153,30 @@ def prescription_issued(*, patient_name: str, clinic_name: str, doctor_name: str
     text = f"Hola {patient_name},\n\nTu receta de {clinic_name} (Dr. {doctor_name}) está adjunta como PDF.\nFecha: {date_str}\nMedicamentos: {items_label}\n"
     return {
         "subject": f"Tu receta médica — {clinic_name}",
-        "html": _wrapper(preheader=f"Receta de {doctor_name} adjunta en PDF.", content_html=content),
+        "html": _wrapper(preheader=f"Receta de {c} adjunta en PDF.", content_html=content),
         "text": text,
     }
 
 
 def appointment_reminder(*, patient_name: str, clinic_name: str, doctor_name: str, when_str: str, branch: str | None = None, reason: str | None = None) -> dict:
+    p = _esc(patient_name)
+    c = _esc(clinic_name)
+    d = _esc(doctor_name)
+    w = _esc(when_str)
+    br = _esc(branch) if branch else None
+    rs = _esc(reason) if reason else None
     extra = ""
-    if branch:
-        extra += f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Sucursal</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{branch}</td></tr>'
-    if reason:
-        extra += f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Motivo</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{reason}</td></tr>'
+    if br:
+        extra += f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Sucursal</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{br}</td></tr>'
+    if rs:
+        extra += f'<tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Motivo</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{rs}</td></tr>'
 
     content = f"""
 <h2 style="margin:0 0 8px;font-size:20px;font-weight:700;color:{_TEXT};">Recordatorio de cita</h2>
-<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">Hola {patient_name}, te recordamos tu próxima cita en <strong>{clinic_name}</strong>.</p>
+<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">Hola {p}, te recordamos tu próxima cita en <strong>{c}</strong>.</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;padding:14px;background:#F1F5F9;border-radius:8px;">
-  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Fecha y hora</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{when_str}</td></tr>
-  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Doctor/a</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{doctor_name}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Fecha y hora</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{w}</td></tr>
+  <tr><td style="padding:6px 0;font-size:13px;color:{_MUTED};">Doctor/a</td><td style="padding:6px 0;font-size:13px;color:{_TEXT};font-weight:600;text-align:right;">{d}</td></tr>
   {extra}
 </table>
 <p style="margin:18px 0 0;font-size:12px;color:{_MUTED};line-height:1.5;">Si necesitas reprogramar o cancelar, contacta directamente con la clínica. Por favor llega 10 minutos antes de tu cita.</p>
@@ -150,6 +184,6 @@ def appointment_reminder(*, patient_name: str, clinic_name: str, doctor_name: st
     text = f"Hola {patient_name},\n\nRecordatorio de cita en {clinic_name}:\nFecha: {when_str}\nDoctor: {doctor_name}\n"
     return {
         "subject": f"Recordatorio: cita el {when_str.split(' ')[0]} en {clinic_name}",
-        "html": _wrapper(preheader=f"Tu cita es el {when_str}.", content_html=content),
+        "html": _wrapper(preheader=f"Tu cita es el {w}.", content_html=content),
         "text": text,
     }

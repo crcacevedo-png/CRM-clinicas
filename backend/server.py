@@ -145,12 +145,35 @@ for _r in (
 
 app.include_router(api_router)
 
+# ============== SECURITY HEADERS ==============
+
+@app.middleware("http")
+async def security_headers_middleware(request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
+
 # ============== CORS ==============
+
+# CORS_ORIGINS MUST be set in .env as comma-separated allowlist. We refuse to
+# fall back to '*' because allow_credentials=True + '*' is insecure (and rejected
+# by modern browsers anyway). Failing fast surfaces the misconfig immediately.
+_cors_env = os.environ.get('CORS_ORIGINS', '').strip()
+if not _cors_env:
+    raise RuntimeError(
+        "CORS_ORIGINS env var is required. Set it to a comma-separated list of "
+        "allowed origins, e.g. 'https://app.cortexiamedical.com,https://app2.example.com'."
+    )
+_allowed_origins = [o.strip() for o in _cors_env.split(',') if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )

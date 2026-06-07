@@ -266,6 +266,15 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - **UI**: componente reusable `components/AuditLogTable.js` con filtros (acción, email actor, fechas), badges por color de acción, paginación. Página `pages/admin/AuditLogPage.js` montada en `/admin/auditoria` (sidebar con icon Shield). Tab "Bitácora" en `ClinicSettingsPage.js` para clinic_admin (junto a "Datos").
   - **Verificado E2E**: login fallido + login exitoso quedan registrados con IP `34.16.56.64`; clinic_admin ve solo eventos de su clínica (`c0321ed8`); clinic_admin → `/admin/audit-log` = 403; doctor → `/clinic/audit-log` = 403. UPDATE y DELETE sobre `audit_log` lanzan `audit_log is append-only`.
 
+- **2026-06-07 — Security Hardening Bloque 1 (5 fixes rápidos)**: aplicado tras auditoría completa de seguridad del SaaS.
+  - **(1) CORS estricto**: `server.py` ahora requiere `CORS_ORIGINS` en `.env` y falla en startup si no está. Antes caía al wildcard `*` con `allow_credentials=True` (inválido y peligroso). Allowlist: `super-admin-panel-12.preview.emergentagent.com`, `app.cortexiamedical.com`, `cortexiamedical.com`.
+  - **(13/14) Security headers + allow_headers/methods específicos**: middleware `security_headers_middleware` añade HSTS (`max-age=31536000; includeSubDomains`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: geolocation=(), microphone=(), camera=()`. CORS solo acepta métodos REST estándar y headers `Authorization, Content-Type, Accept, Origin, X-Requested-With`.
+  - **(11) ErrorBoundary React**: nuevo `components/ErrorBoundary.js` envuelve todo el árbol en `App.js`. Antes un error en cualquier componente tumbaba la app con pantalla blanca; ahora muestra fallback amigable con botón "Volver al inicio" y stack trace solo en development.
+  - **(18) GENERATE_SOURCEMAP=false** en `frontend/.env` → builds de producción ya no exponen source maps con código original al navegador.
+  - **(10) HTML escape en email templates**: `services/email_templates.py` ahora tiene helper `_esc()` con `html.escape(..., quote=True)` aplicado a TODAS las variables (patient_name, doctor_name, clinic_name, diagnosis, reason, branch, set_by, etc.). Antes un paciente llamado `<script>alert(1)</script>` rompía el HTML del email; verificado: input malicioso → `&lt;script&gt;`.
+  - **Verificado E2E**: curl directo a `localhost:8001/api/health` con `Origin: evil.example.com` NO devuelve `Access-Control-Allow-Origin`; con origen permitido SÍ. Security headers presentes en HEAD. Login + dashboard cargan sin issues post-cambios. Test XSS en `appointment_reminder` confirma escape.
+
+
 
 - **2026-05-02 — Export completo de clínica (clinic_admin)**: Nueva función para que el administrador descargue todos los datos de su clínica.
   - Backend: `routes/clinic_export.py` — endpoint `GET /api/clinic/export/full` (require_clinic_admin) genera un ZIP en memoria con:
