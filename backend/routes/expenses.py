@@ -121,7 +121,10 @@ async def list_expenses(
         if branch_id: query = query.eq('branch_id', branch_id)
         if supplier_id: query = query.eq('supplier_id', supplier_id)
         if payment_status: query = query.eq('payment_status', payment_status)
-        if q: query = query.or_(f'description.ilike.%{q}%,document_number.ilike.%{q}%,subcategory.ilike.%{q}%')
+        if q:
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            query = query.or_(f'description.ilike.%{qs}%,document_number.ilike.%{qs}%,subcategory.ilike.%{qs}%')
         offset = (page - 1) * limit
         result = query.order('expense_date', desc=True).range(offset, offset + limit - 1).execute()
         expenses = result.data or []
@@ -253,7 +256,7 @@ async def upload_expense_attachment(expense_id: str, file: UploadFile = File(...
             raise HTTPException(status_code=400, detail="Archivo excede 10MB")
         path = f"{clinic_id}/expenses/{expense_id}/receipt.{ext}"
         supabase_admin.storage.from_('patient-files').upload(path, contents, {"content-type": file.content_type or "application/octet-stream", "upsert": "true"})
-        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 86400 * 7)
+        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
         url = signed.get('signedURL') or signed.get('signedUrl', '')
         sdb.table('expenses').update({"attachment_url": url, "updated_at": now_iso()}).eq('id', expense_id).execute()
         return {"url": url, "path": path}

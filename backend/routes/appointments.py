@@ -606,13 +606,18 @@ async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=500, detail="Error al obtener dashboard")
 
 
+from server import limiter
+
+
 @router.post("/clinic/appointments/{apt_id}/send-reminder")
-async def send_appointment_reminder_now(apt_id: str, ctx=Depends(require_clinic_member)):
+@limiter.limit("30/minute")
+async def send_appointment_reminder_now(apt_id: str, request: Request, ctx=Depends(require_clinic_member)):
     """Manually send the email reminder for a single appointment.
 
     Useful for the receptionist UI when they want to send the reminder ad-hoc
     (e.g. patient just called, doctor changed schedule, etc.). The automatic
     scheduler also runs every 10 minutes and sends 24h-before reminders.
+    Rate-limited to 30 reminders / minute / IP.
     """
     clinic_id = ctx["member"]["clinic_id"]
     try:

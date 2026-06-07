@@ -50,7 +50,9 @@ async def search_medications(q: str = "", ctx=Depends(require_clinic_member)):
         if not q or len(q) < 2:
             result = sdb.table('medications').select('id,generic_name,brand_name,presentations,category').or_(f'clinic_id.is.null,clinic_id.eq.{clinic_id}').eq('is_active', True).order('generic_name').limit(20).execute()
         else:
-            result = sdb.table('medications').select('id,generic_name,brand_name,presentations,category').or_(f'clinic_id.is.null,clinic_id.eq.{clinic_id}').eq('is_active', True).or_(f'generic_name.ilike.%{q}%,brand_name.ilike.%{q}%').order('generic_name').limit(20).execute()
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            result = sdb.table('medications').select('id,generic_name,brand_name,presentations,category').or_(f'clinic_id.is.null,clinic_id.eq.{clinic_id}').eq('is_active', True).or_(f'generic_name.ilike.%{qs}%,brand_name.ilike.%{qs}%').order('generic_name').limit(20).execute()
         return result.data or []
     except Exception as e:
         logger.error(f"Search medications error: {e}")
@@ -491,8 +493,10 @@ async def generate_prescription_pdf(presc_id: str, clinic_id: str) -> Optional[s
         path = f"{clinic_id}/prescriptions/{presc_id}.pdf"
         supabase_admin.storage.from_('patient-files').upload(path, pdf_bytes, {"content-type": "application/pdf", "upsert": "true"})
 
-        # Get signed URL
-        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 86400)
+        # Get signed URL (short TTL — UI re-fetches a fresh URL when needed via
+        # /clinic/prescriptions/{id}/pdf-url. PDF bytes are attached to email
+        # directly, so this URL is only for the doctor's "Open in browser" flow.)
+        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
         pdf_url = signed.get('signedURL') or signed.get('signedUrl', '')
 
         # Save URL in prescription

@@ -334,7 +334,9 @@ async def list_users(
         query = sdb.table('clinic_members').select('*')
 
         if search:
-            query = query.or_(f'first_name.ilike.%{search}%,last_name.ilike.%{search}%')
+            from services.input_sanitizer import sanitize_postgrest_search
+            ss = sanitize_postgrest_search(search)
+            query = query.or_(f'first_name.ilike.%{ss}%,last_name.ilike.%{ss}%')
         if clinic_id:
             query = query.eq('clinic_id', clinic_id)
         if role:
@@ -389,8 +391,12 @@ async def update_user(member_id: str, data: UserUpdate, user=Depends(require_sup
         logger.error(f"Update user error: {e}")
         raise HTTPException(status_code=500, detail="Error al actualizar usuario")
 
+from server import limiter
+
+
 @router.post("/admin/users/{member_id}/reset-password")
-async def reset_user_password(member_id: str, user=Depends(require_super_admin)):
+@limiter.limit("10/minute")
+async def reset_user_password(member_id: str, request: Request, user=Depends(require_super_admin)):
     try:
         member = sdb.table('clinic_members').select('user_id,clinic_id,first_name,last_name,email').eq('id', member_id).maybe_single().execute()
         if not member.data:

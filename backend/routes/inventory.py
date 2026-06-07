@@ -41,7 +41,9 @@ async def list_products(q: str = "", category_id: str = "", low_stock: str = "",
     try:
         query = sdb.table('products').select('*', count='exact').eq('clinic_id', clinic_id)
         if q:
-            query = query.or_(f'name.ilike.%{q}%,sku.ilike.%{q}%,barcode.ilike.%{q}%')
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            query = query.or_(f'name.ilike.%{qs}%,sku.ilike.%{qs}%,barcode.ilike.%{qs}%')
         if category_id:
             query = query.eq('category_id', category_id)
         offset = (page - 1) * limit
@@ -106,7 +108,9 @@ async def search_products(q: str = "", ctx=Depends(require_clinic_member)):
     try:
         query = sdb.table('products').select('id,name,sku,brand,sale_price,cost_price,has_expiration').eq('clinic_id', clinic_id).eq('is_active', True)
         if q and len(q) >= 2:
-            query = query.or_(f'name.ilike.%{q}%,sku.ilike.%{q}%')
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            query = query.or_(f'name.ilike.%{qs}%,sku.ilike.%{qs}%')
         result = query.order('name').limit(20).execute()
         return result.data or []
     except Exception as e:

@@ -57,7 +57,9 @@ async def search_icd10(q: str = "", limit: int = 20, ctx=Depends(require_clinic_
         if not q or len(q) < 2:
             result = sdb.table('icd10_codes').select('id,code,description_es,category,is_common').eq('is_common', True).order('code').limit(limit).execute()
         else:
-            result = sdb.table('icd10_codes').select('id,code,description_es,category,is_common').or_(f'code.ilike.%{q}%,description_es.ilike.%{q}%').order('code').limit(limit).execute()
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            result = sdb.table('icd10_codes').select('id,code,description_es,category,is_common').or_(f'code.ilike.%{qs}%,description_es.ilike.%{qs}%').order('code').limit(limit).execute()
         return result.data or []
     except Exception as e:
         logger.error(f"Search ICD10 error: {e}")

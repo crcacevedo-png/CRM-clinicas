@@ -23,7 +23,9 @@ async def list_services(q: str = "", category: str = "", active_only: bool = Fal
         if category:
             query = query.eq('category', category)
         if q:
-            query = query.or_(f'name.ilike.%{q}%,code.ilike.%{q}%')
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            query = query.or_(f'name.ilike.%{qs}%,code.ilike.%{qs}%')
         result = query.order('name').execute()
         return result.data or []
     except Exception as e:
@@ -768,7 +770,7 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
 
         path = f"{clinic_id}/sales/{sale_id}.pdf"
         supabase_admin.storage.from_('patient-files').upload(path, pdf_bytes, {"content-type": "application/pdf", "upsert": "true"})
-        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 86400)
+        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
         url = signed.get('signedURL') or signed.get('signedUrl', '')
         sdb.table('sales').update({"pdf_url": url, "updated_at": now_iso()}).eq('id', sale_id).execute()
         return url

@@ -30,7 +30,9 @@ async def search_patients(q: str = "", ctx=Depends(require_clinic_member)):
         if not q or len(q) < 2:
             result = sdb.table('patients').select('id,first_name,last_name,phone,national_id').eq('clinic_id', clinic_id).eq('is_active', True).order('first_name').limit(20).execute()
         else:
-            result = sdb.table('patients').select('id,first_name,last_name,phone,national_id').eq('clinic_id', clinic_id).eq('is_active', True).or_(f'first_name.ilike.%{q}%,last_name.ilike.%{q}%,national_id.ilike.%{q}%,phone.ilike.%{q}%').limit(20).execute()
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            result = sdb.table('patients').select('id,first_name,last_name,phone,national_id').eq('clinic_id', clinic_id).eq('is_active', True).or_(f'first_name.ilike.%{qs}%,last_name.ilike.%{qs}%,national_id.ilike.%{qs}%,phone.ilike.%{qs}%').limit(20).execute()
         return result.data or []
     except Exception as e:
         logger.error(f"Search patients error: {e}")
@@ -49,7 +51,9 @@ async def list_patients(
         query = sdb.table('patients').select('id,first_name,last_name,phone,email,national_id,date_of_birth,gender,is_active,created_at', count='exact').eq('clinic_id', clinic_id)
 
         if q:
-            query = query.or_(f'first_name.ilike.%{q}%,last_name.ilike.%{q}%,national_id.ilike.%{q}%,phone.ilike.%{q}%')
+            from services.input_sanitizer import sanitize_postgrest_search
+            qs = sanitize_postgrest_search(q)
+            query = query.or_(f'first_name.ilike.%{qs}%,last_name.ilike.%{qs}%,national_id.ilike.%{qs}%,phone.ilike.%{qs}%')
         if status == 'active':
             query = query.eq('is_active', True)
         elif status == 'inactive':
@@ -230,20 +234,26 @@ async def upload_patient_file(patient_id: str, file: UploadFile = File(...), ctx
         if not patient.data:
             raise HTTPException(status_code=404, detail="Paciente no encontrado")
 
-        # Validate file
-        allowed = ['image/jpeg', 'image/png', 'application/pdf', 'application/dicom']
-        if file.content_type not in allowed:
-            raise HTTPException(status_code=400, detail="Tipo no permitido. Permitidos: JPG, PNG, PDF, DICOM")
-
         content = await file.read()
-        if len(content) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Archivo excede 10MB")
+        # Magic-bytes validation (defeats Content-Type spoofing)
+        try:
+            from services.input_sanitizer import validate_document_upload
+            detected_mime = validate_document_upload(
+                content,
+                max_bytes=10 * 1024 * 1024,
+                extra_allowed={'application/dicom'},
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
 
+        # Sanitize filename to avoid path traversal in storage paths
+        import os as _os
+        safe_name = _os.path.basename(file.filename or 'upload').replace('..', '').replace('/', '_').replace('\\', '_')[:120]
         # Upload to Supabase Storage
-        path = f"{clinic_id}/{patient_id}/{file.filename}"
-        supabase_admin.storage.from_('patient-files').upload(path, content, {"content-type": file.content_type, "upsert": "true"})
+        path = f"{clinic_id}/{patient_id}/{safe_name}"
+        supabase_admin.storage.from_('patient-files').upload(path, content, {"content-type": detected_mime, "upsert": "true"})
 
-        return {"message": "Archivo subido", "name": file.filename, "size": len(content), "content_type": file.content_type}
+        return {"message": "Archivo subido", "name": safe_name, "size": len(content), "content_type": detected_mime}
     except HTTPException:
         raise
     except Exception as e:

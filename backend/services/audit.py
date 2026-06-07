@@ -18,17 +18,56 @@ from core import sdb, now_iso
 logger = logging.getLogger(__name__)
 
 
+import os
+from ipaddress import ip_address, ip_network
+
+# Trusted proxy CIDRs. Only headers coming from these networks are trusted.
+# Configurable via TRUSTED_PROXY_CIDRS env (comma-separated). Defaults to
+# private/cloud-internal ranges used by the Emergent K8s ingress.
+_DEFAULT_TRUSTED_CIDRS = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8"
+_TRUSTED_CIDRS = []
+for _c in (os.environ.get('TRUSTED_PROXY_CIDRS') or _DEFAULT_TRUSTED_CIDRS).split(','):
+    _c = _c.strip()
+    if _c:
+        try:
+            _TRUSTED_CIDRS.append(ip_network(_c, strict=False))
+        except ValueError:
+            pass
+
+
+def _is_from_trusted_proxy(peer_ip: str | None) -> bool:
+    if not peer_ip:
+        return False
+    try:
+        addr = ip_address(peer_ip)
+        return any(addr in net for net in _TRUSTED_CIDRS)
+    except ValueError:
+        return False
+
+
 def _ip_from_request(req: Optional[Request]) -> Optional[str]:
+    """Return the real client IP.
+
+    We only honor X-Forwarded-For / X-Real-IP when the request peer (direct
+    TCP source) is a trusted proxy (typically the K8s ingress). For untrusted
+    peers we use the raw connection IP. This defeats spoofing attempts where
+    an attacker reaches the backend directly and sets fake XFF headers.
+    """
     if req is None:
         return None
-    # Honor common proxy headers
-    fwd = req.headers.get('x-forwarded-for') or req.headers.get('x-real-ip')
-    if fwd:
-        return fwd.split(',')[0].strip()
     try:
-        return req.client.host if req.client else None
+        peer = req.client.host if req.client else None
     except Exception:
-        return None
+        peer = None
+
+    if _is_from_trusted_proxy(peer):
+        fwd = req.headers.get('x-forwarded-for') or req.headers.get('x-real-ip')
+        if fwd:
+            # Take the leftmost IP (original client) from the comma list.
+            first = fwd.split(',')[0].strip()
+            if first:
+                return first
+    return peer
 
 
 def _ua_from_request(req: Optional[Request]) -> Optional[str]:

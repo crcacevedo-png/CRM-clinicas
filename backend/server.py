@@ -5,8 +5,11 @@ to keep this module thin and avoid circular imports.
 """
 import os
 import uuid
-from fastapi import FastAPI, APIRouter, Depends
+from fastapi import FastAPI, APIRouter, Depends, Request
 from starlette.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from core import (
     settings, sdb, supabase_admin, logger, now_iso,
@@ -17,6 +20,28 @@ from core import (
 
 app = FastAPI(title="Clinic CRM Super Admin API")
 api_router = APIRouter(prefix="/api")
+
+# ============== RATE LIMITING ==============
+# slowapi limiter keyed by client IP. Use a trusted-proxy aware extractor so
+# X-Forwarded-For from the ingress is honored. The limiter is attached to the
+# app and exposed via app.state.limiter so route decorators can reference it.
+
+def _trusted_remote_address(request: Request) -> str:
+    """Return the real client IP, only trusting XFF if request comes from a
+    known proxy CIDR. In the Emergent/K8s preview, all traffic transits the
+    ingress, so we trust the last hop of XFF.
+    """
+    xff = request.headers.get('x-forwarded-for')
+    if xff:
+        # Take the first non-empty IP from the comma-separated list
+        first = xff.split(',')[0].strip()
+        if first:
+            return first
+    return get_remote_address(request)
+
+limiter = Limiter(key_func=_trusted_remote_address, default_limits=[])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ============== STARTUP ==============
 

@@ -118,11 +118,16 @@ async def upload_clinic_logo(file: UploadFile = File(...), ctx=Depends(require_c
     clinic_id = ctx["member"]["clinic_id"]
     try:
         contents = await file.read()
-        if len(contents) > 2 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Logo máximo 2MB")
-        ext = file.filename.split('.')[-1].lower() if '.' in file.filename else 'png'
+        # Magic-bytes validation (defeats Content-Type spoofing)
+        try:
+            from services.input_sanitizer import validate_image_upload
+            detected_mime = validate_image_upload(contents, max_bytes=2 * 1024 * 1024)
+        except ValueError as ve:
+            raise HTTPException(status_code=400, detail=str(ve))
+        ext_map = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif', 'image/gif': 'gif'}
+        ext = ext_map.get(detected_mime, 'png')
         path = f"{clinic_id}/logo.{ext}"
-        supabase_admin.storage.from_('patient-files').upload(path, contents, {"content-type": file.content_type or "image/png", "upsert": "true"})
+        supabase_admin.storage.from_('patient-files').upload(path, contents, {"content-type": detected_mime, "upsert": "true"})
         signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 31536000)
         logo_url = signed.get('signedURL') or signed.get('signedUrl', '')
         sdb.table('clinics').update({"logo_url": logo_url, "updated_at": now_iso()}).eq('id', clinic_id).execute()
@@ -195,18 +200,29 @@ async def invite_member(data: MemberInvite, ctx=Depends(require_clinic_member)):
             if not user_id:
                 raise HTTPException(status_code=400, detail="Error al crear usuario")
 
-        # Check if already a member
+        # Check if already a member.
+        # Note: to avoid email enumeration, the response message stays uniform
+        # ("Miembro listo") for both fresh invites and reactivations. The audit
+        # log captures the distinction (member_invited vs member_reactivated).
         existing = sdb.table('clinic_members').select('id,is_active').eq('clinic_id', clinic_id).eq('user_id', user_id).maybe_single().execute()
         if existing and existing.data:
-            if existing.data.get('is_active'):
-                raise HTTPException(status_code=400, detail="El usuario ya es miembro de esta clínica")
-            else:
-                sdb.table('clinic_members').update({
-                    "is_active": True, "role": data.role,
-                    "first_name": data.first_name, "last_name": data.last_name,
-                    "specialty": data.specialty, "updated_at": now_iso(),
-                }).eq('id', existing.data['id']).execute()
-                return {"message": "Miembro reactivado", "id": existing.data['id']}
+            sdb.table('clinic_members').update({
+                "is_active": True, "role": data.role,
+                "first_name": data.first_name, "last_name": data.last_name,
+                "specialty": data.specialty, "updated_at": now_iso(),
+            }).eq('id', existing.data['id']).execute()
+            try:
+                from services.audit import log_audit, actor_from_ctx
+                await log_audit(
+                    action="member_reactivated" if not existing.data.get('is_active') else "member_reinvited",
+                    entity="clinic_member",
+                    entity_id=existing.data['id'],
+                    **actor_from_ctx(ctx),
+                    new_values={"email": data.email, "role": data.role},
+                )
+            except Exception:
+                pass
+            return {"message": "Miembro listo", "id": existing.data['id']}
 
         member_id = str(uuid.uuid4())
         sdb.table('clinic_members').insert({
@@ -295,8 +311,12 @@ async def toggle_member(member_id: str, ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=500, detail="Error")
 
 
+from server import limiter
+
+
 @router.put("/clinic/members/{member_id}/password")
-async def reset_member_password(member_id: str, data: MemberPasswordReset, ctx=Depends(require_clinic_member)):
+@limiter.limit("10/minute")
+async def reset_member_password(member_id: str, data: MemberPasswordReset, request: Request, ctx=Depends(require_clinic_member)):
     """Set/reset a clinic member's Supabase Auth password.
 
     Restricted to clinic_admin. Admin cannot change own password through this

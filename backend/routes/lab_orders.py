@@ -339,7 +339,7 @@ async def generate_lab_order_pdf(order_id: str, clinic_id: str) -> Optional[str]
 
         path = f"{clinic_id}/lab-orders/{order_id}.pdf"
         supabase_admin.storage.from_('patient-files').upload(path, pdf_bytes, {"content-type": "application/pdf", "upsert": "true"})
-        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 86400)
+        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
         pdf_url = signed.get('signedURL') or signed.get('signedUrl', '')
         sdb.table('lab_orders').update({"pdf_url": pdf_url, "updated_at": now_iso()}).eq('id', order_id).execute()
         return pdf_url
