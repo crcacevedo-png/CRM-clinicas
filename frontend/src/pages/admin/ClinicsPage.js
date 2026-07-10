@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
+import PasswordStrengthMeter from '../../components/PasswordStrengthMeter';
 import {
   Select,
   SelectContent,
@@ -452,7 +453,7 @@ export default function ClinicsPage() {
                       onChange={(e) => setFormData(prev => ({ ...prev, admin_password: e.target.value }))}
                       className="form-input flex-1"
                       required
-                      minLength={8}
+                      minLength={10}
                       data-testid="admin-password-input"
                     />
                     <Button 
@@ -465,7 +466,11 @@ export default function ClinicsPage() {
                       <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
                     </Button>
                   </div>
-                  <p className="text-xs text-zinc-500 mt-1">Mínimo 8 caracteres</p>
+                  <PasswordStrengthMeter
+                    password={formData.admin_password}
+                    email={formData.admin_email}
+                    name={`${formData.admin_name || ''} ${formData.admin_lastname || ''}`}
+                  />
                 </div>
               </div>
             </div>

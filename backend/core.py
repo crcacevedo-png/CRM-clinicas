@@ -84,9 +84,32 @@ def generate_slug(name: str) -> str:
     slug = name.lower().replace(" ", "-").replace(".", "").replace(",", "")
     return ''.join(c for c in slug if c.isalnum() or c == '-')
 
-def generate_password(length: int = 12) -> str:
-    characters = string.ascii_letters + string.digits + "!@#$%"
-    return ''.join(secrets.choice(characters) for _ in range(length))
+def generate_password(length: int = 14) -> str:
+    """Generate a random password that satisfies services.password_policy.
+
+    - length >= 10 (default 14 for extra margin)
+    - guaranteed one char from each of the 4 categories (satisfies >=3)
+    - never touches the common-passwords list because it's fully random
+    """
+    if length < 10:
+        length = 10
+    upper = string.ascii_uppercase
+    lower = string.ascii_lowercase
+    digits = string.digits
+    symbols = "!@#$%^&*_-+="
+    # Guarantee at least one from each category
+    required = [
+        secrets.choice(upper),
+        secrets.choice(lower),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    pool = upper + lower + digits + symbols
+    remaining = [secrets.choice(pool) for _ in range(length - len(required))]
+    chars = required + remaining
+    # Shuffle securely (secrets.SystemRandom())
+    secrets.SystemRandom().shuffle(chars)
+    return ''.join(chars)
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()

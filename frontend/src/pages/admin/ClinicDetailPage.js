@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Switch } from '../../components/ui/switch';
+import PasswordStrengthMeter from '../../components/PasswordStrengthMeter';
 import {
   Select,
   SelectContent,
@@ -548,13 +549,18 @@ export default function ClinicDetailPage() {
                   onChange={(e) => setMemberForm(prev => ({ ...prev, password: e.target.value }))}
                   className="form-input flex-1"
                   required
-                  minLength={8}
+                  minLength={10}
                   data-testid="member-password-input"
                 />
                 <Button type="button" variant="outline" onClick={generatePassword} className="btn-secondary">
                   <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
                 </Button>
               </div>
+              <PasswordStrengthMeter
+                password={memberForm.password}
+                email={memberForm.email}
+                name={`${memberForm.name || ''} ${memberForm.lastname || ''}`}
+              />
             </div>
             <div className="flex justify-end gap-3 pt-4">
               <Button type="button" variant="outline" onClick={() => setShowMemberModal(false)} className="btn-secondary">

@@ -89,6 +89,9 @@ async def list_clinics(
 @router.post("/admin/clinics")
 async def create_clinic(data: ClinicCreate, user=Depends(require_super_admin)):
     try:
+        # Enforce password policy on the initial admin's password.
+        from services.password_policy import validate_password
+        validate_password(data.admin_password, email=data.admin_email, name=data.admin_name)
         # 1. Create user in Supabase Auth
         try:
             auth_response = supabase_admin.auth.admin.create_user({
@@ -276,6 +279,10 @@ async def add_clinic_member(clinic_id: str, data: ClinicMemberCreate, user=Depen
         existing = sdb.table('clinics').select('id').eq('id', clinic_id).maybe_single().execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="Clinica no encontrada")
+
+        # Enforce password policy
+        from services.password_policy import validate_password
+        validate_password(data.password, email=data.email, name=f"{data.name} {data.lastname}")
 
         # Create user in Supabase Auth
         try:

@@ -22,6 +22,7 @@ import {
   Download, Database, Loader2, X
 } from 'lucide-react';
 import AuditLogTable from '../../components/AuditLogTable';
+import PasswordStrengthMeter, { passwordMeetsPolicy, MIN_LENGTH } from '../../components/PasswordStrengthMeter';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -154,7 +155,10 @@ export default function ClinicSettingsPage() {
 
   const handleInvite = async () => {
     if (!inviteForm.email || !inviteForm.first_name || !inviteForm.last_name) { toast.error('Complete todos los campos'); return; }
-    if (inviteForm.password && inviteForm.password.length < 8) { toast.error('La contraseña debe tener al menos 8 caracteres'); return; }
+    if (inviteForm.password && !passwordMeetsPolicy(inviteForm.password, { email: inviteForm.email, name: `${inviteForm.first_name} ${inviteForm.last_name}` })) {
+      toast.error(`La contraseña no cumple la política (mín. ${MIN_LENGTH} caracteres, 3 categorías, sin datos personales)`);
+      return;
+    }
     setInviting(true);
     try {
       const payload = { ...inviteForm };
@@ -199,7 +203,10 @@ export default function ClinicSettingsPage() {
 
   const handleResetPassword = async () => {
     if (!editMember) return;
-    if (!editPassword || editPassword.length < 8) { toast.error('La contraseña debe tener al menos 8 caracteres'); return; }
+    if (!editPassword || !passwordMeetsPolicy(editPassword, { email: editMember?.email, name: `${editMemberForm.first_name || ''} ${editMemberForm.last_name || ''}` })) {
+      toast.error(`La contraseña no cumple la política (mín. ${MIN_LENGTH} caracteres, 3 categorías, sin datos personales)`);
+      return;
+    }
     setSavingPassword(true);
     try {
       await axios.put(`${API}/clinic/members/${editMember.id}/password`, { password: editPassword }, { headers });
@@ -639,7 +646,7 @@ export default function ClinicSettingsPage() {
                 </div>
                 <div><Label className="text-xs">Especialidad</Label><Input className="mt-1 text-sm" value={inviteForm.specialty} onChange={e => setInviteForm(p => ({ ...p, specialty: e.target.value }))} /></div>
                 <div>
-                  <Label className="text-xs">Contraseña <span className="text-slate-400">(opcional, mín. 8 caracteres)</span></Label>
+                  <Label className="text-xs">Contraseña <span className="text-slate-400">(opcional, mín. {MIN_LENGTH} caracteres)</span></Label>
                   <Input
                     type="text"
                     className="mt-1 text-sm font-mono"
@@ -648,6 +655,11 @@ export default function ClinicSettingsPage() {
                     onChange={e => setInviteForm(p => ({ ...p, password: e.target.value }))}
                     autoComplete="new-password"
                     data-testid="invite-password"
+                  />
+                  <PasswordStrengthMeter
+                    password={inviteForm.password}
+                    email={inviteForm.email}
+                    name={`${inviteForm.first_name || ''} ${inviteForm.last_name || ''}`}
                   />
                   <p className="text-[11px] text-slate-400 mt-1">Si la dejas vacía, el sistema generará una contraseña temporal y te la mostrará al confirmar.</p>
                 </div>
@@ -689,7 +701,7 @@ export default function ClinicSettingsPage() {
                 {editMember?.id !== currentMemberId && (
                   <div className="border-t border-slate-200 pt-3 mt-2">
                     <Label className="text-xs font-semibold text-slate-700">Cambiar contraseña</Label>
-                    <p className="text-[11px] text-slate-400 mb-2">Define una nueva contraseña para este usuario (mín. 8 caracteres). Útil si el miembro la olvidó.</p>
+                    <p className="text-[11px] text-slate-400 mb-2">Define una nueva contraseña para este usuario (mín. {MIN_LENGTH} caracteres). Útil si el miembro la olvidó.</p>
                     <div className="flex items-center gap-2">
                       <Input
                         type="text"
@@ -710,6 +722,11 @@ export default function ClinicSettingsPage() {
                         {savingPassword ? 'Guardando…' : 'Aplicar'}
                       </Button>
                     </div>
+                    <PasswordStrengthMeter
+                      password={editPassword}
+                      email={editMember?.email}
+                      name={`${editMemberForm.first_name || ''} ${editMemberForm.last_name || ''}`}
+                    />
                   </div>
                 )}
               </div>

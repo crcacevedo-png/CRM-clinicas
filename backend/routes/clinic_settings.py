@@ -177,11 +177,11 @@ async def invite_member(data: MemberInvite, ctx=Depends(require_clinic_member)):
         # If admin provided a custom password, use it (with validation); else generate temp
         custom_pw = (data.password or "").strip()
         if custom_pw:
-            if len(custom_pw) < 8:
-                raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
+            from services.password_policy import validate_password
+            validate_password(custom_pw, email=data.email, name=f"{data.first_name} {data.last_name}")
             temp_password = custom_pw
         else:
-            temp_password = f"Temp{uuid.uuid4().hex[:8]}!"
+            temp_password = generate_password()
         try:
             auth_user = supabase_admin.auth.admin.create_user({
                 "email": data.email,
@@ -327,8 +327,6 @@ async def reset_member_password(member_id: str, data: MemberPasswordReset, reque
     if member_id == ctx["member"]["id"]:
         raise HTTPException(status_code=400, detail="No puede cambiar su propia contraseña aquí; use su perfil")
     pw = (data.password or "").strip()
-    if len(pw) < 8:
-        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
     clinic_id = ctx["member"]["clinic_id"]
     try:
         member = sdb.table('clinic_members').select('id,user_id,first_name,last_name').eq('id', member_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -338,6 +336,16 @@ async def reset_member_password(member_id: str, data: MemberPasswordReset, reque
         user_id = mdata.get('user_id')
         if not user_id:
             raise HTTPException(status_code=400, detail="El miembro no tiene cuenta de autenticación")
+
+        # Fetch email of the target user for personal-token check
+        try:
+            target_user = supabase_admin.auth.admin.get_user_by_id(user_id)
+            target_email = target_user.user.email if target_user and target_user.user else None
+        except Exception:
+            target_email = None
+        from services.password_policy import validate_password
+        validate_password(pw, email=target_email,
+                          name=f"{mdata.get('first_name','')} {mdata.get('last_name','')}")
 
         supabase_admin.auth.admin.update_user_by_id(user_id, {"password": pw})
 
