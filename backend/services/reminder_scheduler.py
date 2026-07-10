@@ -199,8 +199,45 @@ def start_scheduler():
         coalesce=True,
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=30),
     )
+
+    # Monthly maintenance: 03:00 UTC on the 1st of each month.
+    # Distributed lock inside the maintenance runner keeps it safe on multi-pod.
+    from apscheduler.triggers.cron import CronTrigger
+
+    def _monthly_wrapper():
+        try:
+            from services.monthly_maintenance import run_monthly_maintenance
+            from core import run_sql
+            # Distributed lock so only one pod runs it
+            got = run_sql(
+                "SELECT public.try_acquire_lock(%s, %s, %s) AS ok",
+                ('monthly_maintenance', f'sched-{datetime.now(timezone.utc).isoformat()}', 1800),
+                fetch=True,
+            )
+            if not (got and got[0].get("ok")):
+                logger.info("monthly_maintenance skipped: another pod holds the lock")
+                return
+            try:
+                report = run_monthly_maintenance()
+                logger.info(f"monthly_maintenance done: {report.get('duration_seconds', '?')}s")
+            finally:
+                run_sql("SELECT public.release_lock(%s, %s)", ('monthly_maintenance', 'sched'))
+        except Exception as e:
+            logger.warning(f"monthly_maintenance failed: {e}")
+
+    _scheduler.add_job(
+        _monthly_wrapper,
+        trigger=CronTrigger(day=1, hour=3, minute=0),
+        id='monthly_maintenance',
+        max_instances=1,
+        coalesce=True,
+    )
+
     _scheduler.start()
-    logger.info(f"Reminder scheduler started — tick every {REMINDER_TICK_MIN}min, sends {REMINDER_HOURS_BEFORE}h before")
+    logger.info(
+        f"Scheduler started — reminder tick every {REMINDER_TICK_MIN}min "
+        f"(sends {REMINDER_HOURS_BEFORE}h before) + monthly maintenance day-1 03:00 UTC"
+    )
     return _scheduler
 
 

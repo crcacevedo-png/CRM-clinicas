@@ -10,7 +10,8 @@ import {
   ChevronRight,
   CreditCard,
   Megaphone,
-  Shield
+  Shield,
+  Activity
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -22,6 +23,7 @@ const navItems = [
   { to: '/admin/planes', icon: CreditCard, label: 'Planes' },
   { to: '/admin/comunicacion', icon: Megaphone, label: 'Comunicación' },
   { to: '/admin/auditoria', icon: Shield, label: 'Auditoría' },
+  { to: '/admin/salud', icon: Activity, label: 'Salud sistema' },
   { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 

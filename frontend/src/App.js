@@ -22,6 +22,7 @@ import SettingsPage from "./pages/admin/SettingsPage";
 import PlansPage from "./pages/admin/PlansPage";
 import AnnouncementsPage from "./pages/admin/AnnouncementsPage";
 import AuditLogPage from "./pages/admin/AuditLogPage";
+import SystemHealthPage from "./pages/admin/SystemHealthPage";
 
 // Clinic Pages
 import ClinicLayout from "./layouts/ClinicLayout";
@@ -72,6 +73,7 @@ function App() {
             <Route path="planes" element={<PlansPage />} />
             <Route path="comunicacion" element={<AnnouncementsPage />} />
             <Route path="auditoria" element={<AuditLogPage />} />
+            <Route path="salud" element={<SystemHealthPage />} />
             <Route path="configuracion" element={<SettingsPage />} />
           </Route>
 
