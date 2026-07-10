@@ -29,7 +29,20 @@ from server import limiter
 @limiter.limit("5/minute")
 async def login(payload: LoginRequest, request: Request, response: Response):
     from services.audit import log_audit
+    from services.db_rate_limit import check_rate_limit, rate_limit_key
     from core import ACCESS_TOKEN_COOKIE
+
+    # DB-backed rate limit by IP+email (multi-pod safe). slowapi @limiter is
+    # already in memory (single-pod fast rejection). This second layer catches
+    # attackers who bypass memory limits by hitting a different pod.
+    try:
+        await check_rate_limit(
+            rate_limit_key(request, "login", extra=payload.email.lower()),
+            limit=10, window_sec=300,  # 10 attempts / 5min / (ip+email)
+        )
+    except HTTPException:
+        await log_audit(action="login_rate_limited", entity="auth", actor_email=payload.email, request=request)
+        raise
     try:
         sb_response = supabase_user.auth.sign_in_with_password({
             "email": payload.email,

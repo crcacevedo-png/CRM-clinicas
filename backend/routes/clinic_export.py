@@ -1,54 +1,50 @@
-"""Full clinic data export.
+"""Full clinic data export — background job architecture.
 
-Endpoint `GET /api/clinic/export/full` (clinic_admin only) returns a ZIP
-containing one JSON file per table (filtered by clinic_id) plus all
-attachments stored in Supabase Storage under the clinic's tree.
+Flow:
+    1. `POST /api/clinic/export/full` → creates an `export_jobs` row (status='queued'),
+       returns `job_id`. Kicks off an asyncio task to process it.
+    2. Background task builds the ZIP into a tempfile, uploads it to Supabase
+       Storage under `exports/<clinic_id>/<job_id>.zip`, creates a signed URL
+       (24h), updates the row to status='done' + signed_url.
+    3. `GET /api/clinic/export/jobs/{job_id}` → returns current status/URL for polling.
+    4. `GET /api/clinic/export/jobs` → returns recent jobs for this clinic.
+
+Why background: the old `/export/full` streamed a ZIP built in memory. With
+larger clinics (>1000 patients) that would OOM the pod. Now the ZIP is
+written to a tempfile (bounded disk usage) and the request thread returns
+in <100ms.
+
+Multi-pod safety: only one pod picks up a job at a time via
+`pg_try_advisory_xact_lock(job_uuid_hash)`.
 """
+from __future__ import annotations
+
+import asyncio
 import io
 import json
+import os
+import tempfile
 import zipfile
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
 
-from core import sdb, supabase_admin, require_clinic_admin, logger
+from core import sdb, supabase_admin, require_clinic_admin, logger, now_iso
 
 router = APIRouter()
 
-# Tables that have clinic_id column directly. Order roughly preserves FK deps.
 DIRECT_TABLES = [
-    "clinics",  # special-cased: only the user's clinic row
-    "branches",
-    "clinic_members",
-    "clinic_feature_overrides",
-    "patients",
-    "appointments",
-    "medical_records",
-    "prescriptions",
-    "lab_orders",
-    "product_categories",
-    "products",
-    "services",
-    "suppliers",
-    "purchase_orders",
-    "inventory_stock",
-    "inventory_batches",
-    "inventory_movements",
-    "sales",
-    "payments",
-    "accounts_receivable",
-    "cash_registers",
-    "cash_sessions",
-    "expenses",
-    "commission_settings",
-    "commissions_earned",
-    "attachments",
-    "activity_logs",
-    "notification_logs",
+    "clinics", "branches", "clinic_members", "clinic_feature_overrides",
+    "patients", "appointments", "medical_records", "prescriptions", "lab_orders",
+    "product_categories", "products", "services", "suppliers", "purchase_orders",
+    "inventory_stock", "inventory_batches", "inventory_movements",
+    "sales", "payments", "accounts_receivable",
+    "cash_registers", "cash_sessions",
+    "expenses", "commission_settings", "commissions_earned",
+    "attachments", "activity_logs", "notification_logs",
 ]
 
-# Child tables joined via parent_table.id
 CHILD_TABLES = [
     ("sale_items", "sale_id", "sales"),
     ("prescription_items", "prescription_id", "prescriptions"),
@@ -62,19 +58,16 @@ STORAGE_BUCKET = "patient-files"
 
 
 def _json_default(o):
-    if isinstance(o, (datetime,)):
+    if isinstance(o, datetime):
         return o.isoformat()
     return str(o)
 
 
 def _fetch_all(table: str, eq_col: str, eq_val):
-    """Page through Supabase results to bypass the 1000 row default limit."""
     PAGE = 1000
-    out = []
-    offset = 0
+    out, offset = [], 0
     while True:
-        q = sdb.table(table).select("*").eq(eq_col, eq_val).range(offset, offset + PAGE - 1)
-        res = q.execute()
+        res = sdb.table(table).select("*").eq(eq_col, eq_val).range(offset, offset + PAGE - 1).execute()
         rows = res.data or []
         out.extend(rows)
         if len(rows) < PAGE:
@@ -84,15 +77,13 @@ def _fetch_all(table: str, eq_col: str, eq_val):
 
 
 def _fetch_in(table: str, in_col: str, in_values: list):
-    """Page through results filtered by `in_col IN (in_values)`. Splits in batches of 200."""
     if not in_values:
         return []
     out = []
     BATCH = 200
     for i in range(0, len(in_values), BATCH):
         chunk = in_values[i:i + BATCH]
-        offset = 0
-        PAGE = 1000
+        offset, PAGE = 0, 1000
         while True:
             res = sdb.table(table).select("*").in_(in_col, chunk).range(offset, offset + PAGE - 1).execute()
             rows = res.data or []
@@ -103,127 +94,253 @@ def _fetch_in(table: str, in_col: str, in_values: list):
     return out
 
 
-@router.get("/clinic/export/full")
-async def export_full(ctx=Depends(require_clinic_admin)):
-    """Stream a ZIP with all clinic data (JSON tables + storage files).
-
-    Restricted to `clinic_admin` role.
-    """
-    clinic_id = ctx["member"]["clinic_id"]
-    member = ctx["member"]
+def _build_zip_to_tempfile(clinic_id: str, on_progress) -> tuple[str, dict]:
+    """Build the full-clinic ZIP into a tempfile. Returns (temp_path, manifest)."""
     started = datetime.now(timezone.utc)
-
-    # Build ZIP in memory. Clinic data should be small enough; if it grows,
-    # switch to a temporary file.
-    buf = io.BytesIO()
     manifest = {
         "version": "1.0",
         "clinic_id": clinic_id,
         "exported_at": started.isoformat(),
-        "exported_by_member_id": member.get("id"),
         "tables": {},
         "storage": {"bucket": STORAGE_BUCKET, "files_count": 0, "files_total_bytes": 0, "errors": []},
     }
+    fd, tmp_path = tempfile.mkstemp(prefix=f"export_{clinic_id[:8]}_", suffix=".zip")
+    os.close(fd)  # close the raw fd — zipfile will reopen the path
 
-    try:
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-            # 1) Direct tables
-            id_index = {}  # table -> list of ids (for child join)
-            for t in DIRECT_TABLES:
-                try:
-                    if t == "clinics":
-                        res = sdb.table("clinics").select("*").eq("id", clinic_id).execute()
-                        rows = res.data or []
-                    else:
-                        rows = _fetch_all(t, "clinic_id", clinic_id)
-                    zf.writestr(f"data/{t}.json", json.dumps(rows, indent=2, ensure_ascii=False, default=_json_default))
-                    manifest["tables"][t] = len(rows)
-                    id_index[t] = [r["id"] for r in rows if r.get("id")]
-                except Exception as e:
-                    logger.error(f"Export: failed to dump {t}: {e}")
-                    manifest["tables"][t] = {"error": str(e)}
-
-            # 2) Child tables (filter by parent ids)
-            for child, fk_col, parent in CHILD_TABLES:
-                try:
-                    parent_ids = id_index.get(parent, [])
-                    rows = _fetch_in(child, fk_col, parent_ids)
-                    zf.writestr(f"data/{child}.json", json.dumps(rows, indent=2, ensure_ascii=False, default=_json_default))
-                    manifest["tables"][child] = len(rows)
-                except Exception as e:
-                    logger.error(f"Export: failed to dump {child}: {e}")
-                    manifest["tables"][child] = {"error": str(e)}
-
-            # 3) Attachments — download from Supabase Storage
-            attachments = []
+    with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+        # 1) Direct tables
+        id_index: dict[str, list] = {}
+        total_direct = len(DIRECT_TABLES)
+        for i, t in enumerate(DIRECT_TABLES):
             try:
-                attachments = _fetch_all("attachments", "clinic_id", clinic_id)
+                if t == "clinics":
+                    res = sdb.table("clinics").select("*").eq("id", clinic_id).execute()
+                    rows = res.data or []
+                else:
+                    rows = _fetch_all(t, "clinic_id", clinic_id)
+                zf.writestr(f"data/{t}.json", json.dumps(rows, indent=2, ensure_ascii=False, default=_json_default))
+                manifest["tables"][t] = len(rows)
+                id_index[t] = [r["id"] for r in rows if r.get("id")]
             except Exception as e:
-                manifest["storage"]["errors"].append(f"attachments query: {e}")
+                logger.error(f"Export: failed to dump {t}: {e}")
+                manifest["tables"][t] = {"error": str(e)}
+            on_progress({"phase": "direct_tables", "done": i + 1, "total": total_direct})
 
-            for att in attachments:
-                path = att.get("storage_path")
-                if not path:
+        # 2) Child tables
+        total_child = len(CHILD_TABLES)
+        for i, (child, fk_col, parent) in enumerate(CHILD_TABLES):
+            try:
+                parent_ids = id_index.get(parent, [])
+                rows = _fetch_in(child, fk_col, parent_ids)
+                zf.writestr(f"data/{child}.json", json.dumps(rows, indent=2, ensure_ascii=False, default=_json_default))
+                manifest["tables"][child] = len(rows)
+            except Exception as e:
+                logger.error(f"Export: failed to dump {child}: {e}")
+                manifest["tables"][child] = {"error": str(e)}
+            on_progress({"phase": "child_tables", "done": i + 1, "total": total_child})
+
+        # 3) Attachments
+        attachments = []
+        try:
+            attachments = _fetch_all("attachments", "clinic_id", clinic_id)
+        except Exception as e:
+            manifest["storage"]["errors"].append(f"attachments query: {e}")
+
+        total_att = len(attachments)
+        for i, att in enumerate(attachments):
+            path = att.get("storage_path")
+            if not path:
+                continue
+            try:
+                data = supabase_admin.storage.from_(STORAGE_BUCKET).download(path)
+                if isinstance(data, dict) and data.get("error"):
+                    manifest["storage"]["errors"].append({"path": path, "error": str(data["error"])})
                     continue
-                try:
-                    # supabase-py storage download returns raw bytes
-                    data = supabase_admin.storage.from_(STORAGE_BUCKET).download(path)
-                    if isinstance(data, dict) and data.get("error"):
-                        manifest["storage"]["errors"].append({"path": path, "error": str(data["error"])})
-                        continue
-                    # Place under files/<storage_path> keeping its tree
-                    zf.writestr(f"files/{path}", data)
-                    manifest["storage"]["files_count"] += 1
-                    manifest["storage"]["files_total_bytes"] += len(data)
-                except Exception as e:
-                    manifest["storage"]["errors"].append({"path": path, "error": str(e)[:200]})
+                zf.writestr(f"files/{path}", data)
+                manifest["storage"]["files_count"] += 1
+                manifest["storage"]["files_total_bytes"] += len(data)
+            except Exception as e:
+                manifest["storage"]["errors"].append({"path": path, "error": str(e)[:200]})
+            if (i + 1) % 25 == 0 or (i + 1) == total_att:
+                on_progress({"phase": "attachments", "done": i + 1, "total": total_att})
 
-            # 4) Manifest
-            manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
-            manifest["duration_seconds"] = (datetime.now(timezone.utc) - started).total_seconds()
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=_json_default))
+        # 4) Manifest + README
+        manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
+        manifest["duration_seconds"] = (datetime.now(timezone.utc) - started).total_seconds()
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False, default=_json_default))
+        readme = (
+            f"# Export de clínica\n\n"
+            f"Clinic ID: {clinic_id}\n"
+            f"Generado: {manifest['finished_at']}\n"
+            f"Tablas: {len(manifest['tables'])}\n"
+            f"Archivos adjuntos: {manifest['storage']['files_count']}\n"
+        )
+        zf.writestr("README.md", readme)
 
-            # Friendly README
-            readme = (
-                f"# Export de clínica\n\n"
-                f"Clinic ID: {clinic_id}\n"
-                f"Generado: {manifest['finished_at']}\n"
-                f"Tablas: {len(manifest['tables'])}\n"
-                f"Archivos adjuntos: {manifest['storage']['files_count']}\n\n"
-                f"Estructura:\n"
-                f"  - `data/<tabla>.json` — un archivo por tabla (filtrado a esta clínica)\n"
-                f"  - `files/<patient_id>/...` — archivos del bucket {STORAGE_BUCKET}\n"
-                f"  - `manifest.json` — metadatos del export\n"
+    return tmp_path, manifest
+
+
+async def _run_export_job(job_id: str, clinic_id: str):
+    """Process an export job in the background.
+
+    Uses `pg_try_advisory_xact_lock` on a hash of job_id so if two pods pick
+    up the same job (very unlikely with UUIDs), only one proceeds.
+    """
+    from core import run_sql
+    # Convert job_id UUID → int64 for advisory lock
+    lock_id = int(uuid.UUID(job_id).int >> 65)  # cast to 63 bits
+    try:
+        # Try to claim the job
+        r = run_sql("SELECT pg_try_advisory_lock(%s) AS ok", (lock_id,), fetch=True)
+        if not (r and r[0].get("ok")):
+            logger.info(f"Export job {job_id} already being processed by another worker")
+            return
+
+        sdb.table('export_jobs').update({
+            "status": "running",
+            "started_at": now_iso(),
+        }).eq('id', job_id).execute()
+
+        # Progress callback
+        def on_progress(update: dict):
+            try:
+                sdb.table('export_jobs').update({"progress": update}).eq('id', job_id).execute()
+            except Exception:
+                pass
+
+        # Build ZIP (blocking work — run in threadpool to keep event loop free)
+        loop = asyncio.get_event_loop()
+        tmp_path, manifest = await loop.run_in_executor(
+            None, _build_zip_to_tempfile, clinic_id, on_progress
+        )
+
+        try:
+            size = os.path.getsize(tmp_path)
+            # Upload to Supabase Storage under exports/<clinic>/<job>.zip
+            storage_path = f"{clinic_id}/exports/{job_id}.zip"
+            with open(tmp_path, "rb") as f:
+                data = f.read()
+            supabase_admin.storage.from_(STORAGE_BUCKET).upload(
+                storage_path, data,
+                {"content-type": "application/zip", "upsert": "true"},
             )
-            zf.writestr("README.md", readme)
+            # 24h signed URL for download
+            signed = supabase_admin.storage.from_(STORAGE_BUCKET).create_signed_url(storage_path, 86400)
+            signed_url = signed.get('signedURL') or signed.get('signedUrl', '')
+            expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+
+            sdb.table('export_jobs').update({
+                "status": "done",
+                "finished_at": now_iso(),
+                "file_path": storage_path,
+                "file_size": size,
+                "signed_url": signed_url,
+                "url_expires_at": expires_at,
+                "progress": {"phase": "done", "manifest": manifest},
+            }).eq('id', job_id).execute()
+
+            logger.info(f"Export job {job_id} finished: {size} bytes → {storage_path}")
+        finally:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
     except Exception as e:
-        logger.error(f"Export full failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al generar export: {e}")
+        logger.error(f"Export job {job_id} failed: {e}")
+        try:
+            sdb.table('export_jobs').update({
+                "status": "failed",
+                "finished_at": now_iso(),
+                "error": str(e)[:500],
+            }).eq('id', job_id).execute()
+        except Exception:
+            pass
+    finally:
+        try:
+            run_sql("SELECT pg_advisory_unlock(%s)", (lock_id,))
+        except Exception:
+            pass
 
-    buf.seek(0)
-    filename = f"clinic_export_{clinic_id[:8]}_{started.strftime('%Y%m%d_%H%M%S')}.zip"
+
+@router.post("/clinic/export/full")
+async def start_export_job(ctx=Depends(require_clinic_admin)):
+    """Queue a background job that builds a full-clinic ZIP.
+
+    Returns immediately with `job_id`. Poll `/clinic/export/jobs/{id}` for
+    progress and the signed download URL.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    member = ctx["member"]
+    from core import get_current_user  # noqa: F401 — imported for type hint clarity
+    job_id = str(uuid.uuid4())
+
+    # Prevent stampede: reject if this clinic has a queued/running job already
+    active = sdb.table('export_jobs').select('id,status').eq('clinic_id', clinic_id).in_('status', ['queued', 'running']).execute()
+    if active.data:
+        raise HTTPException(status_code=409, detail=f"Ya hay un export en curso ({active.data[0]['status']}). Espera a que termine.")
+
+    sdb.table('export_jobs').insert({
+        "id": job_id,
+        "clinic_id": clinic_id,
+        "requested_by": member.get("user_id"),
+        "requested_email": member.get("email"),
+        "status": "queued",
+    }).execute()
+
+    # Fire the background task. Not awaited on purpose.
+    asyncio.create_task(_run_export_job(job_id, clinic_id))
+
+    # Audit
     try:
         from services.audit import log_audit, actor_from_ctx
         await log_audit(
-            action="clinic_data_export",
+            action="clinic_data_export_queued",
             entity="clinic",
             entity_id=clinic_id,
             **actor_from_ctx(ctx),
-            meta={
-                "tables": len(manifest["tables"]),
-                "files": manifest["storage"]["files_count"],
-                "total_bytes": manifest["storage"]["files_total_bytes"],
-            },
+            meta={"job_id": job_id},
         )
     except Exception:
         pass
-    return StreamingResponse(
-        buf,
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Export-Tables": str(len(manifest["tables"])),
-            "X-Export-Files": str(manifest["storage"]["files_count"]),
-        },
-    )
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/clinic/export/jobs")
+async def list_export_jobs(ctx=Depends(require_clinic_admin)):
+    """Recent export jobs (last 20) for this clinic."""
+    clinic_id = ctx["member"]["clinic_id"]
+    res = sdb.table('export_jobs').select('id,status,created_at,started_at,finished_at,file_size,url_expires_at,error,progress').eq('clinic_id', clinic_id).order('created_at', desc=True).limit(20).execute()
+    return {"jobs": res.data or []}
+
+
+@router.get("/clinic/export/jobs/{job_id}")
+async def get_export_job(job_id: str, ctx=Depends(require_clinic_admin)):
+    """Poll a job by id. Returns signed URL once status=done."""
+    clinic_id = ctx["member"]["clinic_id"]
+    res = sdb.table('export_jobs').select('*').eq('id', job_id).eq('clinic_id', clinic_id).maybe_single().execute()
+    data = getattr(res, 'data', None)
+    if not data:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+
+    # If the signed URL is close to expiring, refresh it
+    if data.get('status') == 'done' and data.get('file_path'):
+        try:
+            expires = data.get('url_expires_at')
+            need_refresh = True
+            if expires:
+                exp_dt = datetime.fromisoformat(expires.replace('Z', '+00:00'))
+                need_refresh = (exp_dt - datetime.now(timezone.utc)).total_seconds() < 300
+            if need_refresh:
+                signed = supabase_admin.storage.from_(STORAGE_BUCKET).create_signed_url(data['file_path'], 86400)
+                url = signed.get('signedURL') or signed.get('signedUrl', '')
+                if url:
+                    new_exp = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+                    sdb.table('export_jobs').update({"signed_url": url, "url_expires_at": new_exp}).eq('id', job_id).execute()
+                    data['signed_url'] = url
+                    data['url_expires_at'] = new_exp
+        except Exception as e:
+            logger.warning(f"Refresh export signed URL failed: {e}")
+
+    return data

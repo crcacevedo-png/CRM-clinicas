@@ -627,13 +627,11 @@ async def get_sale_pdf_url(sale_id: str, ctx=Depends(require_clinic_member)):
         if not sale_data:
             raise HTTPException(status_code=404, detail="Venta no encontrada")
         path = f"{clinic_id}/sales/{sale_id}.pdf"
-        try:
-            signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
-            return {"url": signed.get('signedURL') or signed.get('signedUrl', '')}
-        except Exception:
-            # Try regenerating
+        from services.signed_url_cache import get_or_create_signed_url
+        url = get_or_create_signed_url('patient-files', path, ttl=3600)
+        if not url:
             url = await generate_sale_pdf(sale_id, clinic_id)
-            return {"url": url or ""}
+        return {"url": url or ""}
     except HTTPException:
         raise
     except Exception as e:

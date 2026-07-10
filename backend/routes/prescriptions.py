@@ -559,8 +559,9 @@ async def get_prescription_pdf_url(presc_id: str, ctx=Depends(require_clinic_mem
         if not presc_data:
             raise HTTPException(status_code=404, detail="Receta no encontrada")
         path = f"{clinic_id}/prescriptions/{presc_id}.pdf"
-        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
-        return {"url": signed.get('signedURL') or signed.get('signedUrl', '')}
+        from services.signed_url_cache import get_or_create_signed_url
+        url = get_or_create_signed_url('patient-files', path, ttl=3600)
+        return {"url": url or ""}
     except HTTPException:
         raise
     except Exception as e:

@@ -34,14 +34,43 @@ _scheduler: Optional[AsyncIOScheduler] = None
 
 
 async def _send_due_reminders() -> dict:
-    """Find and send all due reminders. Returns counters for observability."""
-    from core import sdb, now_iso
+    """Find and send all due reminders. Returns counters for observability.
+
+    Multi-pod safe via a distributed lock in Postgres (`try_acquire_lock` +
+    `release_lock` helper functions). Only one pod at a time processes the
+    tick; others skip immediately. TTL on the lock is 5 min so a crashed
+    pod auto-releases. Also opportunistically ensures the next 3 months of
+    audit_log partitions exist.
+    """
+    from core import sdb, now_iso, run_sql
     from services.email_service import send_email
     from services.email_templates import appointment_reminder
+    import os, socket, uuid as _uuid
 
-    counters = {"checked": 0, "sent": 0, "failed": 0, "skipped_no_email": 0}
+    counters = {"checked": 0, "sent": 0, "failed": 0, "skipped_no_email": 0, "skipped_locked": 0}
 
+    LOCK_NAME = "reminder_tick"
+    # Unique holder id per process — hostname+PID+random suffix
+    holder = f"{socket.gethostname()}:{os.getpid()}:{_uuid.uuid4().hex[:8]}"
+
+    lock_acquired = False
     try:
+        got = run_sql(
+            "SELECT public.try_acquire_lock(%s, %s, %s) AS ok",
+            (LOCK_NAME, holder, 300),
+            fetch=True,
+        )
+        lock_acquired = bool(got and got[0].get("ok"))
+        if not lock_acquired:
+            counters["skipped_locked"] = 1
+            return counters
+
+        # Opportunistic partition maintenance
+        try:
+            run_sql("SELECT public.ensure_audit_partitions(3)")
+        except Exception as e:
+            logger.debug(f"ensure_audit_partitions noop: {e}")
+
         now_utc = datetime.now(timezone.utc)
         window_lo = (now_utc + timedelta(hours=REMINDER_HOURS_BEFORE) - timedelta(minutes=REMINDER_WINDOW_MIN)).isoformat()
         window_hi = (now_utc + timedelta(hours=REMINDER_HOURS_BEFORE) + timedelta(minutes=REMINDER_WINDOW_MIN)).isoformat()
@@ -146,6 +175,13 @@ async def _send_due_reminders() -> dict:
     except Exception as e:
         logger.warning(f"Reminder scheduler tick failed: {e}")
         return counters
+    finally:
+        if lock_acquired:
+            try:
+                from core import run_sql as _run_sql
+                _run_sql("SELECT public.release_lock(%s, %s)", (LOCK_NAME, holder))
+            except Exception:
+                pass
 
 
 def start_scheduler():

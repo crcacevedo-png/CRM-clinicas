@@ -180,8 +180,9 @@ async def get_lab_order_pdf_url(order_id: str, ctx=Depends(require_clinic_member
         if not order_data:
             raise HTTPException(status_code=404, detail="Orden no encontrada")
         path = f"{clinic_id}/lab-orders/{order_id}.pdf"
-        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
-        return {"url": signed.get('signedURL') or signed.get('signedUrl', '')}
+        from services.signed_url_cache import get_or_create_signed_url
+        url = get_or_create_signed_url('patient-files', path, ttl=3600)
+        return {"url": url or ""}
     except HTTPException:
         raise
     except Exception as e:

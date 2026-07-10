@@ -316,20 +316,41 @@ export default function ClinicSettingsPage() {
     if (!window.confirm('¿Descargar export completo de la clínica? Puede tardar varios segundos según el volumen de datos.')) return;
     setDownloadingExport(true);
     try {
-      const res = await axios.get(`${API}/clinic/export/full`, { headers, responseType: 'blob' });
-      const blob = new Blob([res.data], { type: 'application/zip' });
-      const url = window.URL.createObjectURL(blob);
+      // Kick off a background job
+      const start = await axios.post(`${API}/clinic/export/full`, {}, { headers });
+      const jobId = start.data.job_id;
+      toast.success('Export en curso. Se descargará automáticamente cuando termine.');
+
+      // Poll status every 3s, up to 10 minutes
+      let done = false;
+      let job = null;
+      const maxTicks = 200;
+      for (let i = 0; i < maxTicks; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const st = await axios.get(`${API}/clinic/export/jobs/${jobId}`, { headers });
+        job = st.data;
+        if (job.status === 'done') { done = true; break; }
+        if (job.status === 'failed') break;
+      }
+      if (!done) {
+        if (job?.status === 'failed') {
+          toast.error(`Export falló: ${job.error || 'error desconocido'}`);
+        } else {
+          toast.error('El export tardó más de 10 minutos. Revísalo en la sección Datos.');
+        }
+        return;
+      }
+
+      // Download via signed URL
       const a = document.createElement('a');
-      a.href = url;
+      a.href = job.signed_url;
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       a.download = `clinic_export_${ts}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      window.URL.revokeObjectURL(url);
-      const numTables = res.headers['x-export-tables'];
-      const numFiles = res.headers['x-export-files'];
-      toast.success(`Export descargado (${numTables} tablas, ${numFiles} archivos)`);
+      const sizeMb = ((job.file_size || 0) / 1024 / 1024).toFixed(1);
+      toast.success(`Export descargado (${sizeMb} MB)`);
     } catch (e) {
       const msg = e?.response?.status === 403
         ? 'Solo el administrador de clínica puede exportar datos'
