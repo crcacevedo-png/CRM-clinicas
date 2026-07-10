@@ -6,7 +6,7 @@ import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Progress } from '../../components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import { RefreshCw, Play, AlertTriangle, CheckCircle2, Database, HardDrive, Users, Shield, Cpu, Activity, Clock } from 'lucide-react';
+import { RefreshCw, Play, AlertTriangle, CheckCircle2, Database, HardDrive, Users, Shield, Cpu, Activity, Clock, Archive, Download } from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -48,12 +48,17 @@ export default function SystemHealthPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [archives, setArchives] = useState([]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API}/admin/system/health`, { headers });
-      setData(res.data);
+      const [health, arch] = await Promise.all([
+        axios.get(`${API}/admin/system/health`, { headers }),
+        axios.get(`${API}/admin/maintenance/archives`, { headers }).catch(() => ({ data: { archives: [] } })),
+      ]);
+      setData(health.data);
+      setArchives(arch.data.archives || []);
     } catch (err) {
       toast.error('Error al cargar métricas: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -69,7 +74,8 @@ export default function SystemHealthPage() {
     try {
       const res = await axios.post(`${API}/admin/maintenance/monthly`, {}, { headers, timeout: 300000 });
       const r = res.data;
-      toast.success(`Mantenimiento completado en ${r.duration_seconds?.toFixed(1)}s — ${r.partitions_created || 0} particiones nuevas, ${r.partitions_dropped?.length || 0} dropped`);
+      const archived = (r.partitions_archived_dropped || []).filter(p => p.dropped).length;
+      toast.success(`Mantenimiento completado en ${r.duration_seconds?.toFixed(1)}s — ${r.partitions_created || 0} particiones nuevas, ${archived} archivadas+dropped`);
       load();
     } catch (err) {
       toast.error('Error al ejecutar mantenimiento: ' + (err.response?.data?.detail || err.message));
@@ -269,6 +275,61 @@ export default function SystemHealthPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Cold storage archives — audit_log partitions >12 months */}
+      <Card data-testid="cold-storage-archives-card">
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Archive className="w-4 h-4 text-slate-600" />
+            Archivos históricos (Cold Storage)
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {archives.length === 0 ? (
+            <p className="text-xs text-slate-400 py-4">
+              Aún no hay particiones archivadas. Se generan automáticamente cuando una partición supera los 12 meses.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Archivo</TableHead>
+                  <TableHead className="text-xs">Fecha</TableHead>
+                  <TableHead className="text-xs text-right">Tamaño</TableHead>
+                  <TableHead className="text-xs text-right">Descarga</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {archives.map(a => (
+                  <TableRow key={a.name} data-testid={`archive-row-${a.name}`}>
+                    <TableCell className="text-xs font-mono">{a.name}</TableCell>
+                    <TableCell className="text-xs text-slate-500">
+                      {a.updated_at ? new Date(a.updated_at).toLocaleDateString('es-GT') : '-'}
+                    </TableCell>
+                    <TableCell className="text-xs text-right font-mono">{fmtBytes(a.size)}</TableCell>
+                    <TableCell className="text-xs text-right">
+                      {a.signed_url ? (
+                        <a
+                          href={a.signed_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-teal-600 hover:text-teal-800"
+                          data-testid={`download-archive-${a.name}`}
+                        >
+                          <Download className="w-3 h-3" /> Descargar
+                        </a>
+                      ) : <span className="text-slate-400">—</span>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+          <p className="text-xs text-slate-500 mt-3">
+            Formato: JSONL comprimido (gzip). URLs firmadas válidas por 24h. Ideal para restauración forense o cumplimiento regulatorio.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Growth recommendations */}
       <Card>

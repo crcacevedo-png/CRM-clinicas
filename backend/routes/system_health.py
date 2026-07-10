@@ -350,3 +350,41 @@ async def run_maintenance_manually(user=Depends(require_super_admin)):
     """Manually trigger the monthly maintenance job. Idempotent — safe anytime."""
     from services.monthly_maintenance import run_monthly_maintenance
     return run_monthly_maintenance()
+
+
+@router.get("/admin/maintenance/archives")
+async def list_audit_archives(user=Depends(require_super_admin)):
+    """List archived audit_log partitions in Storage.
+
+    Each entry: {name, size, updated_at, signed_url (24h)}. Used by super admin
+    to download cold-storage archives for compliance or forensic review.
+    """
+    try:
+        files = supabase_admin.storage.from_('patient-files').list(
+            '_archives/audit_log',
+            {"limit": 200, "sortBy": {"column": "name", "order": "desc"}},
+        ) or []
+    except Exception as e:
+        logger.warning(f"list archives failed: {e}")
+        return {"archives": [], "error": str(e)[:200]}
+
+    out = []
+    for f in files:
+        name = f.get('name')
+        if not name or not name.endswith('.jsonl.gz'):
+            continue
+        path = f"_archives/audit_log/{name}"
+        try:
+            signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 86400)
+            url = signed.get('signedURL') or signed.get('signed_url')
+        except Exception:
+            url = None
+        meta = f.get('metadata') or {}
+        out.append({
+            "name": name,
+            "path": path,
+            "size": meta.get('size'),
+            "updated_at": f.get('updated_at') or f.get('created_at'),
+            "signed_url": url,
+        })
+    return {"archives": out, "count": len(out)}

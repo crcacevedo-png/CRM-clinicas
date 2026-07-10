@@ -3,8 +3,9 @@
 Runs the housekeeping tasks that keep the DB fast and clean at scale:
 
   1. `ensure_audit_partitions(6)` — pre-create the next 6 months of partitions.
-  2. DROP `audit_log_YYYY_MM` partitions older than 12 months (archive-first
-     policy left to the operator — we don't move to cold storage automatically).
+  2. Archive+DROP `audit_log_YYYY_MM` partitions older than 12 months. Each
+     partition is exported as gzipped JSONL to Storage (`_archives/audit_log/`)
+     BEFORE the DROP. If the upload fails the partition is kept intact.
   3. VACUUM ANALYZE on the top-10 largest tables (bloat + planner stats).
   4. DELETE from `rate_limit_events` older than 1 hour.
   5. DELETE completed `export_jobs` older than 30 days + their Storage files.
@@ -15,13 +16,35 @@ Wired to run:
 """
 from __future__ import annotations
 
+import gzip
+import io
+import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
+from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from core import sdb, supabase_admin, run_sql
 
 logger = logging.getLogger(__name__)
+
+# Bucket + path prefix for archived audit_log partitions
+_ARCHIVE_BUCKET = 'patient-files'
+_ARCHIVE_PREFIX = '_archives/audit_log'
+
+
+def _json_default(o: Any) -> Any:
+    """JSON serializer for types Postgres returns that json.dumps can't handle."""
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, UUID):
+        return str(o)
+    if isinstance(o, Decimal):
+        return float(o)
+    if isinstance(o, (bytes, bytearray, memoryview)):
+        return bytes(o).hex()
+    raise TypeError(f"not serializable: {type(o).__name__}")
 
 # Tables to VACUUM ANALYZE — biggest / most write-heavy first
 _VACUUM_TABLES = [
@@ -31,14 +54,42 @@ _VACUUM_TABLES = [
 ]
 
 
-def _drop_old_audit_partitions() -> list[str]:
-    """DROP audit_log_YYYY_MM partitions older than 12 months.
+def _archive_partition_to_storage(name: str) -> dict[str, Any]:
+    """Export all rows from `public.<name>` as gzipped JSONL to Storage.
 
-    Skips `audit_log_pre_2026` (the catch-all). Returns names dropped.
+    Returns {ok: bool, path: str, rows: int, bytes: int, error?: str}.
+    Idempotent: uses upsert=true so re-runs overwrite the same file.
     """
-    dropped: list[str] = []
+    # Fetch all rows from the partition
+    rows = run_sql(f"SELECT * FROM public.{name}", None, fetch=True) or []
+    # Serialize to JSONL then gzip in memory
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6) as gz:
+        for r in rows:
+            gz.write(json.dumps(r, default=_json_default, separators=(',', ':')).encode('utf-8'))
+            gz.write(b'\n')
+    payload = buf.getvalue()
+    path = f"{_ARCHIVE_PREFIX}/{name}.jsonl.gz"
     try:
-        # Find partitions whose upper bound is > 12 months ago
+        supabase_admin.storage.from_(_ARCHIVE_BUCKET).upload(
+            path,
+            payload,
+            {"content-type": "application/octet-stream", "upsert": "true"},
+        )
+        return {"ok": True, "path": path, "rows": len(rows), "bytes": len(payload)}
+    except Exception as e:
+        return {"ok": False, "path": path, "rows": len(rows), "bytes": len(payload), "error": str(e)[:200]}
+
+
+def _drop_old_audit_partitions() -> list[dict[str, Any]]:
+    """Archive to Storage, then DROP audit_log_YYYY_MM partitions older than 12 months.
+
+    Skips `audit_log_pre_2026` (the catch-all). Returns a list of
+    {name, archived: {...}, dropped: bool, error?} per partition considered.
+    A partition is ONLY dropped after the archive upload succeeds.
+    """
+    results: list[dict[str, Any]] = []
+    try:
         rows = run_sql(
             """
             SELECT c.relname
@@ -57,19 +108,36 @@ def _drop_old_audit_partitions() -> list[str]:
         cutoff = (datetime.now(timezone.utc).replace(day=1) - timedelta(days=380)).date()
         for r in rows:
             name = r["relname"]
-            # Extract YYYY_MM from name
             try:
                 y = int(name.split("_")[-2])
                 m = int(name.split("_")[-1])
                 part_start = datetime(y, m, 1).date()
-                if part_start < cutoff:
-                    run_sql(f"DROP TABLE IF EXISTS public.{name}")
-                    dropped.append(name)
+                if part_start >= cutoff:
+                    continue
             except Exception as e:
                 logger.warning(f"skip partition {name}: {e}")
+                continue
+
+            entry: dict[str, Any] = {"name": name, "dropped": False}
+            archive = _archive_partition_to_storage(name)
+            entry["archived"] = archive
+            if not archive.get("ok"):
+                # Do NOT drop if archive failed — retain the data.
+                entry["error"] = f"archive failed: {archive.get('error', 'unknown')}"
+                logger.warning(f"partition {name} NOT dropped — archive failed: {archive.get('error')}")
+                results.append(entry)
+                continue
+            try:
+                run_sql(f"DROP TABLE IF EXISTS public.{name}")
+                entry["dropped"] = True
+                logger.info(f"partition {name} archived to {archive['path']} ({archive['bytes']} bytes, {archive['rows']} rows) and dropped")
+            except Exception as e:
+                entry["error"] = f"drop failed: {str(e)[:200]}"
+                logger.warning(f"drop partition {name} failed after archive: {e}")
+            results.append(entry)
     except Exception as e:
         logger.warning(f"drop_old_audit_partitions failed: {e}")
-    return dropped
+    return results
 
 
 def _vacuum_analyze() -> dict[str, str]:
@@ -132,8 +200,8 @@ def run_monthly_maintenance() -> dict[str, Any]:
     except Exception as e:
         report["partitions_created_error"] = str(e)[:200]
 
-    # 2) Drop old partitions
-    report["partitions_dropped"] = _drop_old_audit_partitions()
+    # 2) Archive to cold storage + drop old partitions
+    report["partitions_archived_dropped"] = _drop_old_audit_partitions()
 
     # 3) VACUUM ANALYZE hot tables
     report["vacuum"] = _vacuum_analyze()
