@@ -62,6 +62,10 @@ async def login(payload: LoginRequest, request: Request, response: Response):
         user_id = sb_response.user.id
         access_token = sb_response.session.access_token
         refresh_token = sb_response.session.refresh_token
+        # Read the "must change password" flag from user_metadata (set by
+        # admin invite/reset). Sent to the frontend so it can gate routes.
+        from core import user_needs_password_reset
+        pw_reset = user_needs_password_reset(sb_response.user)
 
         # Fix #5: also set the access token as an httpOnly Secure SameSite=Strict
         # cookie. The frontend still uses the Authorization header today (no
@@ -94,7 +98,8 @@ async def login(payload: LoginRequest, request: Request, response: Response):
                 refresh_token=refresh_token,
                 user_type="super_admin",
                 user_id=user_id,
-                email=payload.email
+                email=payload.email,
+                password_needs_reset=pw_reset,
             )
 
         cm = sdb.table('clinic_members').select('clinic_id,role').eq('user_id', user_id).eq('is_active', True).execute()
@@ -114,7 +119,8 @@ async def login(payload: LoginRequest, request: Request, response: Response):
                 user_type="clinic_member",
                 user_id=user_id,
                 email=payload.email,
-                clinic_id=cm.data[0].get("clinic_id")
+                clinic_id=cm.data[0].get("clinic_id"),
+                password_needs_reset=pw_reset,
             )
 
         # No role — clear the cookie we just set
@@ -161,6 +167,8 @@ async def logout(response: Response):
 @router.get("/auth/me")
 async def auth_me(user=Depends(get_current_user)):
     """Return identity + role payload for the authenticated user."""
+    from core import user_needs_password_reset
+    pw_reset = user_needs_password_reset(user)
     sa = sdb.table('super_admins').select('id,first_name,last_name,email').eq('user_id', user.id).maybe_single().execute()
     sa_data = getattr(sa, 'data', None) if sa else None
     if sa_data:
@@ -171,6 +179,7 @@ async def auth_me(user=Depends(get_current_user)):
             "name": f"{sa_data.get('first_name','')} {sa_data.get('last_name','')}".strip(),
             "clinic_id": None,
             "role": "super_admin",
+            "password_needs_reset": pw_reset,
         }
     cm = sdb.table('clinic_members').select('id,clinic_id,role,first_name,last_name,specialty').eq('user_id', user.id).eq('is_active', True).maybe_single().execute()
     cm_data = getattr(cm, 'data', None) if cm else None
@@ -184,6 +193,81 @@ async def auth_me(user=Depends(get_current_user)):
             "member_id": cm_data.get('id'),
             "role": cm_data.get('role'),
             "specialty": cm_data.get('specialty'),
+            "password_needs_reset": pw_reset,
         }
     raise HTTPException(status_code=403, detail="Usuario sin acceso")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/auth/change-password")
+@limiter.limit("10/minute")
+async def change_password(payload: ChangePasswordRequest, request: Request, user=Depends(get_current_user)):
+    """Self-service password change. Verifies current password, applies policy,
+    clears the `password_needs_reset` flag on success.
+    """
+    from services.password_policy import validate_password
+    from services.audit import log_audit
+    from core import supabase_user, mark_password_needs_reset
+
+    # 1) Verify current password by attempting sign-in — cheapest path with
+    # correct rate-limit awareness. supabase_user.auth.sign_in returns 400
+    # if wrong; we don't persist that session.
+    try:
+        verify = supabase_user.auth.sign_in_with_password({
+            "email": user.email,
+            "password": payload.current_password,
+        })
+        if not verify or not verify.session:
+            raise HTTPException(status_code=400, detail="Contraseña actual incorrecta")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Contraseña actual incorrecta")
+
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta a la actual")
+
+    # 2) Enforce the policy on the new password
+    # Fetch display name for personal-token check
+    display_name = None
+    try:
+        cm = sdb.table('clinic_members').select('first_name,last_name').eq('user_id', user.id).maybe_single().execute()
+        cm_data = getattr(cm, 'data', None) if cm else None
+        if cm_data:
+            display_name = f"{cm_data.get('first_name','')} {cm_data.get('last_name','')}".strip()
+        else:
+            sa = sdb.table('super_admins').select('first_name,last_name').eq('user_id', user.id).maybe_single().execute()
+            sa_data = getattr(sa, 'data', None) if sa else None
+            if sa_data:
+                display_name = f"{sa_data.get('first_name','')} {sa_data.get('last_name','')}".strip()
+    except Exception:
+        pass
+    validate_password(payload.new_password, email=user.email, name=display_name)
+
+    # 3) Persist the change via admin API and clear the reset flag
+    try:
+        supabase_admin.auth.admin.update_user_by_id(user.id, {"password": payload.new_password})
+        mark_password_needs_reset(user.id, needs=False)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"change_password persist error: {e}")
+        raise HTTPException(status_code=500, detail="Error al actualizar contraseña")
+
+    try:
+        await log_audit(
+            action="password_self_changed",
+            entity="auth",
+            actor_user_id=user.id,
+            actor_email=user.email,
+            request=request,
+        )
+    except Exception:
+        pass
+
+    return {"ok": True, "message": "Contraseña actualizada correctamente"}
 

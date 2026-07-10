@@ -84,6 +84,36 @@ def generate_slug(name: str) -> str:
     slug = name.lower().replace(" ", "-").replace(".", "").replace(",", "")
     return ''.join(c for c in slug if c.isalnum() or c == '-')
 
+def mark_password_needs_reset(user_id: str, needs: bool = True) -> None:
+    """Toggle Supabase Auth user_metadata.password_needs_reset for the given user.
+
+    Called by super-admin/clinic-admin when they set someone else's password
+    (invite, reset). The flag is read on login → forces the user through
+    /cambiar-password before any other route. Cleared automatically when the
+    user runs the self-service change endpoint.
+
+    Best-effort: swallow errors so a metadata update failure never breaks the
+    primary password-change flow.
+    """
+    try:
+        cur = supabase_admin.auth.admin.get_user_by_id(user_id)
+        md = dict(cur.user.user_metadata or {}) if cur and cur.user else {}
+        md['password_needs_reset'] = bool(needs)
+        supabase_admin.auth.admin.update_user_by_id(user_id, {"user_metadata": md})
+    except Exception as e:
+        logger.warning(f"mark_password_needs_reset({user_id}, {needs}) failed: {e}")
+
+
+def user_needs_password_reset(user) -> bool:
+    """Read Supabase user_metadata.password_needs_reset defensively."""
+    try:
+        md = getattr(user, 'user_metadata', None) or {}
+        return bool(md.get('password_needs_reset', False))
+    except Exception:
+        return False
+
+
+
 def generate_password(length: int = 14) -> str:
     """Generate a random password that satisfies services.password_policy.
 
@@ -267,17 +297,19 @@ ACCESS_TOKEN_COOKIE = "cortexia_access_token"
 class _LocalAuthUser:
     """Minimal user object returned by local JWT validation.
 
-    Exposes `.id` and `.email` so existing call sites (`user.id`, `user.email`)
-    keep working without changes. The Supabase Python SDK returns a richer
-    object, but downstream code only reads these two attributes.
+    Exposes `.id`, `.email`, `.role`, `.aud`, `.user_metadata` so existing
+    call sites keep working without changes. The Supabase Python SDK returns
+    a richer object, but downstream code only reads these attributes.
     """
-    __slots__ = ("id", "email", "role", "aud")
+    __slots__ = ("id", "email", "role", "aud", "user_metadata")
 
-    def __init__(self, sub: str, email: str | None, role: str | None, aud: str | None):
+    def __init__(self, sub: str, email: str | None, role: str | None, aud: str | None,
+                 user_metadata: dict | None = None):
         self.id = sub
         self.email = email
         self.role = role
         self.aud = aud
+        self.user_metadata = user_metadata or {}
 
 
 # JWKS cache: lazily fetched on first use, kept in memory for the process lifetime.
@@ -376,6 +408,7 @@ def _decode_jwt_local(token: str):
         email=payload.get("email"),
         role=payload.get("role"),
         aud=payload.get("aud"),
+        user_metadata=payload.get("user_metadata"),
     )
 
 
@@ -488,6 +521,7 @@ class LoginResponse(BaseModel):
     user_id: str
     email: str
     clinic_id: Optional[str] = None
+    password_needs_reset: bool = False
 
 class ClinicCreate(BaseModel):
     name: str

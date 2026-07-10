@@ -153,6 +153,10 @@ async def create_clinic(data: ClinicCreate, user=Depends(require_super_admin)):
 
         sdb.table('clinic_members').insert(member_doc).execute()
 
+        # Force the newly-created admin to change password on first login
+        from core import mark_password_needs_reset
+        mark_password_needs_reset(admin_user_id, needs=True)
+
         return {
             "message": "Clinica creada exitosamente",
             "clinic": clinic_doc,
@@ -314,6 +318,10 @@ async def add_clinic_member(clinic_id: str, data: ClinicMemberCreate, user=Depen
 
         sdb.table('clinic_members').insert(member_doc).execute()
 
+        # Force new member to change password on first login
+        from core import mark_password_needs_reset
+        mark_password_needs_reset(new_user_id, needs=True)
+
         return {
             "message": "Usuario creado exitosamente",
             "credentials": {
@@ -416,6 +424,9 @@ async def reset_user_password(member_id: str, request: Request, user=Depends(req
                 member.data["user_id"],
                 {"password": new_password}
             )
+            # Force user to set a new password on next login
+            from core import mark_password_needs_reset
+            mark_password_needs_reset(member.data["user_id"], needs=True)
         except Exception as e:
             logger.error(f"Reset password error: {e}")
             raise HTTPException(status_code=400, detail="Error al resetear contrasena")

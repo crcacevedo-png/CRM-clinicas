@@ -23,7 +23,9 @@ export default function LoginPage() {
     const result = await login(email, password);
 
     if (result.success) {
-      if (result.userType === 'super_admin') {
+      if (result.passwordNeedsReset) {
+        navigate('/cambiar-password');
+      } else if (result.userType === 'super_admin') {
         navigate('/admin');
       } else if (result.userType === 'clinic_member') {
         navigate('/dashboard');

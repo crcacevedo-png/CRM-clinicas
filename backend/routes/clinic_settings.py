@@ -231,6 +231,10 @@ async def invite_member(data: MemberInvite, ctx=Depends(require_clinic_member)):
             "last_name": data.last_name, "specialty": data.specialty,
             "is_active": True, "created_at": now_iso(), "updated_at": now_iso(),
         }).execute()
+
+        # Force the invited member to change password on first login
+        from core import mark_password_needs_reset
+        mark_password_needs_reset(user_id, needs=True)
         try:
             from services.audit import log_audit, actor_from_ctx
             await log_audit(
@@ -348,6 +352,10 @@ async def reset_member_password(member_id: str, data: MemberPasswordReset, reque
                           name=f"{mdata.get('first_name','')} {mdata.get('last_name','')}")
 
         supabase_admin.auth.admin.update_user_by_id(user_id, {"password": pw})
+
+        # Force the affected user to change password on next login
+        from core import mark_password_needs_reset
+        mark_password_needs_reset(user_id, needs=True)
 
         # Audit log (sensitive: someone changed a credential)
         try:

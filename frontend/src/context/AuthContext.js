@@ -13,6 +13,9 @@ export const AuthProvider = ({ children }) => {
   const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState(localStorage.getItem('access_token'));
+  const [passwordNeedsReset, setPasswordNeedsReset] = useState(
+    localStorage.getItem('password_needs_reset') === 'true',
+  );
 
   useEffect(() => {
     checkSession();
@@ -24,10 +27,31 @@ export const AuthProvider = ({ children }) => {
       const r = res.data?.role || null;
       setRole(r);
       if (r) localStorage.setItem('user_role', r);
+      // Also refresh the display name + email from the source of truth
+      const name = res.data?.name || null;
+      if (res.data) {
+        setUser(prev => ({
+          ...(prev || {}),
+          id: res.data.user_id,
+          email: res.data.email,
+          name,
+        }));
+      }
+      // NOTE: we intentionally do NOT overwrite passwordNeedsReset from /auth/me.
+      // The JWT is immutable and carries user_metadata frozen at issuance time.
+      // The flag is authoritative at login (fresh JWT); the frontend clears it
+      // locally after a successful self-change (before the JWT is refreshed).
       return r;
     } catch {
       return null;
     }
+  };
+
+  const refreshMe = async () => fetchRole(localStorage.getItem('access_token'));
+
+  const clearPasswordResetFlag = () => {
+    setPasswordNeedsReset(false);
+    localStorage.setItem('password_needs_reset', 'false');
   };
 
   const checkSession = async () => {
@@ -73,10 +97,13 @@ export const AuthProvider = ({ children }) => {
       setUserType(data.user_type);
       setClinicId(data.clinic_id);
       setUser({ id: data.user_id, email: data.email });
+      const pnr = !!data.password_needs_reset;
+      setPasswordNeedsReset(pnr);
+      localStorage.setItem('password_needs_reset', pnr ? 'true' : 'false');
       // Fetch role asynchronously (used to gate admin-only UI like bulk imports)
       fetchRole(data.access_token);
 
-      return { success: true, userType: data.user_type };
+      return { success: true, userType: data.user_type, passwordNeedsReset: pnr };
     } catch (error) {
       const message = error.response?.data?.detail || 'Error de autenticación';
       return { success: false, error: message };
@@ -99,12 +126,14 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('user_email');
     localStorage.removeItem('clinic_id');
     localStorage.removeItem('user_role');
+    localStorage.removeItem('password_needs_reset');
 
     setToken(null);
     setUserType(null);
     setClinicId(null);
     setRole(null);
     setUser(null);
+    setPasswordNeedsReset(false);
   };
 
   const getAuthHeaders = () => ({
@@ -122,6 +151,9 @@ export const AuthProvider = ({ children }) => {
       login,
       logout,
       getAuthHeaders,
+      passwordNeedsReset,
+      refreshMe,
+      clearPasswordResetFlag,
       isAuthenticated: !!token
     }}>
       {children}

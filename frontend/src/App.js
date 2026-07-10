@@ -10,6 +10,7 @@ import { Toaster } from "./components/ui/sonner";
 // Pages
 import LoginPage from "./pages/LoginPage";
 import NoAccessPage from "./pages/NoAccessPage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
 
 // Admin Pages
 import AdminLayout from "./layouts/AdminLayout";
@@ -55,6 +56,16 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/no-access" element={<NoAccessPage />} />
+
+          {/* Self-service password change (authenticated but bypasses type gate) */}
+          <Route
+            path="/cambiar-password"
+            element={
+              <ProtectedRoute>
+                <ChangePasswordPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Super Admin Routes */}
           <Route

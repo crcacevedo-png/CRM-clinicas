@@ -1,8 +1,9 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export const ProtectedRoute = ({ children, requiredType }) => {
-  const { isAuthenticated, userType, loading } = useAuth();
+  const { isAuthenticated, userType, loading, passwordNeedsReset } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -14,6 +15,12 @@ export const ProtectedRoute = ({ children, requiredType }) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Force self-service password change if the flag is set.
+  // Allow the /cambiar-password route through so the user can complete it.
+  if (passwordNeedsReset && location.pathname !== '/cambiar-password') {
+    return <Navigate to="/cambiar-password" replace />;
   }
 
   if (requiredType && userType !== requiredType) {
