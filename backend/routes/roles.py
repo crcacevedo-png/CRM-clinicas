@@ -7,7 +7,7 @@ permission matrix and assign roles to members.
 """
 import uuid
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -103,7 +103,7 @@ async def list_roles(ctx=Depends(require_clinic_admin)):
 
 
 @router.post("/clinic/roles")
-async def create_role(data: RoleCreate, ctx=Depends(require_clinic_admin)):
+async def create_role(data: RoleCreate, request: Request, ctx=Depends(require_clinic_admin)):
     clinic_id = ctx["member"]["clinic_id"]
     ensure_system_roles(clinic_id)
     name = (data.name or "").strip()
@@ -135,11 +135,20 @@ async def create_role(data: RoleCreate, ctx=Depends(require_clinic_admin)):
         raise HTTPException(status_code=500, detail="Error al crear rol")
     doc['member_count'] = 0
     doc['locked'] = False
+    try:
+        from services.audit import log_audit, actor_from_ctx
+        await log_audit(
+            action="role_created", entity="clinic_role", entity_id=doc["id"],
+            new_values={"key": key, "name": name, "modules": doc["modules"]},
+            request=request, **actor_from_ctx(ctx),
+        )
+    except Exception:
+        pass
     return doc
 
 
 @router.put("/clinic/roles/{role_id}")
-async def update_role(role_id: str, data: RoleUpdate, ctx=Depends(require_clinic_admin)):
+async def update_role(role_id: str, data: RoleUpdate, request: Request, ctx=Depends(require_clinic_admin)):
     clinic_id = ctx["member"]["clinic_id"]
     validate_uuid(role_id, "role_id")
     role = sdb.table('clinic_roles').select('*').eq('id', role_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -165,11 +174,25 @@ async def update_role(role_id: str, data: RoleUpdate, ctx=Depends(require_clinic
     except Exception as e:
         logger.error(f"update_role error: {e}")
         raise HTTPException(status_code=500, detail="Error al actualizar rol")
+    try:
+        from services.audit import log_audit, actor_from_ctx
+        await log_audit(
+            action="role_updated", entity="clinic_role", entity_id=role_id,
+            old_values={"name": rdata.get("name"), "modules": rdata.get("modules")},
+            new_values={
+                "name": update.get("name", rdata.get("name")),
+                "modules": update.get("modules", rdata.get("modules")),
+            },
+            meta={"key": rdata.get("key"), "is_system": rdata.get("is_system")},
+            request=request, **actor_from_ctx(ctx),
+        )
+    except Exception:
+        pass
     return {"message": "Rol actualizado"}
 
 
 @router.delete("/clinic/roles/{role_id}")
-async def delete_role(role_id: str, ctx=Depends(require_clinic_admin)):
+async def delete_role(role_id: str, request: Request, ctx=Depends(require_clinic_admin)):
     clinic_id = ctx["member"]["clinic_id"]
     validate_uuid(role_id, "role_id")
     role = sdb.table('clinic_roles').select('*').eq('id', role_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -186,11 +209,20 @@ async def delete_role(role_id: str, ctx=Depends(require_clinic_admin)):
     except Exception as e:
         logger.error(f"delete_role error: {e}")
         raise HTTPException(status_code=500, detail="Error al eliminar rol")
+    try:
+        from services.audit import log_audit, actor_from_ctx
+        await log_audit(
+            action="role_deleted", entity="clinic_role", entity_id=role_id,
+            old_values={"key": rdata.get("key"), "name": rdata.get("name"), "modules": rdata.get("modules")},
+            request=request, **actor_from_ctx(ctx),
+        )
+    except Exception:
+        pass
     return {"message": "Rol eliminado"}
 
 
 @router.put("/clinic/members/{member_id}/role")
-async def assign_member_role(member_id: str, data: MemberRoleAssign, ctx=Depends(require_clinic_admin)):
+async def assign_member_role(member_id: str, data: MemberRoleAssign, request: Request, ctx=Depends(require_clinic_admin)):
     clinic_id = ctx["member"]["clinic_id"]
     validate_uuid(member_id, "member_id")
     ensure_system_roles(clinic_id)
@@ -218,4 +250,13 @@ async def assign_member_role(member_id: str, data: MemberRoleAssign, ctx=Depends
     except Exception as e:
         logger.error(f"assign_member_role error: {e}")
         raise HTTPException(status_code=500, detail="Error al asignar rol")
+    try:
+        from services.audit import log_audit, actor_from_ctx
+        await log_audit(
+            action="member_role_assigned", entity="clinic_member", entity_id=member_id,
+            old_values={"role": current_effective}, new_values={"role": new_role},
+            request=request, **actor_from_ctx(ctx),
+        )
+    except Exception:
+        pass
     return {"message": "Rol asignado", "role": new_role}

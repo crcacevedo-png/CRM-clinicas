@@ -41,6 +41,16 @@ const ISO_DAYS = [
 const SLOT_OPTIONS = [15, 20, 30, 45, 60];
 const ROLE_LABELS = { clinic_admin: 'Administrador', doctor: 'Doctor', assistant: 'Asistente', receptionist: 'Recepcionista' };
 const PLAN_LABELS = { free: 'Free', professional: 'Professional', enterprise: 'Enterprise' };
+const EXCEL_SHEETS = [
+  { key: 'patients', label: 'Pacientes', dated: true },
+  { key: 'medical_records', label: 'Evaluaciones Médicas', dated: true },
+  { key: 'prescriptions', label: 'Recetas (+ medicamentos)', dated: true },
+  { key: 'lab_orders', label: 'Laboratorio (+ estudios)', dated: true },
+  { key: 'appointments', label: 'Citas', dated: true },
+  { key: 'members', label: 'Equipo', dated: false },
+  { key: 'branches', label: 'Sucursales', dated: false },
+  { key: 'clinic', label: 'Clínica', dated: false },
+];
 
 export default function ClinicSettingsPage() {
   const { user, getAuthHeaders } = useAuth();
@@ -321,11 +331,25 @@ export default function ClinicSettingsPage() {
 
   const [downloadingExport, setDownloadingExport] = useState(false);
   const [downloadingExcel, setDownloadingExcel] = useState(false);
+  const [excelDialogOpen, setExcelDialogOpen] = useState(false);
+  const [excelStart, setExcelStart] = useState('');
+  const [excelEnd, setExcelEnd] = useState('');
+  const [excelSheets, setExcelSheets] = useState(EXCEL_SHEETS.map(s => s.key));
+
+  const toggleExcelSheet = (key) => {
+    setExcelSheets(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
 
   const downloadExcelExport = async () => {
+    if (excelSheets.length === 0) { toast.error('Selecciona al menos una hoja para exportar'); return; }
+    if (excelStart && excelEnd && excelStart > excelEnd) { toast.error('La fecha inicial no puede ser mayor que la final'); return; }
     setDownloadingExcel(true);
     try {
-      const res = await axios.get(`${API}/clinic/export/excel`, { headers, responseType: 'blob' });
+      const params = new URLSearchParams();
+      if (excelStart) params.append('start_date', excelStart);
+      if (excelEnd) params.append('end_date', excelEnd);
+      excelSheets.forEach(s => params.append('sheets', s));
+      const res = await axios.get(`${API}/clinic/export/excel?${params.toString()}`, { headers, responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
@@ -336,6 +360,7 @@ export default function ClinicSettingsPage() {
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success('Base de datos descargada en Excel');
+      setExcelDialogOpen(false);
     } catch (e) {
       const msg = e?.response?.status === 403
         ? 'Solo el administrador de clínica puede exportar datos'
@@ -908,7 +933,7 @@ export default function ClinicSettingsPage() {
                   </p>
                 </div>
                 <Button
-                  onClick={downloadExcelExport}
+                  onClick={() => setExcelDialogOpen(true)}
                   disabled={downloadingExcel}
                   className="bg-emerald-600 hover:bg-emerald-700"
                   data-testid="download-excel-export-btn"
@@ -916,11 +941,106 @@ export default function ClinicSettingsPage() {
                   {downloadingExcel ? (
                     <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando Excel…</>
                   ) : (
-                    <><FileSpreadsheet className="w-4 h-4 mr-2" />Descargar Excel (.xlsx)</>
+                    <><FileSpreadsheet className="w-4 h-4 mr-2" />Exportar a Excel…</>
                   )}
                 </Button>
               </CardContent>
             </Card>
+
+            <Dialog open={excelDialogOpen} onOpenChange={setExcelDialogOpen}>
+              <DialogContent className="max-w-lg" data-testid="excel-export-dialog">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600" />Exportar base de datos a Excel
+                  </DialogTitle>
+                </DialogHeader>
+                <div className="space-y-5 py-1">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-slate-600">Rango de fechas (opcional)</Label>
+                    <p className="text-xs text-slate-500">
+                      Filtra las hojas con fecha por su fecha de creación. Déjalo vacío para exportar todo el historial.
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label htmlFor="excel-start" className="text-xs text-slate-500">Desde</Label>
+                        <Input
+                          id="excel-start" type="date" value={excelStart}
+                          onChange={(e) => setExcelStart(e.target.value)}
+                          data-testid="excel-start-date"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="excel-end" className="text-xs text-slate-500">Hasta</Label>
+                        <Input
+                          id="excel-end" type="date" value={excelEnd}
+                          onChange={(e) => setExcelEnd(e.target.value)}
+                          data-testid="excel-end-date"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold text-slate-600">Hojas a incluir</Label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="text-xs text-emerald-700 hover:underline"
+                          onClick={() => setExcelSheets(EXCEL_SHEETS.map(s => s.key))}
+                          data-testid="excel-select-all"
+                        >Todas</button>
+                        <span className="text-slate-300">·</span>
+                        <button
+                          type="button"
+                          className="text-xs text-slate-500 hover:underline"
+                          onClick={() => setExcelSheets([])}
+                          data-testid="excel-select-none"
+                        >Ninguna</button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {EXCEL_SHEETS.map((s) => (
+                        <label
+                          key={s.key}
+                          className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 cursor-pointer hover:bg-slate-50"
+                          data-testid={`excel-sheet-${s.key}`}
+                        >
+                          <Checkbox
+                            checked={excelSheets.includes(s.key)}
+                            onCheckedChange={() => toggleExcelSheet(s.key)}
+                          />
+                          <span className="text-sm text-slate-700 flex-1">{s.label}</span>
+                          {!s.dated && (excelStart || excelEnd) && (
+                            <span className="text-[10px] text-slate-400" title="Esta hoja no se filtra por fecha">completa</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Equipo, Sucursales y Clínica se incluyen completas (no dependen de fechas).
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setExcelDialogOpen(false)} data-testid="excel-cancel-btn">
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={downloadExcelExport}
+                    disabled={downloadingExcel || excelSheets.length === 0}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                    data-testid="excel-confirm-download-btn"
+                  >
+                    {downloadingExcel ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando…</>
+                    ) : (
+                      <><Download className="w-4 h-4 mr-2" />Descargar Excel</>
+                    )}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
             <Card className="border border-slate-200" data-testid="data-export-card">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">

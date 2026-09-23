@@ -28,7 +28,8 @@ import zipfile
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional, List
 
 from core import sdb, supabase_admin, require_clinic_admin, logger, now_iso
 
@@ -401,20 +402,78 @@ def _write_sheet(wb, title, rows, computed=None, drop=None):
     ws.freeze_panes = "A2"
 
 
-def _build_excel_bytes(clinic_id: str) -> bytes:
-    """Build the full-database Excel workbook (one sheet per dataset)."""
+def _parse_dt(s):
+    """Parse an ISO date (YYYY-MM-DD) or datetime string into an aware datetime."""
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        s = s.strip()
+        if len(s) == 10:  # date only
+            return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _date_bounds(start_date, end_date):
+    """Return (start_dt, end_dt) aware datetimes. end_date given as a bare date
+    is expanded to the end of that day so the range is inclusive."""
+    start_dt = _parse_dt(start_date) if start_date else None
+    end_dt = None
+    if end_date:
+        e = str(end_date).strip()
+        if len(e) == 10:
+            d = _parse_dt(e)
+            if d:
+                end_dt = d + timedelta(days=1) - timedelta(microseconds=1)
+        else:
+            end_dt = _parse_dt(e)
+    return start_dt, end_dt
+
+
+def _in_range(row, start_dt, end_dt):
+    """True if row.created_at falls within [start_dt, end_dt]. Rows lacking a
+    parseable created_at are kept (fail-open) to avoid silently dropping data."""
+    if start_dt is None and end_dt is None:
+        return True
+    dt = _parse_dt(row.get("created_at"))
+    if dt is None:
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    if start_dt and dt < start_dt:
+        return False
+    if end_dt and dt > end_dt:
+        return False
+    return True
+
+
+def _build_excel_bytes(clinic_id: str, start_date=None, end_date=None, sheets=None) -> bytes:
+    """Build the database Excel workbook (one sheet per dataset).
+
+    `start_date`/`end_date` (ISO date or datetime strings, optional) filter the
+    dated data sheets by their `created_at`. Undated reference sheets (Equipo,
+    Sucursales, Clínica) are always included in full. `sheets` (optional list of
+    canonical keys) restricts which sheets are generated; None = all.
+    """
     from openpyxl import Workbook
 
+    selected = set(sheets) if sheets else None  # None = all sheets
+
+    def want(key):
+        return selected is None or key in selected
+
+    start_dt, end_dt = _date_bounds(start_date, end_date)
+
+    def dfilter(rows):
+        if start_dt is None and end_dt is None:
+            return rows
+        return [r for r in rows if _in_range(r, start_dt, end_dt)]
+
+    # Patients & members are always fetched — needed for the computed
+    # "Paciente"/"Médico" columns on other sheets even if unselected.
     patients = _fetch_all("patients", "clinic_id", clinic_id)
     members = _fetch_all("clinic_members", "clinic_id", clinic_id)
-    appointments = _fetch_all("appointments", "clinic_id", clinic_id)
-    medical_records = _fetch_all("medical_records", "clinic_id", clinic_id)
-    prescriptions = _fetch_all("prescriptions", "clinic_id", clinic_id)
-    lab_orders = _fetch_all("lab_orders", "clinic_id", clinic_id)
-    prescription_items = _fetch_in("prescription_items", "prescription_id", [p["id"] for p in prescriptions if p.get("id")])
-    lab_order_items = _fetch_in("lab_order_items", "lab_order_id", [l["id"] for l in lab_orders if l.get("id")])
-    branches = _fetch_all("branches", "clinic_id", clinic_id)
-    clinic = (sdb.table("clinics").select("*").eq("id", clinic_id).execute().data) or []
 
     pmap = {p["id"]: f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() for p in patients}
     dmap = {m["id"]: f"{m.get('first_name', '')} {m.get('last_name', '')}".strip() for m in members}
@@ -424,16 +483,36 @@ def _build_excel_bytes(clinic_id: str) -> bytes:
     wb = Workbook()
     wb.remove(wb.active)  # drop the default empty sheet
 
-    _write_sheet(wb, "Pacientes", patients)
-    _write_sheet(wb, "Evaluaciones Médicas", medical_records, computed=[pac, doc])
-    _write_sheet(wb, "Recetas", prescriptions, computed=[pac, doc])
-    _write_sheet(wb, "Recetas - Medicamentos", prescription_items)
-    _write_sheet(wb, "Laboratorio", lab_orders, computed=[pac, doc])
-    _write_sheet(wb, "Laboratorio - Estudios", lab_order_items)
-    _write_sheet(wb, "Citas", appointments, computed=[pac, doc])
-    _write_sheet(wb, "Equipo", members, drop=["user_id"])
-    _write_sheet(wb, "Sucursales", branches)
-    _write_sheet(wb, "Clínica", clinic)
+    if want("patients"):
+        _write_sheet(wb, "Pacientes", dfilter(patients))
+    if want("medical_records"):
+        mr = dfilter(_fetch_all("medical_records", "clinic_id", clinic_id))
+        _write_sheet(wb, "Evaluaciones Médicas", mr, computed=[pac, doc])
+    if want("prescriptions"):
+        prescriptions = dfilter(_fetch_all("prescriptions", "clinic_id", clinic_id))
+        _write_sheet(wb, "Recetas", prescriptions, computed=[pac, doc])
+        pitems = _fetch_in("prescription_items", "prescription_id", [p["id"] for p in prescriptions if p.get("id")])
+        _write_sheet(wb, "Recetas - Medicamentos", pitems)
+    if want("lab_orders"):
+        lab_orders = dfilter(_fetch_all("lab_orders", "clinic_id", clinic_id))
+        _write_sheet(wb, "Laboratorio", lab_orders, computed=[pac, doc])
+        litems = _fetch_in("lab_order_items", "lab_order_id", [l["id"] for l in lab_orders if l.get("id")])
+        _write_sheet(wb, "Laboratorio - Estudios", litems)
+    if want("appointments"):
+        appointments = dfilter(_fetch_all("appointments", "clinic_id", clinic_id))
+        _write_sheet(wb, "Citas", appointments, computed=[pac, doc])
+    if want("members"):
+        _write_sheet(wb, "Equipo", members, drop=["user_id"])
+    if want("branches"):
+        _write_sheet(wb, "Sucursales", _fetch_all("branches", "clinic_id", clinic_id))
+    if want("clinic"):
+        clinic = (sdb.table("clinics").select("*").eq("id", clinic_id).execute().data) or []
+        _write_sheet(wb, "Clínica", clinic)
+
+    # openpyxl requires at least one visible sheet on save
+    if not wb.sheetnames:
+        ws = wb.create_sheet("Sin datos")
+        ws.append(["No se seleccionaron hojas para exportar"])
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -442,23 +521,40 @@ def _build_excel_bytes(clinic_id: str) -> bytes:
 
 
 @router.get("/clinic/export/excel")
-async def export_excel(ctx=Depends(require_clinic_admin)):
-    """Download the full clinic database as a multi-sheet Excel file.
+async def export_excel(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    sheets: Optional[List[str]] = Query(None),
+    ctx=Depends(require_clinic_admin),
+):
+    """Download the clinic database as a multi-sheet Excel file.
 
-    Sheets: Pacientes, Evaluaciones Médicas, Recetas (+ medicamentos),
-    Laboratorio (+ estudios), Citas, Equipo, Sucursales, Clínica.
+    Optional filters:
+      - `start_date` / `end_date`: ISO date (YYYY-MM-DD) or datetime. Filter the
+        dated data sheets (Pacientes, Evaluaciones, Recetas, Laboratorio, Citas)
+        by their `created_at`. Reference sheets (Equipo, Sucursales, Clínica)
+        are always full.
+      - `sheets`: repeated query param of sheet keys to include. Omit = all.
+        Keys: patients, medical_records, prescriptions, lab_orders,
+        appointments, members, branches, clinic.
     """
     clinic_id = ctx["member"]["clinic_id"]
     loop = asyncio.get_event_loop()
     try:
-        data = await loop.run_in_executor(None, _build_excel_bytes, clinic_id)
+        data = await loop.run_in_executor(
+            None, _build_excel_bytes, clinic_id, start_date, end_date, sheets
+        )
     except Exception as e:
         logger.error(f"Excel export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error al generar el Excel")
 
     try:
         from services.audit import log_audit, actor_from_ctx
-        await log_audit(action="clinic_data_export_excel", entity="clinic", entity_id=clinic_id, **actor_from_ctx(ctx))
+        await log_audit(
+            action="clinic_data_export_excel", entity="clinic", entity_id=clinic_id,
+            meta={"start_date": start_date, "end_date": end_date, "sheets": sheets},
+            **actor_from_ctx(ctx),
+        )
     except Exception:
         pass
 

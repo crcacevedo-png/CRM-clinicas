@@ -14,8 +14,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../compo
 import { toast } from 'sonner';
 import {
   ArrowLeft, ChevronDown, ChevronUp, Save, CheckCircle, Activity,
-  Heart, Thermometer, Wind, Droplets, Weight, Ruler, Search, X, AlertTriangle
+  Heart, Thermometer, Wind, Droplets, Weight, Ruler, Search, X, AlertTriangle,
+  Pill, FlaskConical
 } from 'lucide-react';
+import ConsultationPrescriptionSection from './ConsultationPrescriptionSection';
+import ConsultationLabSection from './ConsultationLabSection';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -263,6 +266,7 @@ export default function MedicalRecordForm() {
   const [notes, setNotes] = useState('');
   const [privateNotes, setPrivateNotes] = useState('');
   const [isFinalized, setIsFinalized] = useState(false);
+  const [currentRecordId, setCurrentRecordId] = useState(recordId);
 
   // Auto-calculate BMI
   useEffect(() => {
@@ -361,10 +365,11 @@ export default function MedicalRecordForm() {
     setSaving(true);
     try {
       const payload = buildPayload(status);
-      if (recordId) {
-        await axios.put(`${API}/clinic/medical-records/${recordId}`, payload, { headers });
+      if (currentRecordId) {
+        await axios.put(`${API}/clinic/medical-records/${currentRecordId}`, payload, { headers });
       } else {
-        await axios.post(`${API}/clinic/medical-records`, payload, { headers });
+        const res = await axios.post(`${API}/clinic/medical-records`, payload, { headers });
+        if (res.data?.id) setCurrentRecordId(res.data.id);
       }
       toast.success(status === 'finalized' ? 'Consulta finalizada' : 'Borrador guardado');
       navigate(`/dashboard/pacientes/${patientId}`);
@@ -373,6 +378,18 @@ export default function MedicalRecordForm() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Ensure a medical_record_id exists so prescriptions / lab orders can be linked
+  // to this consultation. If the consultation hasn't been saved yet, persist it
+  // as a draft first (without navigating away) and reuse the returned id.
+  const ensureRecordId = async () => {
+    if (currentRecordId) return currentRecordId;
+    const payload = buildPayload('draft');
+    const res = await axios.post(`${API}/clinic/medical-records`, payload, { headers });
+    const newId = res.data?.id || null;
+    if (newId) setCurrentRecordId(newId);
+    return newId;
   };
 
   const toggleSystem = (system, item) => {
@@ -405,6 +422,11 @@ export default function MedicalRecordForm() {
       </div>
     );
   }
+
+  const primaryDx = diagnoses.find(d => d.type === 'primary') || diagnoses[0];
+  const primaryDiagnosisText = primaryDx
+    ? (primaryDx.code ? `${primaryDx.code} - ${primaryDx.description}` : primaryDx.description)
+    : '';
 
   return (
     <div className="p-6 lg:p-8 max-w-4xl" data-testid="medical-record-form">
@@ -581,7 +603,27 @@ export default function MedicalRecordForm() {
           </div>
         </Section>
 
-        {/* 7. Notas */}
+        {/* 7. Receta médica */}
+        <Section title="Receta médica" icon={Pill} defaultOpen={true}>
+          <ConsultationPrescriptionSection
+            patientId={patientId}
+            headers={headers}
+            ensureRecordId={ensureRecordId}
+            defaultDiagnosis={primaryDiagnosisText}
+          />
+        </Section>
+
+        {/* 8. Órdenes de laboratorio */}
+        <Section title="Órdenes de estudios / Laboratorio" icon={FlaskConical} defaultOpen={true}>
+          <ConsultationLabSection
+            patientId={patientId}
+            headers={headers}
+            ensureRecordId={ensureRecordId}
+            defaultDiagnosis={primaryDiagnosisText}
+          />
+        </Section>
+
+        {/* 9. Notas */}
         <Section title="Notas">
           <div className="space-y-3">
             <div>
