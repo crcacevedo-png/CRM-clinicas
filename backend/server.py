@@ -155,12 +155,13 @@ from routes import (
     admin_metrics as _r_metrics,
     audit_log as _r_audit,
     system_health as _r_health,
+    whatsapp_share as _r_wa,
 )
 for _r in (
     _r_auth, _r_sa, _r_cat, _r_cs, _r_br, _r_ff,
     _r_pat, _r_apt, _r_mr, _r_pr, _r_lab, _r_gc,
     _r_inv, _r_exp, _r_comm, _r_sales, _r_ar, _r_rep,
-    _r_exp_full, _r_ann, _r_metrics, _r_audit, _r_health,
+    _r_exp_full, _r_ann, _r_metrics, _r_audit, _r_health, _r_wa,
 ):
     api_router.include_router(_r.router)
 

@@ -9,8 +9,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../../components/ui/dialog';
 import { Separator } from '../../../components/ui/separator';
 import { toast } from 'sonner';
-import { Banknote, CreditCard, Wallet, Eye, Printer, Ban } from 'lucide-react';
+import { Banknote, CreditCard, Wallet, Eye, Printer, Ban, MessageCircle } from 'lucide-react';
 import { API, PAY_LABEL, STATUS_LABEL } from './constants';
+import { shareViaWhatsApp } from '../../../lib/whatsappShare';
 import SummaryCard from './SummaryCard';
 
 export default function DailySalesTab({ headers, branches, activeBranch }) {
@@ -123,7 +124,12 @@ export default function DailySalesTab({ headers, branches, activeBranch }) {
                   <TableCell className="text-center"><Badge variant="outline" className={`text-xs ${s.status === 'cancelled' ? 'bg-red-50 text-red-700' : s.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{s.status === 'cancelled' ? 'Anulada' : STATUS_LABEL[s.payment_status] || s.payment_status}</Badge></TableCell>
                   <TableCell className="text-xs text-slate-500">{s.cashier_name}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openDetail(s.id)} data-testid={`view-sale-${s.id}`}><Eye className="w-3.5 h-3.5" /></Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openDetail(s.id)} data-testid={`view-sale-${s.id}`}><Eye className="w-3.5 h-3.5" /></Button>
+                      {s.status !== 'cancelled' && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => shareViaWhatsApp('sale', s.id, headers)} data-testid={`whatsapp-sale-${s.id}`} title="Enviar por WhatsApp"><MessageCircle className="w-3.5 h-3.5 text-green-600" /></Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -171,6 +177,7 @@ export default function DailySalesTab({ headers, branches, activeBranch }) {
           )}
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => printReceipt(detail.id)}><Printer className="w-3.5 h-3.5 mr-1" />Imprimir</Button>
+            {detail?.status !== 'cancelled' && <Button variant="outline" className="text-green-600 border-green-200 hover:bg-green-50" onClick={() => shareViaWhatsApp('sale', detail.id, headers)} data-testid="whatsapp-sale-detail-btn"><MessageCircle className="w-3.5 h-3.5 mr-1" />WhatsApp</Button>}
             {detail?.status !== 'cancelled' && <Button variant="outline" className="text-red-600" onClick={() => handleCancel(detail.id)} data-testid="cancel-sale-btn"><Ban className="w-3.5 h-3.5 mr-1" />Anular</Button>}
             <Button onClick={() => setDetail(null)}>Cerrar</Button>
           </DialogFooter>

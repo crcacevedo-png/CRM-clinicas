@@ -377,6 +377,17 @@ MIGRATIONS: list[tuple[str, str]] = [
         END $f$;
         """,
     ),
+    (
+        "2026_06_10_whatsapp_share_sent_columns",
+        """
+        ALTER TABLE public.sales
+            ADD COLUMN IF NOT EXISTS sent_via TEXT,
+            ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+        ALTER TABLE public.lab_orders
+            ADD COLUMN IF NOT EXISTS sent_via TEXT,
+            ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+        """,
+    ),
 ]
 
 

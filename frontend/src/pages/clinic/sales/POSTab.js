@@ -10,8 +10,9 @@ import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../../components/ui/dialog';
 import { Separator } from '../../../components/ui/separator';
 import { toast } from 'sonner';
-import { Search, Plus, X, Calculator, Lock, Unlock, Printer, AlertTriangle } from 'lucide-react';
+import { Search, Plus, X, Calculator, Lock, Unlock, Printer, AlertTriangle, MessageCircle } from 'lucide-react';
 import { API, STATUS_LABEL } from './constants';
+import { shareViaWhatsApp } from '../../../lib/whatsappShare';
 import ChargeModal from './ChargeModal';
 import CloseSessionDialog from './CloseSessionDialog';
 
@@ -401,6 +402,7 @@ export default function POSTab({ headers, branches, activeBranch, hasInventory }
                 else toast.error('PDF no disponible');
               } catch { toast.error('Error al obtener PDF'); }
             }} data-testid="print-receipt-btn"><Printer className="w-4 h-4 mr-1" />Imprimir comprobante</Button>
+            <Button variant="outline" className="w-full text-green-600 border-green-200 hover:bg-green-50" onClick={() => shareViaWhatsApp('sale', showSuccess.id, headers)} data-testid="whatsapp-receipt-btn"><MessageCircle className="w-4 h-4 mr-1" />Enviar por WhatsApp</Button>
             <Button className="w-full bg-teal-600 hover:bg-teal-700" onClick={() => setShowSuccess(null)} data-testid="new-sale-btn">Nueva venta</Button>
           </DialogFooter>
         </DialogContent>

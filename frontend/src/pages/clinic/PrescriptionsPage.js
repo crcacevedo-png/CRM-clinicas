@@ -9,7 +9,8 @@ import { Badge } from '../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import { toast } from 'sonner';
-import { Plus, Search, FileText, Download, ChevronLeft, ChevronRight, Send, Pill, Copy } from 'lucide-react';
+import { Plus, Search, FileText, Download, ChevronLeft, ChevronRight, Send, Pill, Copy, MessageCircle } from 'lucide-react';
+import { shareViaWhatsApp } from '../../lib/whatsappShare';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -147,6 +148,9 @@ export default function PrescriptionsPage() {
                               </Button>
                               <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => downloadPdf(p.id)} data-testid={`download-pdf-${p.id}`}>
                                 <Download className="w-3.5 h-3.5 text-teal-600" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => shareViaWhatsApp('prescription', p.id, headers)} data-testid={`whatsapp-prescription-${p.id}`} title="Enviar por WhatsApp">
+                                <MessageCircle className="w-3.5 h-3.5 text-green-600" />
                               </Button>
                             </>
                           )}
