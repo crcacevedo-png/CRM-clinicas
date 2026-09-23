@@ -12,7 +12,7 @@ from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
     get_plan_limits, parse_presentations,
-    require_clinic_member, require_super_admin, get_current_user,
+    require_clinic_member, require_super_admin, get_current_user, get_role_modules,
     LoginRequest, LoginResponse, ClinicCreate, ClinicUpdate, ClinicMemberCreate, UserUpdate,
     MedicationCreate, MedicationBulkImport, LabStudyCreate, LabStudyBulkImport,
     ICD10CodeCreate, ICD10BulkImport,
@@ -58,7 +58,9 @@ async def get_clinic_features(ctx=Depends(require_clinic_member)):
             else:
                 all_features.discard(code)
 
-        return {"features": sorted(all_features), "plan": plan_code}
+        role = ctx["member"].get("role", "")
+        modules = sorted(get_role_modules(clinic_id, role))
+        return {"features": sorted(all_features), "plan": plan_code, "modules": modules, "role": role}
     except Exception as e:
         logger.error(f"Get clinic features error: {e}")
         raise HTTPException(status_code=500, detail="Error al obtener features")

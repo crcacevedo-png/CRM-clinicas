@@ -4,6 +4,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { FeatureProvider } from "./context/FeatureContext";
 import { BranchProvider } from "./context/BranchContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { ModuleRoute } from "./components/ModuleRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { Toaster } from "./components/ui/sonner";
 
@@ -98,22 +99,22 @@ function App() {
             }
           >
             <Route index element={<ClinicDashboardPage />} />
-            <Route path="agenda" element={<AgendaPage />} />
-            <Route path="pacientes" element={<PatientsPage />} />
-            <Route path="pacientes/:id" element={<PatientProfilePage />} />
-            <Route path="pacientes/:patientId/consulta" element={<MedicalRecordForm />} />
-            <Route path="recetas" element={<PrescriptionsPage />} />
-            <Route path="recetas/nueva" element={<NewPrescriptionPage />} />
-            <Route path="laboratorio" element={<LabOrdersPage />} />
-            <Route path="laboratorio/nueva" element={<NewLabOrderPage />} />
+            <Route path="agenda" element={<ModuleRoute module="agenda"><AgendaPage /></ModuleRoute>} />
+            <Route path="pacientes" element={<ModuleRoute module="patients"><PatientsPage /></ModuleRoute>} />
+            <Route path="pacientes/:id" element={<ModuleRoute module="patients"><PatientProfilePage /></ModuleRoute>} />
+            <Route path="pacientes/:patientId/consulta" element={<ModuleRoute module="patients"><MedicalRecordForm /></ModuleRoute>} />
+            <Route path="recetas" element={<ModuleRoute module="prescriptions"><PrescriptionsPage /></ModuleRoute>} />
+            <Route path="recetas/nueva" element={<ModuleRoute module="prescriptions"><NewPrescriptionPage /></ModuleRoute>} />
+            <Route path="laboratorio" element={<ModuleRoute module="lab_orders"><LabOrdersPage /></ModuleRoute>} />
+            <Route path="laboratorio/nueva" element={<ModuleRoute module="lab_orders"><NewLabOrderPage /></ModuleRoute>} />
             <Route path="configuracion" element={<ClinicSettingsPage />} />
-            <Route path="sucursales" element={<BranchesPage />} />
-            <Route path="inventario" element={<InventoryPage />} />
-            <Route path="ventas" element={<SalesPage />} />
-            <Route path="cuentas" element={<AccountsReceivablePage />} />
-            <Route path="gastos" element={<ExpensesPage />} />
-            <Route path="comisiones" element={<CommissionsPage />} />
-            <Route path="reportes" element={<ReportsPage />} />
+            <Route path="sucursales" element={<ModuleRoute module="branches"><BranchesPage /></ModuleRoute>} />
+            <Route path="inventario" element={<ModuleRoute module="inventory"><InventoryPage /></ModuleRoute>} />
+            <Route path="ventas" element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />
+            <Route path="cuentas" element={<ModuleRoute module="accounts_receivable"><AccountsReceivablePage /></ModuleRoute>} />
+            <Route path="gastos" element={<ModuleRoute module="expenses"><ExpensesPage /></ModuleRoute>} />
+            <Route path="comisiones" element={<ModuleRoute module="commissions"><CommissionsPage /></ModuleRoute>} />
+            <Route path="reportes" element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
           </Route>
 
           {/* Default Redirect */}

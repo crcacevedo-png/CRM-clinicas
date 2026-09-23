@@ -13,7 +13,7 @@ from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
     get_plan_limits, parse_presentations,
-    require_clinic_member, require_super_admin, get_current_user,
+    require_clinic_member, require_super_admin, get_current_user, ENUM_ROLE_VALUES,
     LoginRequest, LoginResponse, ClinicCreate, ClinicUpdate, ClinicMemberCreate, UserUpdate,
     MedicationCreate, MedicationBulkImport, LabStudyCreate, LabStudyBulkImport,
     ICD10CodeCreate, ICD10BulkImport,
@@ -143,10 +143,13 @@ async def list_clinic_members(ctx=Depends(require_clinic_member)):
     """List all clinic members"""
     clinic_id = ctx["member"]["clinic_id"]
     try:
-        result = sdb.table('clinic_members').select('id,user_id,first_name,last_name,role,specialty,license_number,phone,is_active,created_at').eq('clinic_id', clinic_id).order('created_at').execute()
+        result = sdb.table('clinic_members').select('id,user_id,first_name,last_name,role,role_key,specialty,license_number,phone,is_active,created_at').eq('clinic_id', clinic_id).order('created_at').execute()
         members = result.data or []
         # Get emails from auth
         for m in members:
+            # role_key (if set) is the authoritative role for display/RBAC
+            if m.get('role_key'):
+                m['role'] = m['role_key']
             if m.get('user_id'):
                 try:
                     u = supabase_admin.auth.admin.get_user_by_id(m['user_id'])
@@ -267,7 +270,9 @@ async def update_member(member_id: str, data: MemberUpdate, ctx=Depends(require_
     try:
         update = {}
         if data.role is not None and current_role == "clinic_admin" and not is_self:
-            update["role"] = data.role
+            update["role_key"] = data.role
+            if data.role in ENUM_ROLE_VALUES:
+                update["role"] = data.role
         if data.first_name is not None: update["first_name"] = data.first_name
         if data.last_name is not None: update["last_name"] = data.last_name
         if data.specialty is not None: update["specialty"] = data.specialty

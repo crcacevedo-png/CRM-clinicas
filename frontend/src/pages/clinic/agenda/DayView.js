@@ -1,11 +1,12 @@
 import { Badge } from '../../../components/ui/badge';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, Lock, X } from 'lucide-react';
 import { STATUS_CONFIG, DOCTOR_COLORS } from './constants';
-import { formatTime, isSameDay } from './utils';
+import { formatTime, isSameDay, slotBlockInfo, BLOCK_STRIPE } from './utils';
 
 export default function DayView({
   date, slots, slot, appointments, doctorMap,
   dropTarget, onSlotClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onAptClick,
+  blocks = [], firstSlotMin, canManageBlocks = false, onDeleteBlock,
 }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const isT = isSameDay(date, today);
@@ -38,6 +39,7 @@ export default function DayView({
         {slots.map((slotMin) => {
           const aptsInSlot = getAptsForSlot(slotMin);
           const isDragOver = dropTarget === `0-${slotMin}`;
+          const blockInfo = slotBlockInfo(blocks, date, slotMin, slot, firstSlotMin);
           return (
             <div key={slotMin} className="contents">
               <div className="border-r border-b border-slate-100 h-20 flex items-start justify-end pr-3 pt-2">
@@ -45,14 +47,30 @@ export default function DayView({
               </div>
               <div
                 className={`border-b border-slate-100 h-20 relative cursor-pointer transition-colors ${isDragOver ? 'bg-teal-100/60 ring-2 ring-inset ring-teal-400/50' : 'hover:bg-slate-50/80'}`}
-                onClick={() => !aptsInSlot.length && onSlotClick(date, slotMin)}
+                onClick={() => !aptsInSlot.length && !blockInfo && onSlotClick(date, slotMin)}
                 onDragOver={(e) => onDragOver(e, slotMin)}
                 onDragLeave={onDragLeave}
                 onDrop={(e) => onDrop(e, slotMin)}
                 data-testid={`day-slot-${slotMin}`}
               >
+                {blockInfo && (
+                  <div className="absolute inset-0 z-0 overflow-hidden" style={BLOCK_STRIPE} title={blockInfo.block.label || 'Agenda bloqueada'} data-testid={`day-block-slot-${slotMin}`}>
+                    {blockInfo.showLabel && (
+                      <div className="flex items-start justify-between px-2 pt-1 gap-1">
+                        <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1 truncate">
+                          <Lock className="w-3 h-3 shrink-0" />{blockInfo.block.label || (blockInfo.block.scope === 'branch' ? 'Sucursal bloqueada' : 'Médico no disponible')}
+                        </span>
+                        {canManageBlocks && (
+                          <button onClick={(e) => { e.stopPropagation(); onDeleteBlock && onDeleteBlock(blockInfo.block); }} className="text-slate-400 hover:text-red-500 shrink-0" data-testid={`delete-day-block-${blockInfo.block.id}`}>
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {aptsInSlot.length > 0 && (
-                  <div className="absolute inset-1 flex gap-1">
+                  <div className="absolute inset-1 flex gap-1 z-10">
                     {aptsInSlot.map(apt => {
                       const stCfg = STATUS_CONFIG[apt.status] || STATUS_CONFIG.scheduled;
                       const drColor = doctorMap[apt.doctor_id] || DOCTOR_COLORS[0];

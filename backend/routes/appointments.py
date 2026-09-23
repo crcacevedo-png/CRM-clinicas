@@ -20,6 +20,7 @@ from core import (
     PatientQuickCreate, PatientFullCreate,
     get_clinic_features,
     assert_patient_in_clinic, assert_doctor_in_clinic,
+    require_module,
 )
 
 # ============== APPOINTMENT ROUTES ==============
@@ -32,7 +33,7 @@ async def list_appointments(
     status: Optional[str] = None,
     patient_search: Optional[str] = None,
     branch_id: Optional[str] = None,
-    ctx=Depends(require_clinic_member)
+    ctx=Depends(require_module('agenda'))
 ):
     clinic_id = ctx["member"]["clinic_id"]
     try:
@@ -83,7 +84,7 @@ async def list_appointments(
         raise HTTPException(status_code=500, detail="Error al listar citas")
 
 @router.post("/clinic/appointments")
-async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic_member)):
+async def create_appointment(data: AppointmentCreate, ctx=Depends(require_module('agenda'))):
     clinic_id = ctx["member"]["clinic_id"]
     member = ctx["member"]
     try:
@@ -127,16 +128,18 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
             ranges = ", ".join(f"{b[0][:5]}-{b[1][:5]}" for b in day_blocks)
             raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({ranges})")
 
-        # Check conflicts for this doctor — only within the same branch (cross-branch is allowed)
-        conf_q = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat())
-        if data.branch_id:
-            conf_q = conf_q.eq('branch_id', data.branch_id)
-        else:
-            conf_q = conf_q.is_('branch_id', 'null')
-        conflicts = conf_q.execute()
-
+        # Check conflicts for this doctor across ALL branches — a doctor cannot be
+        # booked in two places at the same time (their schedule can't overlap).
+        conflicts = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', data.doctor_id).neq('status', 'cancelled').lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
         if conflicts.data:
-            raise HTTPException(status_code=409, detail="El doctor ya tiene una cita en ese horario en esta sucursal")
+            raise HTTPException(status_code=409, detail="El médico ya tiene una cita en ese horario (no puede agendarse en dos lugares a la vez)")
+
+        # Reject if the slot falls inside an agenda block (doctor or branch)
+        from routes.agenda_blocks import check_agenda_block_conflict
+        _blk = check_agenda_block_conflict(clinic_id, data.doctor_id, data.branch_id, starts.isoformat(), ends.isoformat())
+        if _blk:
+            _lbl = _blk.get('label') or ('Sucursal bloqueada' if _blk.get('scope') == 'branch' else 'Médico no disponible')
+            raise HTTPException(status_code=409, detail=f"Horario bloqueado: {_lbl}")
 
         now = now_iso()
         apt_id = str(uuid.uuid4())
@@ -180,7 +183,7 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
         raise HTTPException(status_code=500, detail="Error al crear cita")
 
 @router.put("/clinic/appointments/{apt_id}")
-async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(require_clinic_member)):
+async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(require_module('agenda'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         existing = sdb.table('appointments').select('*').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -226,16 +229,18 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
                 raise HTTPException(status_code=400, detail=f"Fuera del horario de la clinica ({ranges})")
 
             doctor_id = update_data.get("doctor_id", existing.data["doctor_id"])
-            # Conflict check scoped to the same branch as the (updated) appointment
             target_branch = update_data.get("branch_id", existing.data.get("branch_id"))
-            conf_q = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).neq('status', 'cancelled').neq('id', apt_id).lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat())
-            if target_branch:
-                conf_q = conf_q.eq('branch_id', target_branch)
-            else:
-                conf_q = conf_q.is_('branch_id', 'null')
-            conflicts = conf_q.execute()
+            # A doctor cannot overlap with their own appointments in ANY branch
+            conflicts = sdb.table('appointments').select('id,branch_id').eq('clinic_id', clinic_id).eq('doctor_id', doctor_id).neq('status', 'cancelled').neq('id', apt_id).lt('starts_at', ends.isoformat()).gt('ends_at', starts.isoformat()).execute()
             if conflicts.data:
-                raise HTTPException(status_code=409, detail="Conflicto de horario con otra cita en esta sucursal")
+                raise HTTPException(status_code=409, detail="Conflicto de horario: el médico ya tiene otra cita a esa hora")
+
+            # Reject if the new slot falls inside an agenda block
+            from routes.agenda_blocks import check_agenda_block_conflict
+            _blk = check_agenda_block_conflict(clinic_id, doctor_id, target_branch, starts.isoformat(), ends.isoformat())
+            if _blk:
+                _lbl = _blk.get('label') or ('Sucursal bloqueada' if _blk.get('scope') == 'branch' else 'Médico no disponible')
+                raise HTTPException(status_code=409, detail=f"Horario bloqueado: {_lbl}")
 
         update_data["updated_at"] = now_iso()
         sdb.table('appointments').update(update_data).eq('id', apt_id).execute()
@@ -262,7 +267,7 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
         raise HTTPException(status_code=500, detail="Error al actualizar cita")
 
 @router.put("/clinic/appointments/{apt_id}/status")
-async def change_appointment_status(apt_id: str, data: AppointmentStatusUpdate, ctx=Depends(require_clinic_member)):
+async def change_appointment_status(apt_id: str, data: AppointmentStatusUpdate, ctx=Depends(require_module('agenda'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         existing = sdb.table('appointments').select('id').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -620,7 +625,7 @@ from server import limiter
 
 @router.post("/clinic/appointments/{apt_id}/send-reminder")
 @limiter.limit("30/minute")
-async def send_appointment_reminder_now(apt_id: str, request: Request, ctx=Depends(require_clinic_member)):
+async def send_appointment_reminder_now(apt_id: str, request: Request, ctx=Depends(require_module('agenda'))):
     """Manually send the email reminder for a single appointment.
 
     Useful for the receptionist UI when they want to send the reminder ad-hoc

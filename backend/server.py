@@ -156,14 +156,32 @@ from routes import (
     audit_log as _r_audit,
     system_health as _r_health,
     whatsapp_share as _r_wa,
+    agenda_blocks as _r_ab,
+    roles as _r_roles,
 )
+from core import require_module
+
+# Routers with no module-level gate: auth, super-admin, shared lookups/config,
+# appointments (agenda gated per-endpoint), patients (gated per-endpoint), etc.
 for _r in (
     _r_auth, _r_sa, _r_cat, _r_cs, _r_br, _r_ff,
-    _r_pat, _r_apt, _r_mr, _r_pr, _r_lab, _r_gc,
-    _r_inv, _r_exp, _r_comm, _r_sales, _r_ar, _r_rep,
-    _r_exp_full, _r_ann, _r_metrics, _r_audit, _r_health, _r_wa,
+    _r_pat, _r_apt, _r_gc,
+    _r_exp_full, _r_ann, _r_metrics, _r_audit, _r_health, _r_wa, _r_roles,
 ):
     api_router.include_router(_r.router)
+
+# Module-gated routers — menu-level RBAC enforced in the backend. A role must
+# have the module enabled (clinic_admin always bypasses) or every route 403s.
+api_router.include_router(_r_mr.router, dependencies=[Depends(require_module('patients'))])
+api_router.include_router(_r_pr.router, dependencies=[Depends(require_module('prescriptions'))])
+api_router.include_router(_r_lab.router, dependencies=[Depends(require_module('lab_orders'))])
+api_router.include_router(_r_inv.router, dependencies=[Depends(require_module('inventory'))])
+api_router.include_router(_r_exp.router, dependencies=[Depends(require_module('expenses'))])
+api_router.include_router(_r_comm.router, dependencies=[Depends(require_module('commissions'))])
+api_router.include_router(_r_sales.router, dependencies=[Depends(require_module('sales'))])
+api_router.include_router(_r_ar.router, dependencies=[Depends(require_module('accounts_receivable'))])
+api_router.include_router(_r_rep.router, dependencies=[Depends(require_module('reports'))])
+api_router.include_router(_r_ab.router, dependencies=[Depends(require_module('agenda'))])
 
 app.include_router(api_router)
 

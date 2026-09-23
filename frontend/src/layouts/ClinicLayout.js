@@ -16,23 +16,23 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const allNavItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', end: true },
-  { to: '/dashboard/agenda', icon: CalendarDays, label: 'Agenda', feature: 'agenda' },
-  { to: '/dashboard/pacientes', icon: Users, label: 'Pacientes', feature: 'patients' },
-  { to: '/dashboard/recetas', icon: Pill, label: 'Recetas', feature: 'prescriptions' },
-  { to: '/dashboard/laboratorio', icon: FlaskConical, label: 'Laboratorio', feature: 'lab_orders' },
-  { to: '/dashboard/inventario', icon: Package, label: 'Inventario', feature: 'inventory' },
-  { to: '/dashboard/ventas', icon: ShoppingCart, label: 'Ventas', feature: 'sales' },
-  { to: '/dashboard/cuentas', icon: Receipt, label: 'Cuentas por cobrar', feature: 'accounts_receivable' },
-  { to: '/dashboard/gastos', icon: CreditCard, label: 'Gastos', feature: 'expenses' },
-  { to: '/dashboard/comisiones', icon: Percent, label: 'Comisiones', feature: 'commissions' },
-  { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports', roles: ['clinic_admin', 'cashier'] },
-  { to: '/dashboard/sucursales', icon: GitBranch, label: 'Sucursales', feature: 'multi_branch' },
+  { to: '/dashboard/agenda', icon: CalendarDays, label: 'Agenda', feature: 'agenda', module: 'agenda' },
+  { to: '/dashboard/pacientes', icon: Users, label: 'Pacientes', feature: 'patients', module: 'patients' },
+  { to: '/dashboard/recetas', icon: Pill, label: 'Recetas', feature: 'prescriptions', module: 'prescriptions' },
+  { to: '/dashboard/laboratorio', icon: FlaskConical, label: 'Laboratorio', feature: 'lab_orders', module: 'lab_orders' },
+  { to: '/dashboard/inventario', icon: Package, label: 'Inventario', feature: 'inventory', module: 'inventory' },
+  { to: '/dashboard/ventas', icon: ShoppingCart, label: 'Ventas', feature: 'sales', module: 'sales' },
+  { to: '/dashboard/cuentas', icon: Receipt, label: 'Cuentas por cobrar', feature: 'accounts_receivable', module: 'accounts_receivable' },
+  { to: '/dashboard/gastos', icon: CreditCard, label: 'Gastos', feature: 'expenses', module: 'expenses' },
+  { to: '/dashboard/comisiones', icon: Percent, label: 'Comisiones', feature: 'commissions', module: 'commissions' },
+  { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports', module: 'reports' },
+  { to: '/dashboard/sucursales', icon: GitBranch, label: 'Sucursales', feature: 'multi_branch', module: 'branches' },
   { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
 export default function ClinicLayout() {
-  const { user, logout, getAuthHeaders, role } = useAuth();
-  const { hasFeature } = useFeatures();
+  const { user, logout, getAuthHeaders } = useAuth();
+  const { hasFeature, hasModule } = useFeatures();
   const { branches, activeBranch, setActiveBranch, hasBranches } = useBranch();
   const navigate = useNavigate();
 
@@ -54,7 +54,7 @@ export default function ClinicLayout() {
 
   const navItems = allNavItems.filter(item =>
     (!item.feature || hasFeature(item.feature)) &&
-    (!item.roles || item.roles.includes(role))
+    (!item.module || hasModule(item.module))
   );
 
   return (

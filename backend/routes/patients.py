@@ -18,7 +18,7 @@ from core import (
     ICD10CodeCreate, ICD10BulkImport,
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
-    validate_uuid,
+    validate_uuid, require_module,
 )
 
 # ============== PATIENT ROUTES (CLINIC) ==============
@@ -44,7 +44,7 @@ async def list_patients(
     status: Optional[str] = None,
     page: int = 1,
     limit: int = 25,
-    ctx=Depends(require_clinic_member)
+    ctx=Depends(require_module('patients'))
 ):
     clinic_id = ctx["member"]["clinic_id"]
     try:
@@ -124,7 +124,7 @@ async def create_patient(data: PatientFullCreate, ctx=Depends(require_clinic_mem
         raise HTTPException(status_code=500, detail="Error al crear paciente")
 
 @router.get("/clinic/patients/{patient_id}")
-async def get_patient(patient_id: str, ctx=Depends(require_clinic_member)):
+async def get_patient(patient_id: str, ctx=Depends(require_module('patients'))):
     validate_uuid(patient_id, "patient_id")
     clinic_id = ctx["member"]["clinic_id"]
     try:
@@ -182,7 +182,7 @@ async def get_patient(patient_id: str, ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=500, detail="Error al obtener paciente")
 
 @router.put("/clinic/patients/{patient_id}")
-async def update_patient(patient_id: str, data: PatientFullCreate, ctx=Depends(require_clinic_member)):
+async def update_patient(patient_id: str, data: PatientFullCreate, ctx=Depends(require_module('patients'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         existing = sdb.table('patients').select('id').eq('id', patient_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -205,7 +205,7 @@ async def update_patient(patient_id: str, data: PatientFullCreate, ctx=Depends(r
         raise HTTPException(status_code=500, detail="Error al actualizar paciente")
 
 @router.put("/clinic/patients/{patient_id}/toggle-active")
-async def toggle_patient_active(patient_id: str, ctx=Depends(require_clinic_member)):
+async def toggle_patient_active(patient_id: str, ctx=Depends(require_module('patients'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         patient = sdb.table('patients').select('is_active,first_name,last_name').eq('id', patient_id).eq('clinic_id', clinic_id).maybe_single().execute()
@@ -236,7 +236,7 @@ async def toggle_patient_active(patient_id: str, ctx=Depends(require_clinic_memb
 # ============== PATIENT FILE ROUTES ==============
 
 @router.post("/clinic/patients/{patient_id}/files")
-async def upload_patient_file(patient_id: str, file: UploadFile = File(...), ctx=Depends(require_clinic_member)):
+async def upload_patient_file(patient_id: str, file: UploadFile = File(...), ctx=Depends(require_module('patients'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         # Validate patient
@@ -271,7 +271,7 @@ async def upload_patient_file(patient_id: str, file: UploadFile = File(...), ctx
         raise HTTPException(status_code=500, detail=f"Error al subir archivo: {str(e)}")
 
 @router.get("/clinic/patients/{patient_id}/files/{filename}/url")
-async def get_file_url(patient_id: str, filename: str, ctx=Depends(require_clinic_member)):
+async def get_file_url(patient_id: str, filename: str, ctx=Depends(require_module('patients'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         path = f"{clinic_id}/{patient_id}/{filename}"
@@ -282,7 +282,7 @@ async def get_file_url(patient_id: str, filename: str, ctx=Depends(require_clini
         raise HTTPException(status_code=500, detail="Error al obtener URL")
 
 @router.delete("/clinic/patients/{patient_id}/files/{filename}")
-async def delete_patient_file(patient_id: str, filename: str, ctx=Depends(require_clinic_member)):
+async def delete_patient_file(patient_id: str, filename: str, ctx=Depends(require_module('patients'))):
     clinic_id = ctx["member"]["clinic_id"]
     try:
         path = f"{clinic_id}/{patient_id}/{filename}"

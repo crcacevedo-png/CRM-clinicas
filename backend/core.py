@@ -443,11 +443,17 @@ async def require_super_admin(user=Depends(get_current_user)):
 
 async def require_clinic_member(user=Depends(get_current_user)):
     result = sdb.table('clinic_members').select(
-        'id,clinic_id,role,first_name,last_name'
+        'id,clinic_id,role,role_key,first_name,last_name'
     ).eq('user_id', user.id).eq('is_active', True).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=403, detail="Acceso de miembro de clinica requerido")
-    return {"auth_user": user, "member": result.data}
+    m = result.data
+    # role_key (if set) is the authoritative role for RBAC/permissions. The enum
+    # `role` column is legacy and only holds values present in the user_role enum.
+    m["base_role"] = m.get("role")
+    if m.get("role_key"):
+        m["role"] = m["role_key"]
+    return {"auth_user": user, "member": m}
 
 CLINICAL_ROLES = ["doctor", "clinic_admin"]
 
@@ -538,12 +544,99 @@ def assert_doctor_in_clinic(doctor_id: str, clinic_id: str) -> None:
 
 FINANCE_ROLES = ["clinic_admin", "cashier"]
 
+# ============== MODULE / MENU PERMISSIONS (RBAC) ==============
+# Toggle-able modules that map 1:1 to sidebar menu items. `dashboard` and
+# `settings` (Configuración) are always accessible and intentionally NOT here.
+MODULE_CATALOG = [
+    {"key": "agenda", "label": "Agenda", "feature": "agenda"},
+    {"key": "patients", "label": "Pacientes", "feature": "patients"},
+    {"key": "prescriptions", "label": "Recetas", "feature": "prescriptions"},
+    {"key": "lab_orders", "label": "Laboratorio", "feature": "lab_orders"},
+    {"key": "inventory", "label": "Inventario", "feature": "inventory"},
+    {"key": "sales", "label": "Ventas", "feature": "sales"},
+    {"key": "accounts_receivable", "label": "Cuentas por cobrar", "feature": "accounts_receivable"},
+    {"key": "expenses", "label": "Gastos", "feature": "expenses"},
+    {"key": "commissions", "label": "Comisiones", "feature": "commissions"},
+    {"key": "reports", "label": "Reportes", "feature": "financial_reports"},
+    {"key": "branches", "label": "Sucursales", "feature": "multi_branch"},
+]
+ALL_MODULE_KEYS = [m["key"] for m in MODULE_CATALOG]
+
+SYSTEM_ROLES = ["clinic_admin", "doctor", "receptionist", "cashier", "assistant"]
+# Values actually present in the Postgres user_role enum (clinic_members.role).
+# Roles NOT in this set (e.g. cashier, custom roles) live in clinic_members.role_key
+# only; the enum column is legacy and left untouched for them.
+ENUM_ROLE_VALUES = {"super_admin", "clinic_admin", "doctor", "assistant", "receptionist"}
+SYSTEM_ROLE_LABELS = {
+    "clinic_admin": "Administrador",
+    "doctor": "Médico",
+    "receptionist": "Recepción",
+    "cashier": "Cajero",
+    "assistant": "Asistente",
+}
+SYSTEM_ROLE_DESCRIPTIONS = {
+    "clinic_admin": "Acceso total a todos los módulos y configuración.",
+    "doctor": "Agenda, pacientes, recetas y laboratorio.",
+    "receptionist": "Agenda, pacientes, ventas y cuentas por cobrar.",
+    "cashier": "Ventas, cuentas por cobrar, gastos y reportes.",
+    "assistant": "Agenda y pacientes.",
+}
+DEFAULT_ROLE_MODULES = {
+    "clinic_admin": list(ALL_MODULE_KEYS),
+    "doctor": ["agenda", "patients", "prescriptions", "lab_orders"],
+    "receptionist": ["agenda", "patients", "sales", "accounts_receivable"],
+    "cashier": ["sales", "accounts_receivable", "expenses", "reports"],
+    "assistant": ["agenda", "patients"],
+}
+
+
+def get_role_modules(clinic_id: str, role_key: str) -> set:
+    """Resolve the set of allowed module keys for a clinic role.
+
+    clinic_admin always has full access. Otherwise read the persisted
+    clinic_roles row; if none exists yet fall back to the code defaults for
+    known system roles (empty set for unknown roles).
+    """
+    if role_key == "clinic_admin":
+        return set(ALL_MODULE_KEYS)
+    try:
+        row = sdb.table('clinic_roles').select('modules').eq('clinic_id', clinic_id).eq('key', role_key).maybe_single().execute()
+        data = getattr(row, 'data', None) if row else None
+        if data and isinstance(data.get('modules'), list):
+            return {m for m in data['modules'] if m in ALL_MODULE_KEYS}
+    except Exception as e:
+        logger.warning(f"get_role_modules({clinic_id},{role_key}) failed: {e}")
+    return set(DEFAULT_ROLE_MODULES.get(role_key, []))
+
+
+def require_module(module_key: str):
+    """Dependency factory: enforce that the current member's role grants access
+    to `module_key`. clinic_admin bypasses. Usable as an endpoint dependency or
+    an include_router-level dependency.
+    """
+    async def _dep(ctx=Depends(require_clinic_member)):
+        role = ctx["member"].get("role", "")
+        if role == "clinic_admin":
+            return ctx
+        mods = get_role_modules(ctx["member"]["clinic_id"], role)
+        if module_key not in mods:
+            raise HTTPException(status_code=403, detail="Tu rol no tiene acceso a este módulo")
+        return ctx
+    return _dep
+
 
 def require_finance_role(ctx):
-    """Restrict financial reports to clinic_admin / cashier (matches dashboard gating)."""
+    """Restrict financial reports via the module system (module 'reports').
+
+    Kept as a plain (non-Depends) callable because reports.py invokes it inline.
+    clinic_admin bypasses; otherwise the role must have the 'reports' module.
+    """
     role = ctx["member"].get("role", "")
-    if role not in FINANCE_ROLES:
-        raise HTTPException(status_code=403, detail="Acceso restringido a administradores y cajeros")
+    if role == "clinic_admin":
+        return ctx
+    mods = get_role_modules(ctx["member"]["clinic_id"], role)
+    if "reports" not in mods:
+        raise HTTPException(status_code=403, detail="Acceso restringido: tu rol no tiene reportes financieros")
     return ctx
 
 def get_clinic_features(clinic_id: str) -> set:

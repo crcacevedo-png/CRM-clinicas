@@ -388,6 +388,62 @@ MIGRATIONS: list[tuple[str, str]] = [
             ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
         """,
     ),
+    (
+        "2026_06_11_agenda_blocks_table",
+        """
+        CREATE TABLE IF NOT EXISTS public.agenda_blocks (
+            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            clinic_id   UUID NOT NULL,
+            scope       TEXT NOT NULL,          -- 'doctor' | 'branch'
+            doctor_id   UUID,                   -- set when scope='doctor' (applies to ALL branches)
+            branch_id   UUID,                   -- set when scope='branch' (applies to ALL doctors)
+            starts_at   TIMESTAMPTZ NOT NULL,
+            ends_at     TIMESTAMPTZ NOT NULL,
+            all_day     BOOLEAN NOT NULL DEFAULT false,
+            label       TEXT,
+            created_by  UUID,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_agenda_blocks_clinic_time
+            ON public.agenda_blocks (clinic_id, starts_at, ends_at);
+        CREATE INDEX IF NOT EXISTS idx_agenda_blocks_doctor
+            ON public.agenda_blocks (doctor_id) WHERE doctor_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_agenda_blocks_branch
+            ON public.agenda_blocks (branch_id) WHERE branch_id IS NOT NULL;
+        ALTER TABLE public.agenda_blocks ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON public.agenda_blocks FROM anon;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.agenda_blocks FROM authenticated;
+        """,
+    ),
+    (
+        "2026_06_12_clinic_roles_table",
+        """
+        CREATE TABLE IF NOT EXISTS public.clinic_roles (
+            id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            clinic_id   UUID NOT NULL,
+            key         TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            description TEXT,
+            is_system   BOOLEAN NOT NULL DEFAULT false,
+            modules     JSONB NOT NULL DEFAULT '[]'::jsonb,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (clinic_id, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_clinic_roles_clinic
+            ON public.clinic_roles (clinic_id);
+        ALTER TABLE public.clinic_roles ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON public.clinic_roles FROM anon;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.clinic_roles FROM authenticated;
+        """,
+    ),
+    (
+        "2026_06_12_clinic_members_role_key",
+        """
+        ALTER TABLE public.clinic_members ADD COLUMN IF NOT EXISTS role_key TEXT;
+        """,
+    ),
 ]
 
 

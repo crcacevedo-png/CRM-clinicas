@@ -8,7 +8,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { ChevronLeft, ChevronRight, Plus, Search, CalendarDays, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Search, CalendarDays, Filter, Lock } from 'lucide-react';
 import { API, STATUS_CONFIG, STATUS_OPTIONS, MONTH_NAMES } from './agenda/constants';
 import { getDoctorColor, getWeekDates, timeToMinutes, formatTime } from './agenda/utils';
 import WeekView from './agenda/WeekView';
@@ -16,9 +16,10 @@ import DayView from './agenda/DayView';
 import MonthView from './agenda/MonthView';
 import NewAppointmentModal from './agenda/NewAppointmentModal';
 import AppointmentDetailModal from './agenda/AppointmentDetailModal';
+import BlockAgendaModal from './agenda/BlockAgendaModal';
 
 export default function AgendaPage() {
-  const { getAuthHeaders, clinicId } = useAuth();
+  const { getAuthHeaders, clinicId, role } = useAuth();
   const { activeBranch, branches } = useBranch();
   const { hasFeature } = useFeatures();
   const multiBranch = hasFeature('multi_branch');
@@ -34,6 +35,8 @@ export default function AgendaPage() {
   const [showNewApt, setShowNewApt] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [selectedSlot, setSelectedSlot] = useState(null);
+  const [blocks, setBlocks] = useState([]);
+  const [showBlockModal, setShowBlockModal] = useState(false);
 
   const [draggingApt, setDraggingApt] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
@@ -76,8 +79,12 @@ export default function AgendaPage() {
       if (filterStatus !== 'all') params.append('status', filterStatus);
       if (patientSearch) params.append('patient_search', patientSearch);
       if (multiBranch && activeBranch?.id) params.append('branch_id', activeBranch.id);
-      const res = await axios.get(`${API}/clinic/appointments?${params}`, { headers });
+      const [res, bres] = await Promise.all([
+        axios.get(`${API}/clinic/appointments?${params}`, { headers }),
+        axios.get(`${API}/clinic/agenda-blocks?start_date=${start.toISOString()}&end_date=${end.toISOString()}`, { headers }),
+      ]);
       setAppointments(res.data || []);
+      setBlocks(bres.data || []);
     } catch (err) { console.error('Appointments error:', err); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, weekStart, currentDate, filterDoctor, filterStatus, patientSearch, multiBranch, activeBranch?.id]);
@@ -166,6 +173,26 @@ export default function AgendaPage() {
     setShowNewApt(true);
   };
 
+  const canManageBlocks = ['receptionist', 'doctor', 'clinic_admin'].includes(role);
+  const visibleBlocks = blocks.filter(b => {
+    if (b.scope === 'doctor') {
+      return filterDoctor === 'all' || b.doctor_id === filterDoctor;
+    }
+    if (multiBranch && activeBranch?.id) return b.branch_id === activeBranch.id;
+    return true;
+  });
+
+  const handleDeleteBlock = async (block) => {
+    if (!window.confirm(`¿Eliminar el bloqueo${block.label ? ` "${block.label}"` : ''}?`)) return;
+    try {
+      await axios.delete(`${API}/clinic/agenda-blocks/${block.id}`, { headers });
+      toast.success('Bloqueo eliminado');
+      fetchAppointments();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al eliminar el bloqueo');
+    }
+  };
+
   const getNavLabel = () => {
     if (viewMode === 'day') return currentDate.toLocaleDateString('es-GT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     if (viewMode === 'week') return `${weekDates[0].toLocaleDateString('es-GT', { month: 'short', day: 'numeric' })} - ${weekDates[5].toLocaleDateString('es-GT', { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -197,9 +224,16 @@ export default function AgendaPage() {
           <span className="text-sm font-medium text-slate-700 min-w-[200px] text-center capitalize">{getNavLabel()}</span>
           <Button variant="outline" size="sm" onClick={() => navigate(1)} data-testid="next-btn"><ChevronRight className="w-4 h-4" /></Button>
         </div>
-        <Button className="bg-teal-600 hover:bg-teal-700 text-white" size="sm" onClick={() => { setSelectedSlot(new Date()); setShowNewApt(true); }} data-testid="new-apt-btn">
-          <Plus className="w-4 h-4 mr-1" /> Nueva cita
-        </Button>
+        <div className="flex items-center gap-2">
+          {canManageBlocks && (
+            <Button variant="outline" size="sm" onClick={() => setShowBlockModal(true)} data-testid="block-agenda-btn">
+              <Lock className="w-4 h-4 mr-1" /> Bloquear
+            </Button>
+          )}
+          <Button className="bg-teal-600 hover:bg-teal-700 text-white" size="sm" onClick={() => { setSelectedSlot(new Date()); setShowNewApt(true); }} data-testid="new-apt-btn">
+            <Plus className="w-4 h-4 mr-1" /> Nueva cita
+          </Button>
+        </div>
       </div>
 
       <div className="bg-white border-b border-slate-100 px-6 py-2 flex items-center gap-3 shrink-0">
@@ -252,6 +286,7 @@ export default function AgendaPage() {
           dropTarget={dropTarget} onSlotClick={handleSlotClick}
           onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragOver={handleDragOver} onDragLeave={handleDragLeave}
           onDrop={handleDrop} onAptClick={apt => setShowDetail(apt)}
+          blocks={visibleBlocks} firstSlotMin={slots[0]} canManageBlocks={canManageBlocks} onDeleteBlock={handleDeleteBlock}
         />
       )}
 
@@ -263,6 +298,7 @@ export default function AgendaPage() {
           onDragOver={(e, slotMin) => handleDragOver(e, 0, slotMin)} onDragLeave={handleDragLeave}
           onDrop={(e, slotMin) => handleDrop(e, currentDate, slotMin)}
           onAptClick={apt => setShowDetail(apt)}
+          blocks={visibleBlocks} firstSlotMin={slots[0]} canManageBlocks={canManageBlocks} onDeleteBlock={handleDeleteBlock}
         />
       )}
 
@@ -288,6 +324,14 @@ export default function AgendaPage() {
           appointment={showDetail} config={config} doctorMap={doctorMap} headers={headers}
           onClose={() => setShowDetail(null)}
           onUpdated={() => { setShowDetail(null); fetchAppointments(); }}
+        />
+      )}
+
+      {showBlockModal && (
+        <BlockAgendaModal
+          config={config} headers={headers} branches={branches} activeBranch={activeBranch}
+          onClose={() => setShowBlockModal(false)}
+          onCreated={() => { setShowBlockModal(false); fetchAppointments(); }}
         />
       )}
     </div>

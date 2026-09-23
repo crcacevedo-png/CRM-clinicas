@@ -55,3 +55,28 @@ export function getMonthDays(year, month) {
 export function isSameDay(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
+
+export function blockCoversSlot(block, date, slotMin, slotLen) {
+  const bs = new Date(block.starts_at);
+  const be = new Date(block.ends_at);
+  const slotStart = new Date(date); slotStart.setHours(Math.floor(slotMin / 60), slotMin % 60, 0, 0);
+  const slotEnd = new Date(slotStart.getTime() + slotLen * 60000);
+  return bs < slotEnd && be > slotStart;
+}
+
+export function slotBlockInfo(blocks, date, slotMin, slotLen, firstSlotMin) {
+  for (const b of (blocks || [])) {
+    if (blockCoversSlot(b, date, slotMin, slotLen)) {
+      const bs = new Date(b.starts_at);
+      const slotStart = new Date(date); slotStart.setHours(Math.floor(slotMin / 60), slotMin % 60, 0, 0);
+      const slotEnd = new Date(slotStart.getTime() + slotLen * 60000);
+      const showLabel = (bs >= slotStart && bs < slotEnd) || (slotMin === firstSlotMin && bs < slotStart);
+      return { block: b, showLabel };
+    }
+  }
+  return null;
+}
+
+export const BLOCK_STRIPE = {
+  backgroundImage: 'repeating-linear-gradient(45deg, rgba(100,116,139,0.16), rgba(100,116,139,0.16) 6px, rgba(148,163,184,0.06) 6px, rgba(148,163,184,0.06) 12px)',
+};
