@@ -344,3 +344,128 @@ async def get_export_job(job_id: str, ctx=Depends(require_clinic_admin)):
             logger.warning(f"Refresh export signed URL failed: {e}")
 
     return data
+
+
+# ============================================================================
+# EXCEL EXPORT — full database as a multi-sheet .xlsx (clinic_admin only)
+# ============================================================================
+
+def _xl_cell(v):
+    """Coerce any value into an Excel-safe cell value."""
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "Sí" if v else "No"
+    if isinstance(v, (dict, list)):
+        v = json.dumps(v, ensure_ascii=False, default=_json_default)
+    elif not isinstance(v, (int, float, str)):
+        v = str(v)
+    if isinstance(v, str):
+        if len(v) > 32000:
+            v = v[:32000] + "…"
+        v = ILLEGAL_CHARACTERS_RE.sub("", v)
+    return v
+
+
+def _prettify(k: str) -> str:
+    return str(k).replace("_", " ").strip().capitalize()
+
+
+def _write_sheet(wb, title, rows, computed=None, drop=None):
+    """Create a worksheet from a list of row dicts.
+
+    `computed` = list of (header_label, fn(row)) columns placed first (e.g. resolved
+    patient/doctor names). `drop` = raw keys to omit.
+    """
+    from openpyxl.styles import Font
+    ws = wb.create_sheet(title[:31])
+    drop = set(drop or [])
+    computed = computed or []
+    if not rows:
+        ws.append(["(sin datos)"])
+        return
+    keys, seen = [], set()
+    for r in rows:
+        for k in r.keys():
+            if k not in seen and k not in drop:
+                keys.append(k)
+                seen.add(k)
+    header = [label for label, _ in computed] + [_prettify(k) for k in keys]
+    ws.append(header)
+    for r in rows:
+        row = [_xl_cell(fn(r)) for _, fn in computed] + [_xl_cell(r.get(k)) for k in keys]
+        ws.append(row)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    ws.freeze_panes = "A2"
+
+
+def _build_excel_bytes(clinic_id: str) -> bytes:
+    """Build the full-database Excel workbook (one sheet per dataset)."""
+    from openpyxl import Workbook
+
+    patients = _fetch_all("patients", "clinic_id", clinic_id)
+    members = _fetch_all("clinic_members", "clinic_id", clinic_id)
+    appointments = _fetch_all("appointments", "clinic_id", clinic_id)
+    medical_records = _fetch_all("medical_records", "clinic_id", clinic_id)
+    prescriptions = _fetch_all("prescriptions", "clinic_id", clinic_id)
+    lab_orders = _fetch_all("lab_orders", "clinic_id", clinic_id)
+    prescription_items = _fetch_in("prescription_items", "prescription_id", [p["id"] for p in prescriptions if p.get("id")])
+    lab_order_items = _fetch_in("lab_order_items", "lab_order_id", [l["id"] for l in lab_orders if l.get("id")])
+    branches = _fetch_all("branches", "clinic_id", clinic_id)
+    clinic = (sdb.table("clinics").select("*").eq("id", clinic_id).execute().data) or []
+
+    pmap = {p["id"]: f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() for p in patients}
+    dmap = {m["id"]: f"{m.get('first_name', '')} {m.get('last_name', '')}".strip() for m in members}
+    pac = ("Paciente", lambda r: pmap.get(r.get("patient_id"), ""))
+    doc = ("Médico", lambda r: dmap.get(r.get("doctor_id"), ""))
+
+    wb = Workbook()
+    wb.remove(wb.active)  # drop the default empty sheet
+
+    _write_sheet(wb, "Pacientes", patients)
+    _write_sheet(wb, "Evaluaciones Médicas", medical_records, computed=[pac, doc])
+    _write_sheet(wb, "Recetas", prescriptions, computed=[pac, doc])
+    _write_sheet(wb, "Recetas - Medicamentos", prescription_items)
+    _write_sheet(wb, "Laboratorio", lab_orders, computed=[pac, doc])
+    _write_sheet(wb, "Laboratorio - Estudios", lab_order_items)
+    _write_sheet(wb, "Citas", appointments, computed=[pac, doc])
+    _write_sheet(wb, "Equipo", members, drop=["user_id"])
+    _write_sheet(wb, "Sucursales", branches)
+    _write_sheet(wb, "Clínica", clinic)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+@router.get("/clinic/export/excel")
+async def export_excel(ctx=Depends(require_clinic_admin)):
+    """Download the full clinic database as a multi-sheet Excel file.
+
+    Sheets: Pacientes, Evaluaciones Médicas, Recetas (+ medicamentos),
+    Laboratorio (+ estudios), Citas, Equipo, Sucursales, Clínica.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(None, _build_excel_bytes, clinic_id)
+    except Exception as e:
+        logger.error(f"Excel export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al generar el Excel")
+
+    try:
+        from services.audit import log_audit, actor_from_ctx
+        await log_audit(action="clinic_data_export_excel", entity="clinic", entity_id=clinic_id, **actor_from_ctx(ctx))
+    except Exception:
+        pass
+
+    from fastapi.responses import StreamingResponse
+    fname = f"base_datos_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

@@ -14,7 +14,9 @@ export function FeatureProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) { setLoading(false); return; }
+    if (!user) { setFeatures([]); setModules(null); setPlan(''); setLoading(false); return; }
+    setLoading(true);
+    setModules(null);
     const fetchFeatures = async () => {
       try {
         const res = await axios.get(`${API}/clinic/features`, { headers: getAuthHeaders() });

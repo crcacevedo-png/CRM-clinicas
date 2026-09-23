@@ -1,0 +1,52 @@
+{
+  "summary": "Iteración 28 — validación E2E de Bloqueo de Agenda + Módulo de Roles + Enforcement dinámico. 12/12 pruebas backend en pytest PASARON. Frontend: sidebar del doctor correctamente reducido, guard ModuleRoute redirige /dashboard/ventas → /dashboard, pestaña Roles oculta para doctor, CRUD de roles vía UI funciona (crear/editar/eliminar), modal Bloquear Agenda abre correctamente. Bloqueo por médico bloquea ambas sucursales (409), bloqueo por sucursal solo la sucursal correspondiente. Datos limpiados: doctor.test revertido a 'doctor', todos los roles personalizados eliminados, todos los agenda-blocks de prueba borrados.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Cambio de usuario en la misma pestaña (logout admin → login doctor)",
+        "issue": "FeatureContext no resetea `modules` ni `loading` cuando el `user` cambia. El estado del usuario previo persiste hasta que /clinic/features responde, permitiendo temporalmente ver ítems del sidebar del rol anterior. Requiere ~2-4s de espera antes de que el sidebar se filtre correctamente. En sesión fresca (nueva pestaña / login directo) el gating funciona correcto de inmediato.",
+        "affected_selectors": ["clinic-nav-*"]
+      }
+    ],
+    "design_issues": [
+      {"screen": "Dialogos (role-dialog, block-agenda-modal)", "issues": ["Warning React de accesibilidad: 'Missing Description or aria-describedby for DialogContent'. Solo warning, no bloquea."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter28_roles_and_agenda_blocks.py",
+    "/app/test_reports/pytest/iter28.xml"
+  ],
+  "action_items": [
+    "OPCIONAL/MENOR: En FeatureContext.js, resetear `modules=null` y `loading=true` al inicio del useEffect cuando cambia `user` para evitar filtración de sidebar del usuario anterior durante login/logout en misma pestaña.",
+    "OPCIONAL: Agregar DialogDescription/aria-describedby a role-dialog y block-agenda-modal para eliminar warnings de accesibilidad de Radix."
+  ],
+  "critical_code_review_comments": [
+    "core.require_module usa ctx['member']['role'] como rol efectivo; require_clinic_member ya sustituye 'role' por 'role_key' antes de exponerlo, por lo que roles personalizados se enforce correctamente (verificado con rol 'agenda' solamente → 403 en patients/sales/etc, 200 en appointments).",
+    "roles.py: el endpoint DELETE valida miembros usando role_key pero no valida via base_role/enum. Esto está OK porque role_key es autoritativo. Verified: no se puede borrar un rol con miembros asignados.",
+    "agenda_blocks.check_agenda_block_conflict: comparación de fechas ISO como strings (lt/gt) funciona porque todas las fechas se persisten con TZ normalizada; OK.",
+    "RolesTab.js: `load()` en useEffect tiene deps vacías (eslint-disable) — correcto para carga inicial única, pero garantiza refetch tras save/delete llamando load() manualmente. OK.",
+    "ClinicLayout.js: filtrado de navItems depende de hasModule/hasFeature del contexto. El bug de reset en cambio de usuario (ver integration_issues) es el único issue detectado."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter28_roles_and_agenda_blocks.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (todos los flujos verificados en sesión fresca)"},
+  "test_credentials": "prueba3@gmail.com / Test123456! (admin); carlos@lasalud.gt / Test123456! (doctor); doctor.test@lasalud.gt / Test123456! (reasignable)",
+  "seed_data_creation": "Ninguna — se crearon agenda-blocks y roles personalizados temporales durante los tests, TODOS eliminados al final. doctor.test revertido a role='doctor'. Verificado post-test: 5 roles del sistema, 0 personalizados, 0 agenda_blocks residuales.",
+  "verified_flows": {
+    "backend_agenda_blocks": "doctor-scope block → 409 en MAIN y Z15; branch-scope block MAIN → 409 en MAIN, 200 en Z15; end<=start → 400; scope inválido → 400.",
+    "backend_roles_crud": "GET devuelve 5 roles sistema + 11 módulos; POST crea rol personalizado; PUT edita módulos (con persistencia verificada); DELETE elimina; clinic_admin PUT → 400; role sistema DELETE → 400; role con miembros DELETE → 400.",
+    "backend_dynamic_enforcement": "Rol 'agenda' solo → miembro recibe 403 en /patients /sales /inventory/products /expenses /accounts-receivable y 200 en /appointments; /clinic/features refleja modules=['agenda'].",
+    "backend_static_doctor_gating": "carlos 403 en sales/inventory/expenses/commissions/AR/reports; 200 en appointments/patients/prescriptions/lab-orders. Admin 200 en TODOS incluidos.",
+    "backend_roles_admin_only": "GET /clinic/roles con doctor → 403.",
+    "frontend_admin_sidebar": "13 ítems visibles (todos los módulos).",
+    "frontend_doctor_sidebar_fresh": "SOLO 6 ítems: Dashboard, Agenda, Pacientes, Recetas, Laboratorio, Configuración.",
+    "frontend_module_route_guard": "/dashboard/ventas como doctor → redirige a /dashboard.",
+    "frontend_roles_tab_admin": "tab-roles visible; roles-tab renderiza; 11 module-checkbox-*; new-role-btn → role-dialog abre; save/edit/delete funcionan; cambios reflejados en lista tras load().",
+    "frontend_roles_tab_hidden_for_doctor": "En /dashboard/configuracion como doctor, tab-roles no existe (count=0).",
+    "frontend_agenda_block_modal": "block-agenda-btn abre block-agenda-modal correctamente."
+  },
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Feature de Roles + Agenda Blocks queda completamente funcional y verificada. Único hallazgo menor: FeatureContext.js no resetea state al cambiar de usuario en misma pestaña (afecta pruebas E2E con login-switch, no afecta usuarios reales que hacen login inicial). Los tests de este archivo cubren re-uso: test_iter28_roles_and_agenda_blocks.py trackea/limpia todos los datos creados incluso ante failures via fixture autouse=True."
+}

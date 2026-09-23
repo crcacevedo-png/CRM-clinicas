@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Building2, Calendar, Link2, Unlink, RefreshCw, CheckCircle, Users,
   UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image,
-  Download, Database, Loader2, X
+  Download, Database, Loader2, X, FileSpreadsheet
 } from 'lucide-react';
 import AuditLogTable from '../../components/AuditLogTable';
 import RolesTab from './RolesTab';
@@ -320,6 +320,32 @@ export default function ClinicSettingsPage() {
   const isClinicAdmin = currentMember?.role === 'clinic_admin';
 
   const [downloadingExport, setDownloadingExport] = useState(false);
+  const [downloadingExcel, setDownloadingExcel] = useState(false);
+
+  const downloadExcelExport = async () => {
+    setDownloadingExcel(true);
+    try {
+      const res = await axios.get(`${API}/clinic/export/excel`, { headers, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().slice(0, 10);
+      a.download = `base_datos_${ts}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Base de datos descargada en Excel');
+    } catch (e) {
+      const msg = e?.response?.status === 403
+        ? 'Solo el administrador de clínica puede exportar datos'
+        : 'Error al generar el Excel';
+      toast.error(msg);
+    } finally {
+      setDownloadingExcel(false);
+    }
+  };
+
   const downloadFullExport = async () => {
     if (!window.confirm('¿Descargar export completo de la clínica? Puede tardar varios segundos según el volumen de datos.')) return;
     setDownloadingExport(true);
@@ -857,6 +883,44 @@ export default function ClinicSettingsPage() {
         {/* ===== DATA EXPORT (clinic_admin only) ===== */}
         {isClinicAdmin && (
           <TabsContent value="data">
+            <div className="space-y-4">
+            <Card className="border border-slate-200" data-testid="excel-export-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />Descargar base de datos (Excel)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-2">
+                  <p className="text-sm text-slate-700">
+                    Descarga un archivo <span className="font-semibold">Excel (.xlsx)</span> con una hoja por cada conjunto de datos:
+                  </p>
+                  <ul className="text-xs text-slate-600 list-disc pl-5 space-y-0.5">
+                    <li><span className="font-medium">Pacientes</span> — todas las variables de cada paciente.</li>
+                    <li><span className="font-medium">Evaluaciones Médicas</span> — historia clínica / consultas completas.</li>
+                    <li><span className="font-medium">Recetas</span> y sus medicamentos.</li>
+                    <li><span className="font-medium">Laboratorio</span> y sus estudios.</li>
+                    <li><span className="font-medium">Datos generales</span> — citas, equipo, sucursales y clínica.</li>
+                  </ul>
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-2">
+                    <Shield className="w-3 h-3 inline mr-1" />
+                    Contiene información médica sensible. Guárdalo en un lugar seguro.
+                  </p>
+                </div>
+                <Button
+                  onClick={downloadExcelExport}
+                  disabled={downloadingExcel}
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                  data-testid="download-excel-export-btn"
+                >
+                  {downloadingExcel ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando Excel…</>
+                  ) : (
+                    <><FileSpreadsheet className="w-4 h-4 mr-2" />Descargar Excel (.xlsx)</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
             <Card className="border border-slate-200" data-testid="data-export-card">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
@@ -892,6 +956,7 @@ export default function ClinicSettingsPage() {
                 </Button>
               </CardContent>
             </Card>
+            </div>
           </TabsContent>
         )}
 
