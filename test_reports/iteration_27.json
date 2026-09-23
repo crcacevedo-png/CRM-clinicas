@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend WhatsApp share buttons verified on Prescriptions, Lab Orders and Sales pages. All three POST /api/clinic/whatsapp/share and receive 200 with valid wa.me URLs + non-empty pdf_url, and open the wa.me URL via window.open. Toast 'Abriendo WhatsApp…' shown after 'Preparando envío por WhatsApp…'. No console/page errors on the 3 pages.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "clinic_admin prueba3@gmail.com / Test123456!",
+  "seed_data_creation": "None (used existing rows). Sale used for detail: 263b61eb-c1c2-4c6c-9ab7-939b46d13c01 (Maria Garcia, has_phone=true).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "verified_flows": {
+    "prescriptions": "9 whatsapp-prescription-* buttons on /dashboard/recetas. Click -> POST 200; wa_url starts with https://wa.me/50255512345?text=..., pdf_url present (supabase signed), has_phone=true. Toast 'Abriendo WhatsApp…'. window.open called with wa_url.",
+    "lab_orders": "15 whatsapp-lab-* buttons on /dashboard/laboratorio. Click -> POST 200; wa_url + pdf_url + has_phone=true. Toast shown. window.open called.",
+    "sales_row": "whatsapp-sale-<id> present in Ventas del día. Click -> POST 200; wa_url + pdf_url + has_phone=true. window.open called. Toast shown.",
+    "sales_detail_dialog": "view-sale-<id> opens detail dialog with whatsapp-sale-detail-btn in footer. Click -> POST 200; wa_url + pdf_url returned; window.open called; toast shown.",
+    "regression": "No pageerrors on recetas / laboratorio / ventas. 9 download (PDF) buttons remain on recetas rows."
+  },
+  "notes": "Error-handling toast path (400/404) was not exercised in-UI because triggering it requires an invalid doc_type/id which the buttons never send; backend already curl-verified per request. window.open was stubbed in tests to avoid navigating away — confirmed the frontend calls it with the backend-provided wa_url.",
+  "context_for_next_testing_agent": "WhatsApp share feature is fully wired frontend<->backend. Buttons: data-testid='whatsapp-prescription-<id>' (only ISSUED rows), 'whatsapp-lab-<id>', 'whatsapp-sale-<id>' (day tab), 'whatsapp-sale-detail-btn' (dialog). shareViaWhatsApp lives in src/lib/whatsappShare.js and uses window.open + sonner toasts."
+}
