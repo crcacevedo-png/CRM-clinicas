@@ -349,16 +349,28 @@ export default function ClinicSettingsPage() {
       if (excelStart) params.append('start_date', excelStart);
       if (excelEnd) params.append('end_date', excelEnd);
       excelSheets.forEach(s => params.append('sheets', s));
-      const res = await axios.get(`${API}/clinic/export/excel?${params.toString()}`, { headers, responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const url = `${API}/clinic/export/excel?${params.toString()}`;
+      let res;
+      try {
+        res = await axios.get(url, { headers, responseType: 'blob' });
+      } catch (err1) {
+        // Transient Supabase keepalive drops can surface as a 5xx; retry once.
+        if (err1?.response?.status >= 500) {
+          await new Promise(r => setTimeout(r, 600));
+          res = await axios.get(url, { headers, responseType: 'blob' });
+        } else {
+          throw err1;
+        }
+      }
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
-      a.href = url;
+      a.href = blobUrl;
       const ts = new Date().toISOString().slice(0, 10);
       a.download = `base_datos_${ts}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(blobUrl);
       toast.success('Base de datos descargada en Excel');
       setExcelDialogOpen(false);
     } catch (e) {

@@ -1,0 +1,34 @@
+{
+  "summary": "E2E UI testing of the new in-consultation Recetas + Laboratorio sections, filtered Excel export modal, and Role audit logging. Doctor flow (prescriptions + lab orders inside consultation + finalize) works 100%: diagnosis auto-prefill from CIE-10 works, both 'Emitir e imprimir' and 'Emitir y enviar por WhatsApp' paths create the resource and show the success panel with reprint/whatsapp/new buttons; lab order same. Finalizing the consultation reuses the draft medical_record_id (no duplicate) and shows 'Consulta finalizada' toast. Admin flow: Excel export modal opens correctly, Ninguna disables the download button, Todas/Ninguna work, date range + individual sheet selection UI works, BUT the actual download from the UI consistently returns HTTP 500 (Supabase 'Server disconnected' RemoteProtocolError from clinic_export.py line 476 while calling supabase-py). The very same request via direct curl succeeds 3/3 times (200 OK, 15KB xlsx) — issue only reproducible from the browser, likely because the frontend simultaneously polls features/session endpoints and floods the shared httpx keepalive pool. Roles CRUD + assignment writes audit events (role_created, role_updated, role_deleted, member_role_assigned) correctly and they show in Bitácora. /dashboard/recetas and /dashboard/laboratorio still load without console errors.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/clinic/export/excel", "issue": "Returns 500 when called from the UI (reproducible 3x). Backend log shows httpx.RemoteProtocolError: Server disconnected at clinic_export.py line 476 (_fetch_all clinic_members) called from line 544. Direct curl with identical params returns 200 with a valid .xlsx. Root cause looks like a shared/keepalive supabase-py client whose connection is invalidated when the browser fires many concurrent requests (features, session, etc.) while the export runs. Consider wrapping _fetch_all in a retry (1-2 retries on RemoteProtocolError/ReadError) or use a fresh supabase client per export request.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ClinicSettingsPage → Excel modal", "issue": "When the backend returns 500 the toast shown is generic 'Error al generar el Excel'. Since the failure is retriable, consider adding an automatic retry on the frontend (1 retry) before surfacing the toast, or at least differentiate 500 vs 403.", "selector": "[data-testid=\"excel-confirm-download-btn\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Excel filtered export (UI)", "issue": "Download always fails from browser with 500 while identical request via curl succeeds. Blocks the whole filtered export feature end-to-end.", "affected_selectors": ["[data-testid=\"excel-confirm-download-btn\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_29.json"],
+  "action_items": [
+    "Fix GET /api/clinic/export/excel Supabase 'Server disconnected' error triggered from the UI. Add retry-on-RemoteProtocolError inside routes/clinic_export.py::_fetch_all (e.g. 2 retries with fresh sdb client) or use a per-request supabase client.",
+    "Optionally add a 1-retry wrapper in ClinicSettingsPage.downloadExcelExport before showing the error toast."
+  ],
+  "critical_code_review_comments": [
+    "routes/clinic_export.py uses a module-level shared supabase client (sdb) for many synchronous _fetch_all calls inside run_in_executor. Under concurrent load the underlying httpx keepalive connections can be closed by the server and the next request fails immediately with RemoteProtocolError. Wrap _fetch_all with a small retry (RemoteProtocolError, ReadError) or instantiate a fresh client for each export call."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only run)", "frontend": "~85% (5/6 features pass; Excel download from UI blocked by backend 500)"},
+  "test_credentials": "doctor.test@lasalud.gt / Test123456! ; prueba3@gmail.com / Test123456!",
+  "seed_data_creation": "Created 1 test role 'TEST_Rol_<ts>' during roles CRUD; auditor events left as evidence. Prescription + Lab order + finalized consultation created for patient Maria Garcia (dffcbc90-...).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All UI flows other than Excel download work. The Excel download from the browser reliably hits a backend 500 even though curl works — this is what next testing should verify after main agent applies the retry fix in clinic_export.py. Testids used: presc-emit-print-btn / presc-emit-whatsapp-btn / presc-created-panel; lab-create-print-btn / lab-create-whatsapp-btn / lab-created-panel; excel-export-dialog + excel-sheet-* + excel-confirm-download-btn; tab-roles/new-role-btn/role-dialog/role-name-input/module-checkbox-*/save-role-btn; tab-audit content contains role_created/role_updated/role_deleted/member_role_assigned strings.",
+  "rca of the issue": "GET /api/clinic/export/excel throws httpx.RemoteProtocolError: Server disconnected inside routes/clinic_export.py::_fetch_all (line 71) when the browser is on the settings page (which is polling several other Supabase-backed endpoints concurrently). The shared supabase-py client's httpx keepalive connection is closed by Supabase and the next .execute() raises. Curl in isolation does not trigger the concurrency and succeeds 3/3. Mitigation: catch httpx.RemoteProtocolError/ReadError in _fetch_all and retry once with a freshly-built client (or set follow_redirects/connection pool to close each request)."
+}

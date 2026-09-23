@@ -64,11 +64,36 @@ def _json_default(o):
     return str(o)
 
 
+def _execute_retry(build_query, retries: int = 3):
+    """Run a PostgREST query with retries on transient httpx connection errors.
+
+    The module-level supabase client keeps httpx keepalive connections open; under
+    concurrent load (e.g. the browser polling several endpoints while an export
+    runs) the server may close an idle connection, so the next `.execute()` raises
+    `RemoteProtocolError: Server disconnected`. Retrying re-establishes a fresh
+    connection and succeeds.
+    """
+    import time
+    import httpx
+    transient = (
+        httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError,
+        httpx.WriteError, httpx.PoolTimeout, httpx.ConnectTimeout, httpx.ReadTimeout,
+    )
+    for attempt in range(retries):
+        try:
+            return build_query().execute()
+        except transient as e:
+            if attempt == retries - 1:
+                raise
+            logger.warning(f"export fetch retry {attempt + 1}/{retries} after {type(e).__name__}: {e}")
+            time.sleep(0.4 * (attempt + 1))
+
+
 def _fetch_all(table: str, eq_col: str, eq_val):
     PAGE = 1000
     out, offset = [], 0
     while True:
-        res = sdb.table(table).select("*").eq(eq_col, eq_val).range(offset, offset + PAGE - 1).execute()
+        res = _execute_retry(lambda: sdb.table(table).select("*").eq(eq_col, eq_val).range(offset, offset + PAGE - 1))
         rows = res.data or []
         out.extend(rows)
         if len(rows) < PAGE:
@@ -86,7 +111,7 @@ def _fetch_in(table: str, in_col: str, in_values: list):
         chunk = in_values[i:i + BATCH]
         offset, PAGE = 0, 1000
         while True:
-            res = sdb.table(table).select("*").in_(in_col, chunk).range(offset, offset + PAGE - 1).execute()
+            res = _execute_retry(lambda: sdb.table(table).select("*").in_(in_col, chunk).range(offset, offset + PAGE - 1))
             rows = res.data or []
             out.extend(rows)
             if len(rows) < PAGE:
@@ -115,7 +140,7 @@ def _build_zip_to_tempfile(clinic_id: str, on_progress) -> tuple[str, dict]:
         for i, t in enumerate(DIRECT_TABLES):
             try:
                 if t == "clinics":
-                    res = sdb.table("clinics").select("*").eq("id", clinic_id).execute()
+                    res = _execute_retry(lambda: sdb.table("clinics").select("*").eq("id", clinic_id))
                     rows = res.data or []
                 else:
                     rows = _fetch_all(t, "clinic_id", clinic_id)
@@ -506,7 +531,7 @@ def _build_excel_bytes(clinic_id: str, start_date=None, end_date=None, sheets=No
     if want("branches"):
         _write_sheet(wb, "Sucursales", _fetch_all("branches", "clinic_id", clinic_id))
     if want("clinic"):
-        clinic = (sdb.table("clinics").select("*").eq("id", clinic_id).execute().data) or []
+        clinic = (_execute_retry(lambda: sdb.table("clinics").select("*").eq("id", clinic_id)).data) or []
         _write_sheet(wb, "Clínica", clinic)
 
     # openpyxl requires at least one visible sheet on save
