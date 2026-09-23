@@ -7,6 +7,7 @@ import logging
 import secrets
 import string
 import uuid
+from ipaddress import ip_address as _ip_address, ip_network as _ip_network
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -471,6 +472,79 @@ def validate_uuid(value: str, label: str = "ID") -> str:
         return value
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=422, detail=f"{label} inválido (UUID requerido)")
+
+# ============== TRUSTED-PROXY CLIENT IP ==============
+# Only honor X-Forwarded-For / X-Real-IP when the direct TCP peer is a trusted
+# proxy (the K8s ingress). For untrusted peers we use the raw connection IP.
+# Defeats XFF spoofing used to bypass IP-based rate limiting.
+_DEFAULT_TRUSTED_CIDRS = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8"
+_TRUSTED_PROXY_CIDRS = []
+for _c in (os.environ.get('TRUSTED_PROXY_CIDRS') or _DEFAULT_TRUSTED_CIDRS).split(','):
+    _c = _c.strip()
+    if _c:
+        try:
+            _TRUSTED_PROXY_CIDRS.append(_ip_network(_c, strict=False))
+        except ValueError:
+            pass
+
+
+def _is_from_trusted_proxy(peer_ip) -> bool:
+    if not peer_ip:
+        return False
+    try:
+        addr = _ip_address(peer_ip)
+        return any(addr in net for net in _TRUSTED_PROXY_CIDRS)
+    except ValueError:
+        return False
+
+
+def client_ip(request) -> str:
+    """Return the real client IP with trusted-proxy awareness."""
+    if request is None:
+        return "unknown"
+    try:
+        peer = request.client.host if request.client else None
+    except Exception:
+        peer = None
+    if _is_from_trusted_proxy(peer):
+        fwd = request.headers.get('x-forwarded-for') or request.headers.get('x-real-ip')
+        if fwd:
+            first = fwd.split(',')[0].strip()
+            if first:
+                return first
+    return peer or "unknown"
+
+
+# ============== TENANT OWNERSHIP GUARDS (BOLA/IDOR) ==============
+def assert_patient_in_clinic(patient_id: str, clinic_id: str) -> None:
+    """Raise 400 if patient_id does not belong to clinic_id."""
+    if not patient_id:
+        raise HTTPException(status_code=400, detail="Paciente requerido")
+    validate_uuid(patient_id, "patient_id")
+    res = sdb.table('patients').select('id').eq('id', patient_id).eq('clinic_id', clinic_id).maybe_single().execute()
+    if not getattr(res, 'data', None):
+        raise HTTPException(status_code=400, detail="Paciente inválido para esta clínica")
+
+
+def assert_doctor_in_clinic(doctor_id: str, clinic_id: str) -> None:
+    """Raise 400 if doctor_id (clinic_member) does not belong to clinic_id."""
+    if not doctor_id:
+        raise HTTPException(status_code=400, detail="Médico requerido")
+    validate_uuid(doctor_id, "doctor_id")
+    res = sdb.table('clinic_members').select('id').eq('id', doctor_id).eq('clinic_id', clinic_id).maybe_single().execute()
+    if not getattr(res, 'data', None):
+        raise HTTPException(status_code=400, detail="Médico inválido para esta clínica")
+
+
+FINANCE_ROLES = ["clinic_admin", "cashier"]
+
+
+def require_finance_role(ctx):
+    """Restrict financial reports to clinic_admin / cashier (matches dashboard gating)."""
+    role = ctx["member"].get("role", "")
+    if role not in FINANCE_ROLES:
+        raise HTTPException(status_code=403, detail="Acceso restringido a administradores y cajeros")
+    return ctx
 
 def get_clinic_features(clinic_id: str) -> set:
     """Resolve the active feature codes for a clinic (plan + overrides)."""

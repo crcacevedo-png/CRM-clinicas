@@ -27,16 +27,11 @@ api_router = APIRouter(prefix="/api")
 # app and exposed via app.state.limiter so route decorators can reference it.
 
 def _trusted_remote_address(request: Request) -> str:
-    """Return the real client IP, only trusting XFF if request comes from a
-    known proxy CIDR. In the Emergent/K8s preview, all traffic transits the
-    ingress, so we trust the last hop of XFF.
-    """
-    xff = request.headers.get('x-forwarded-for')
-    if xff:
-        # Take the first non-empty IP from the comma-separated list
-        first = xff.split(',')[0].strip()
-        if first:
-            return first
+    """Return the real client IP, trusting XFF only from known proxy CIDRs."""
+    from core import client_ip
+    ip = client_ip(request)
+    if ip and ip != "unknown":
+        return ip
     return get_remote_address(request)
 
 limiter = Limiter(key_func=_trusted_remote_address, default_limits=[])
@@ -181,6 +176,9 @@ async def security_headers_middleware(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # API returns JSON/redirects only — lock CSP down tightly. The SPA's own CSP
+    # (which needs to allow scripts/styles) is declared as a meta tag in index.html.
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
     return response
 
 # ============== CORS ==============

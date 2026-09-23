@@ -20,6 +20,7 @@ from core import (
     PatientQuickCreate, PatientFullCreate,
     require_clinical_role,
     validate_uuid,
+    assert_patient_in_clinic,
 )
 
 # ============== PRESCRIPTION ROUTES ==============
@@ -159,6 +160,7 @@ async def create_prescription(data: PrescriptionCreate, ctx=Depends(require_clin
     require_clinical_role(ctx)
     clinic_id = ctx["member"]["clinic_id"]
     member = ctx["member"]
+    assert_patient_in_clinic(data.patient_id, clinic_id)
     try:
         now = now_iso()
         presc_id = str(uuid.uuid4())

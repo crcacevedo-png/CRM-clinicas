@@ -47,7 +47,7 @@ class TestMedicalRecordsAPI:
             try:
                 # Note: No delete endpoint exists, so we leave draft records
                 pass
-            except:
+            except Exception:
                 pass
     
     # ============== ICD10 SEARCH TESTS ==============

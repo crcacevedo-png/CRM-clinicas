@@ -20,6 +20,7 @@ from core import (
     PatientQuickCreate, PatientFullCreate,
     require_clinical_role,
     validate_uuid,
+    assert_patient_in_clinic,
 )
 
 # ============== LAB ORDER ROUTES ==============
@@ -133,6 +134,7 @@ async def create_lab_order(data: LabOrderCreate, ctx=Depends(require_clinic_memb
     require_clinical_role(ctx)
     clinic_id = ctx["member"]["clinic_id"]
     member = ctx["member"]
+    assert_patient_in_clinic(data.patient_id, clinic_id)
     try:
         now = now_iso()
         order_id = str(uuid.uuid4())
@@ -277,7 +279,7 @@ async def generate_lab_order_pdf(order_id: str, clinic_id: str) -> Optional[str]
             try:
                 d = dt.fromisoformat(ordered.replace('Z', '+00:00'))
                 date_str = d.strftime('%d/%m/%Y')
-            except:
+            except Exception:
                 date_str = ordered[:10]
         elements.append(Paragraph(f"<b>Fecha:</b> {date_str}", styles['Detail']))
 

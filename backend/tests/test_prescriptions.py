@@ -45,7 +45,7 @@ class TestPrescriptionsModule:
                     if p.get("diagnosis", "").startswith("TEST_"):
                         # Can't delete issued prescriptions, just leave them
                         pass
-        except:
+        except Exception:
             pass
     
     # ============== MEDICATION SEARCH TESTS ==============

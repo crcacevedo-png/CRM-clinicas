@@ -151,7 +151,7 @@ async def list_clinic_members(ctx=Depends(require_clinic_member)):
                 try:
                     u = supabase_admin.auth.admin.get_user_by_id(m['user_id'])
                     m['email'] = u.user.email if u and u.user else ''
-                except:
+                except Exception:
                     m['email'] = ''
             else:
                 m['email'] = ''
@@ -250,8 +250,8 @@ async def invite_member(data: MemberInvite, ctx=Depends(require_clinic_member)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Invite member error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al invitar miembro: {str(e)}")
+        logger.error(f"Invite member error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al invitar miembro")
 
 @router.put("/clinic/members/{member_id}")
 async def update_member(member_id: str, data: MemberUpdate, ctx=Depends(require_clinic_member)):

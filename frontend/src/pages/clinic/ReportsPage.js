@@ -28,10 +28,11 @@ const COLORS = ['#0D9488', '#0EA5E9', '#F59E0B', '#EF4444', '#8B5CF6', '#10B981'
 const PAY_LABEL = { cash: 'Efectivo', credit_card: 'Tarjeta crédito', debit_card: 'Tarjeta débito', transfer: 'Transferencia', credit: 'Crédito', check: 'Cheque', other: 'Otro' };
 
 export default function ReportsPage() {
-  const { getAuthHeaders } = useAuth();
+  const { getAuthHeaders, role } = useAuth();
   const { branches, activeBranch } = useBranch();
   const { hasFeature } = useFeatures();
   const headers = getAuthHeaders();
+  const FINANCE_ROLES = ['clinic_admin', 'cashier'];
   const [tab, setTab] = useState('summary');
   // Shared cache across tab switches: Map of `${tab}-${JSON.stringify(params)}` → response data.
   // Persists across unmount/remount of TabsContent (Radix default behaviour).
@@ -41,6 +42,20 @@ export default function ReportsPage() {
     set: (key, val) => cacheRef.current.set(key, val),
     invalidate: () => cacheRef.current.clear(),
   }), []);
+
+  if (role && !FINANCE_ROLES.includes(role)) {
+    return (
+      <div className="p-6 lg:p-8" data-testid="reports-no-access">
+        <div className="max-w-md mx-auto mt-24 text-center">
+          <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" strokeWidth={1.5} />
+          <h1 className="text-xl font-bold text-slate-900 mb-2">Acceso restringido</h1>
+          <p className="text-sm text-slate-500">
+            Los reportes financieros solo están disponibles para administradores y cajeros de la clínica.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <FeatureGate feature="financial_reports" planRequired="Professional">

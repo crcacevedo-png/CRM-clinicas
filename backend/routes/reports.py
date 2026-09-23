@@ -6,14 +6,14 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 router = APIRouter()
 
-from core import sdb, supabase_admin, require_clinic_member, now_iso, logger
+from core import sdb, supabase_admin, require_clinic_member, require_finance_role, now_iso, logger
 from routes.expenses import EXPENSE_CATEGORY_LABELS
 
 # ============== FINANCIAL REPORTS ROUTES ==============
 
 def _period_dates(period: str, date_from: str = "", date_to: str = ""):
     """Resolve date range from a period preset or custom from/to."""
-    from datetime import datetime as dt, date as dt_date, timedelta
+    from datetime import datetime as dt, date as dt_date
     today = dt.now(timezone.utc).date()
     if period == 'custom' and date_from and date_to:
         return date_from, date_to
@@ -32,7 +32,7 @@ def _period_dates(period: str, date_from: str = "", date_to: str = ""):
     return today.replace(day=1).isoformat(), today.isoformat()
 
 def _previous_period(date_from: str, date_to: str):
-    from datetime import date as dt_date, timedelta
+    from datetime import date as dt_date
     a = dt_date.fromisoformat(date_from)
     b = dt_date.fromisoformat(date_to)
     span = (b - a).days + 1
@@ -46,6 +46,7 @@ async def executive_summary(
     branch_id: str = "", ctx=Depends(require_clinic_member)
 ):
     clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
     try:
         d_from, d_to = _period_dates(period, date_from, date_to)
         prev_from, prev_to = _previous_period(d_from, d_to)
@@ -166,6 +167,7 @@ async def income_report(
     ctx=Depends(require_clinic_member)
 ):
     clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
     try:
         d_from, d_to = _period_dates(period, date_from, date_to)
         q = sdb.table('sales').select('id,total,created_at,branch_id,doctor_id,cashier_id').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', d_from).lte('created_at', d_to + 'T23:59:59Z')
@@ -270,6 +272,7 @@ async def pnl_report(
 ):
     """Estado de resultados (P&L) con comparación período actual vs anterior."""
     clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
     try:
         d_from, d_to = _period_dates(period, date_from, date_to)
         prev_from, prev_to = _previous_period(d_from, d_to)
@@ -343,6 +346,7 @@ async def inventory_report(
     ctx=Depends(require_clinic_member)
 ):
     clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
     try:
         from datetime import datetime as dt, timedelta
         # 1. Valoración de inventario (cost + retail) por sucursal y categoría
@@ -477,6 +481,7 @@ async def by_branch_report(
     ctx=Depends(require_clinic_member)
 ):
     clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
     try:
         d_from, d_to = _period_dates(period, date_from, date_to)
         branches = sdb.table('branches').select('id,name').eq('clinic_id', clinic_id).eq('is_active', True).execute().data or []
@@ -520,6 +525,7 @@ async def pnl_pdf(
 ):
     """Export P&L to PDF."""
     clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.units import mm

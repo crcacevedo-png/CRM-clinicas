@@ -84,6 +84,14 @@ async def list_patients(
 @router.post("/clinic/patients")
 async def create_patient(data: PatientFullCreate, ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
+    # Enforce plan patient limit (defense against plan-limit bypass)
+    _clinic = sdb.table('clinics').select('plan,max_patients').eq('id', clinic_id).maybe_single().execute()
+    _cdata = getattr(_clinic, 'data', None) or {}
+    _limit = _cdata.get('max_patients') or get_plan_limits(_cdata.get('plan', 'free')).get('max_patients')
+    if _limit:
+        _count = sdb.table('patients').select('id', count='exact').eq('clinic_id', clinic_id).eq('is_active', True).execute()
+        if (_count.count or 0) >= _limit:
+            raise HTTPException(status_code=400, detail="Límite de pacientes alcanzado para su plan. Contacte al administrador.")
     try:
         now = now_iso()
         patient_id = str(uuid.uuid4())
@@ -109,9 +117,11 @@ async def create_patient(data: PatientFullCreate, ctx=Depends(require_clinic_mem
 
         sdb.table('patients').insert(doc).execute()
         return {"id": patient_id, "first_name": data.first_name, "last_name": data.last_name, "message": "Paciente creado exitosamente"}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Create patient error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al crear paciente: {str(e)}")
+        logger.error(f"Create patient error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al crear paciente")
 
 @router.get("/clinic/patients/{patient_id}")
 async def get_patient(patient_id: str, ctx=Depends(require_clinic_member)):

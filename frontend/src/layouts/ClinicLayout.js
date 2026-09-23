@@ -25,13 +25,13 @@ const allNavItems = [
   { to: '/dashboard/cuentas', icon: Receipt, label: 'Cuentas por cobrar', feature: 'accounts_receivable' },
   { to: '/dashboard/gastos', icon: CreditCard, label: 'Gastos', feature: 'expenses' },
   { to: '/dashboard/comisiones', icon: Percent, label: 'Comisiones', feature: 'commissions' },
-  { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports' },
+  { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports', roles: ['clinic_admin', 'cashier'] },
   { to: '/dashboard/sucursales', icon: GitBranch, label: 'Sucursales', feature: 'multi_branch' },
   { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
 export default function ClinicLayout() {
-  const { user, logout, getAuthHeaders } = useAuth();
+  const { user, logout, getAuthHeaders, role } = useAuth();
   const { hasFeature } = useFeatures();
   const { branches, activeBranch, setActiveBranch, hasBranches } = useBranch();
   const navigate = useNavigate();
@@ -52,7 +52,10 @@ export default function ClinicLayout() {
     navigate('/login');
   };
 
-  const navItems = allNavItems.filter(item => !item.feature || hasFeature(item.feature));
+  const navItems = allNavItems.filter(item =>
+    (!item.feature || hasFeature(item.feature)) &&
+    (!item.roles || item.roles.includes(role))
+  );
 
   return (
     <div className="flex min-h-screen bg-[#FAFAFA]">

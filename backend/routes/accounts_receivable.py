@@ -12,7 +12,7 @@ from core import sdb, supabase_admin, require_clinic_member, now_iso, logger
 
 def _enrich_ar(ar_list):
     """Attach patient_name, sale_number, days_overdue, and color status to a list of AR rows."""
-    from datetime import datetime as dt, date
+    from datetime import datetime as dt
     today = dt.now(timezone.utc).date()
     for ar in ar_list:
         if ar.get('patient_id'):

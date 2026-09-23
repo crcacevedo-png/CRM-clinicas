@@ -27,7 +27,7 @@ import logging
 from typing import Optional
 from fastapi import HTTPException, Request
 
-from core import sdb, run_sql
+from core import sdb, run_sql, client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +71,12 @@ async def check_rate_limit(key: str, *, limit: int, window_sec: int) -> None:
 
 
 def rate_limit_key(request: Request, scope: str, extra: Optional[str] = None) -> str:
-    """Build a stable key from IP + scope [+ extra qualifier like email]."""
-    try:
-        ip = request.headers.get('x-forwarded-for', '').split(',')[0].strip()
-        if not ip and request.client:
-            ip = request.client.host or 'unknown'
-    except Exception:
-        ip = 'unknown'
+    """Build a stable key from IP + scope [+ extra qualifier like email].
+
+    Uses trusted-proxy-aware client IP so a spoofed X-Forwarded-For from a
+    direct (non-proxy) peer cannot reset the counter.
+    """
+    ip = client_ip(request)
     parts = [scope, ip or 'unknown']
     if extra:
         parts.append(hashlib.sha1(extra.encode()).hexdigest()[:12])

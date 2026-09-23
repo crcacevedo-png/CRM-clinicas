@@ -44,6 +44,47 @@ def decrypt_token(encrypted: str) -> str:
     except Exception:
         return ""
 
+# --- OAuth state signing (CSRF protection) ---
+# The `state` param is signed with an HMAC bound to the initiating user and a
+# short TTL. The callback rejects any state it did not sign, so an attacker
+# cannot inject a victim's user_id and hijack their calendar sync.
+import hmac as _hmac
+import json as _json
+import time as _time
+import secrets as _secrets
+
+
+def _oauth_state_secret() -> bytes:
+    raw = os.environ.get('ENCRYPTION_KEY', 'default-key-change-me')
+    return hashlib.sha256(('oauth-state:' + raw).encode()).digest()
+
+
+def _sign_oauth_state(user_id: str, ttl: int = 600) -> str:
+    payload = {"uid": user_id, "exp": int(_time.time()) + ttl, "n": _secrets.token_urlsafe(6)}
+    body = base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode().rstrip('=')
+    sig = _hmac.new(_oauth_state_secret(), body.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{body}.{sig}"
+
+
+def _verify_oauth_state(state: str):
+    """Return the user_id embedded in a valid, unexpired state, else None."""
+    try:
+        body, sig = (state or "").split('.', 1)
+    except (ValueError, AttributeError):
+        return None
+    expected = _hmac.new(_oauth_state_secret(), body.encode(), hashlib.sha256).hexdigest()[:32]
+    if not _hmac.compare_digest(sig, expected):
+        return None
+    try:
+        pad = '=' * (-len(body) % 4)
+        payload = _json.loads(base64.urlsafe_b64decode(body + pad))
+    except Exception:
+        return None
+    if int(payload.get('exp', 0)) < int(_time.time()):
+        return None
+    return payload.get('uid')
+
+
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def get_google_flow():
@@ -89,7 +130,7 @@ async def google_calendar_auth_url(ctx=Depends(require_clinic_member)):
             access_type='offline',
             include_granted_scopes='true',
             prompt='consent',
-            state=user_id,
+            state=_sign_oauth_state(user_id),
         )
         return {"auth_url": auth_url}
     except Exception as e:
@@ -107,7 +148,11 @@ async def google_calendar_callback(code: str = "", state: str = "", error: str =
     if not code or not state:
         return RedirectResponse(url="/dashboard?gcal_error=missing_params")
 
-    user_id = state
+    # Verify the signed state — rejects forged/expired states (CSRF protection)
+    user_id = _verify_oauth_state(state)
+    if not user_id:
+        frontend_url = os.environ.get('GOOGLE_REDIRECT_URI', '').replace('/api/google-calendar/callback', '')
+        return RedirectResponse(url=f"{frontend_url}/dashboard?gcal_error=invalid_state")
     try:
         flow = get_google_flow()
         flow.fetch_token(code=code)

@@ -19,6 +19,7 @@ from core import (
     AppointmentCreate, AppointmentUpdate, AppointmentStatusUpdate,
     PatientQuickCreate, PatientFullCreate,
     get_clinic_features,
+    assert_patient_in_clinic, assert_doctor_in_clinic,
 )
 
 # ============== APPOINTMENT ROUTES ==============
@@ -94,6 +95,10 @@ async def create_appointment(data: AppointmentCreate, ctx=Depends(require_clinic
             br = sdb.table('branches').select('id').eq('id', data.branch_id).eq('clinic_id', clinic_id).maybe_single().execute()
             if not getattr(br, 'data', None):
                 raise HTTPException(status_code=400, detail="Sucursal inválida")
+
+        # Validate patient + doctor belong to this clinic (tenant isolation / IDOR)
+        assert_patient_in_clinic(data.patient_id, clinic_id)
+        assert_doctor_in_clinic(data.doctor_id, clinic_id)
 
         starts = dt.fromisoformat(data.starts_at.replace('Z', '+00:00'))
         if starts.tzinfo is None:
@@ -189,6 +194,10 @@ async def update_appointment(apt_id: str, data: AppointmentUpdate, ctx=Depends(r
             br = sdb.table('branches').select('id').eq('id', update_data['branch_id']).eq('clinic_id', clinic_id).maybe_single().execute()
             if not getattr(br, 'data', None):
                 raise HTTPException(status_code=400, detail="Sucursal inválida")
+
+        # Validate doctor (if reassigned) belongs to this clinic
+        if update_data.get('doctor_id'):
+            assert_doctor_in_clinic(update_data['doctor_id'], clinic_id)
 
         if "starts_at" in update_data:
             from datetime import datetime as dt, timedelta

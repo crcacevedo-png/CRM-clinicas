@@ -1,12 +1,12 @@
 """Auto-extracted from server.py — DO NOT EDIT MANUALLY without checking server.py."""
 import uuid
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 
 router = APIRouter()
 
-from core import sdb, supabase_admin, require_clinic_member, now_iso, logger, validate_uuid, fetch_clinic_logo_image
+from core import sdb, supabase_admin, require_clinic_member, now_iso, logger, validate_uuid, fetch_clinic_logo_image, assert_patient_in_clinic, assert_doctor_in_clinic
 
 from routes.commissions import _compute_commissions_for_sale
 
@@ -263,6 +263,15 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
         raise HTTPException(status_code=400, detail="Debe agregar al menos un ítem")
     if not data.get("branch_id"):
         raise HTTPException(status_code=400, detail="Sucursal requerida")
+    # Validate branch belongs to this clinic (tenant isolation)
+    _br = sdb.table('branches').select('id').eq('id', data["branch_id"]).eq('clinic_id', clinic_id).maybe_single().execute()
+    if not getattr(_br, 'data', None):
+        raise HTTPException(status_code=400, detail="Sucursal inválida")
+    # Validate optional patient/doctor belong to this clinic (IDOR guard)
+    if data.get("patient_id"):
+        assert_patient_in_clinic(data["patient_id"], clinic_id)
+    if data.get("doctor_id"):
+        assert_doctor_in_clinic(data["doctor_id"], clinic_id)
     # If a cash session is provided, force the sale's branch_id to match the session's branch.
     # This prevents the silent mismatch where a user has an open cash session in branch A but
     # the UI's active branch is B — sales must follow the cash session, not the global selector.
@@ -289,6 +298,27 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
         m = p.get("payment_method")
         if m and m not in valid_methods:
             raise HTTPException(status_code=400, detail=f"Método de pago inválido: {m}")
+    # Validate item numeric ranges (no negative/invalid values)
+    for it in items:
+        try:
+            _q = float(it.get("quantity") or 0)
+            _u = float(it.get("unit_price") or 0)
+            _d = float(it.get("discount_pct") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Valores numéricos inválidos en un ítem")
+        if _q <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad de cada ítem debe ser mayor a 0")
+        if _u < 0:
+            raise HTTPException(status_code=400, detail="El precio unitario no puede ser negativo")
+        if _d < 0 or _d > 100:
+            raise HTTPException(status_code=400, detail="El descuento debe estar entre 0 y 100%")
+    for p in payments:
+        try:
+            _pa = float(p.get("amount") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Monto de pago inválido")
+        if _pa < 0:
+            raise HTTPException(status_code=400, detail="El monto de pago no puede ser negativo")
     try:
         # Compute totals
         subtotal = 0.0
@@ -401,7 +431,7 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                 }).execute()
         except Exception as inner_e:
             # Rollback: delete payments, inventory movements (ref this sale), sale_items, sale
-            logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}")
+            logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}", exc_info=True)
             try: sdb.table('payments').delete().eq('sale_id', sale_id).execute()
             except Exception: pass
             try: sdb.table('inventory_movements').delete().eq('reference_id', sale_id).eq('reference_type', 'sale').execute()
@@ -410,7 +440,7 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             except Exception: pass
             try: sdb.table('sales').delete().eq('id', sale_id).execute()
             except Exception: pass
-            raise HTTPException(status_code=500, detail=f"Error al registrar venta: {str(inner_e)}")
+            raise HTTPException(status_code=500, detail="Error al registrar la venta")
 
         # If amount_due > 0 → also create accounts_receivable record (best-effort; ignore if table missing)
         if amount_due > 0:
@@ -429,10 +459,10 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                 }).execute()
             except Exception as _e:
                 # Surface the error so the user knows the AR wasn't created
-                logger.error(f"AR create failed for sale {sale_id}: {_e}")
+                logger.error(f"AR create failed for sale {sale_id}: {_e}", exc_info=True)
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Venta creada pero no se pudo crear la cuenta por cobrar: {str(_e)[:200]}"
+                    detail="Venta creada pero no se pudo crear la cuenta por cobrar"
                 )
 
         # Compute commissions for the sale's doctor (best-effort)
@@ -453,8 +483,8 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create sale error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+        logger.error(f"Create sale error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error al procesar la venta")
 
 @router.get("/clinic/sales")
 async def list_sales(
