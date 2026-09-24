@@ -592,10 +592,13 @@ async def delete_clinic(
         except Exception as e:
             logger.warning(f"delete clinic_members failed: {e}")
 
-        # Delete Supabase Auth users (best-effort)
+        # Delete Supabase Auth users (best-effort) — only for users with no remaining memberships
         auth_deleted = 0
         for uid in member_user_ids:
             try:
+                other = sdb.table('clinic_members').select('id', count='exact').eq('user_id', uid).execute()
+                if (other.count or 0) > 0:
+                    continue  # user still belongs to another clinic — keep the auth account
                 supabase_admin.auth.admin.delete_user(uid)
                 auth_deleted += 1
             except Exception as e:

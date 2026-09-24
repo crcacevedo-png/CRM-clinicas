@@ -1,0 +1,31 @@
+{
+  "summary": "Backend-only testing of new Super Admin hard-delete endpoints (DELETE /api/admin/clinics/{id} with confirm_name guard, and DELETE /api/admin/users/{id}). 12/12 pytest tests passed against REACT_APP_BACKEND_URL. Covered: 400 on missing/wrong confirm_name, 404 on missing entities, 403 for clinic_admin (non-super-admin), and full happy-path purge (returns 200 with message + purge_stats + auth_users_deleted; verified clinic GET->404 afterwards, clinic absent from list, extra member auth account removed). Also verified regression on GET /admin/dashboard, GET /admin/clinics, GET /admin/users, POST /admin/clinics (used for disposable clinics) and PUT /admin/clinics/{id} (toggle is_active). All disposable entities were created with unique TEST_DEL_ prefix + timestamp and cleaned up; no production data (Clinica la salud c0321ed8...) was deleted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/admin/users?search=<email>", "issue": "The DB query filters clinic_members by first_name/last_name ILIKE only (line 375 of super_admin.py); the fallback Python email filter runs on the already-narrowed set, so searching by email substring returns []. Not caused by this iteration's changes but discovered while writing tests. Workaround used: filter by clinic_id."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_super_admin_delete.py",
+    "/app/test_reports/pytest/iteration_35_delete.xml"
+  ],
+  "action_items": [
+    "(Optional / not blocking) Fix GET /admin/users email search: either add email column ilike into the SQL query (or fetch all rows and let the Python filter run) so searching by email works from the UI as well."
+  ],
+  "critical_code_review_comments": [
+    "delete_clinic purge is best-effort (each table wrapped in try/except) — good; per-table errors surface in purge_stats as 'error:...' strings so consumers must handle mixed int/str values.",
+    "delete_user only deletes the Supabase Auth account when the member has no other clinic_members rows (defensive, prevents orphaning users with multi-clinic access). Good.",
+    "delete_clinic force-deletes Supabase Auth users for every member of that clinic without checking multi-clinic membership — a user who also belongs to another clinic will lose auth. Consider mirroring the multi-membership check used in delete_user.",
+    "confirm_name comparison is a simple string strip+equal; case-sensitive by design (matches user's requirement of writing the exact clinic name)."
+  ],
+  "updated_files": ["/app/backend/tests/test_super_admin_delete.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "n/a"},
+  "test_credentials": "Super Admin info@cortexiagt.com / Armagedon1980$; Clinic Admin prueba3@gmail.com / Test123456! (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "Each test creates its own disposable clinic (name prefix TEST_DEL_Clinic_<ts>_<uuid8>) with unique admin email test_del_admin_<ts>_<uuid8>@example.com and password Kx9$mPzeta2026Q!. All disposable data is deleted at test end via the hard-delete endpoint or teardown; nothing persists.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New pytest suite: /app/backend/tests/test_super_admin_delete.py (12 tests). Run with `pytest backend/tests/test_super_admin_delete.py -v`. Total runtime ~50s (creates/deletes real Supabase clinics + auth users). Do NOT delete Clinica la salud (c0321ed8-97da-47a1-b601-3b94bffabdd7) — the toggle-active test flips is_active twice and restores original state. Known minor bug: /admin/users?search=<email> does not match email substrings (see backend_issues.minor).",
+  "rca of the issue": "No open bug in the tested feature. Minor pre-existing bug in list_users email search: sdb.table('clinic_members').or_ only filters by first_name/last_name ILIKE, so the subsequent in-Python email filter runs on an empty set when the query term looks like an email. Mitigation is to either (a) include email in the SQL search across a joined auth view, or (b) drop the SQL search filter when search looks like an email and let Python filter run on the full list."
+}

@@ -10,6 +10,12 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **ELIMINAR CLINICAS Y USUARIOS (Super Admin)** (24 Sept 2026):
+  - [x] `DELETE /api/admin/clinics/{id}?confirm_name=<nombre>` - hard delete con purga en cascada (pacientes, citas, recetas, laboratorios, ventas, inventario, tickets, etc.) + eliminación de auth users de Supabase (solo si no pertenecen a otra clínica)
+  - [x] `DELETE /api/admin/users/{member_id}` - hard delete de clinic_member + auth user (solo si es su única membresía). Bloquea auto-eliminación.
+  - [x] UI: menú "Eliminar permanentemente" en ClinicsPage y UsersPage con modal de confirmación (escribir nombre de la clínica / email de usuario)
+  - [x] Auditoría: `clinic_deleted` y `member_deleted` en audit_log con snapshot de datos + purge_stats
+  - [x] Tests: 12/12 pasando (`/app/backend/tests/test_super_admin_delete.py`)
 - [x] Login + Super Admin Panel
 - [x] Migracion MongoDB -> Supabase PostgreSQL
 - [x] **MODULO DE AGENDA** - Day/Week/Month, DnD, colores medico
