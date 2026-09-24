@@ -501,6 +501,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "2026_09_support_message_attachments",
+        """
+        ALTER TABLE public.support_messages ADD COLUMN IF NOT EXISTS attachments JSONB;
+        """,
+    ),
+    (
         "2026_09_benchmark_runs",
         """
         CREATE TABLE IF NOT EXISTS public.benchmark_runs (

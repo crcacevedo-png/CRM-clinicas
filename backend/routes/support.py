@@ -6,16 +6,19 @@ status (open / answered / closed). Replies also trigger an email notification
 inviting the user to read the answer inside the platform.
 """
 import os
+import json
+import uuid
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from pydantic import BaseModel
 
-from core import sdb, run_sql, get_current_user, require_super_admin, logger
+from core import sdb, supabase_admin, run_sql, get_current_user, require_super_admin, logger
 
 router = APIRouter()
 
 VALID_STATUSES = ("open", "answered", "closed")
+MAX_ATTACH_BYTES = 5 * 1024 * 1024
 
 
 def _iso(v):
@@ -58,11 +61,44 @@ def _identity(user) -> dict:
 
 def _messages(ticket_id: str) -> list:
     rows = run_sql(
-        "SELECT id, author_user_id, author_type, author_name, body, created_at "
+        "SELECT id, author_user_id, author_type, author_name, body, attachments, created_at "
         "FROM public.support_messages WHERE ticket_id = %s ORDER BY created_at ASC",
         (ticket_id,), fetch=True,
     ) or []
     return [_row(r) for r in rows]
+
+
+def _clean_attachments(attachments) -> list:
+    """Keep only well-formed {name, url} entries (max 5)."""
+    out = []
+    for a in (attachments or [])[:5]:
+        if isinstance(a, dict) and a.get("url"):
+            out.append({"name": str(a.get("name") or "adjunto"), "url": str(a["url"])})
+    return out
+
+
+# ============== ATTACHMENT UPLOAD ==============
+
+@router.post("/support/upload")
+async def upload_attachment(file: UploadFile = File(...), user=Depends(get_current_user)):
+    """Upload a support screenshot to Supabase Storage. Returns {name, url}."""
+    contents = await file.read()
+    try:
+        from services.input_sanitizer import validate_image_upload
+        detected_mime = validate_image_upload(contents, max_bytes=MAX_ATTACH_BYTES)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    ext_map = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic', 'image/heif': 'heif', 'image/gif': 'gif'}
+    ext = ext_map.get(detected_mime, 'png')
+    path = f"_support/{user.id}/{uuid.uuid4().hex}.{ext}"
+    try:
+        supabase_admin.storage.from_('patient-files').upload(path, contents, {"content-type": detected_mime, "upsert": "true"})
+        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 31536000)
+        url = signed.get('signedURL') or signed.get('signedUrl', '')
+    except Exception as e:
+        logger.error(f"support upload error: {e}")
+        raise HTTPException(status_code=500, detail="Error al subir el archivo")
+    return {"name": (file.filename or f"captura.{ext}")[:120], "url": url}
 
 
 # ============== USER-FACING ==============
@@ -70,10 +106,12 @@ def _messages(ticket_id: str) -> list:
 class TicketCreate(BaseModel):
     subject: str
     body: str
+    attachments: list | None = None
 
 
 class MessageCreate(BaseModel):
     body: str
+    attachments: list | None = None
 
 
 @router.post("/support/tickets")
@@ -83,6 +121,7 @@ async def create_ticket(payload: TicketCreate, request: Request, user=Depends(ge
     if not subject or not body:
         raise HTTPException(status_code=400, detail="Asunto y mensaje son obligatorios")
     idn = _identity(user)
+    attach = _clean_attachments(payload.attachments)
     rows = run_sql(
         "INSERT INTO public.support_tickets "
         "(user_id, user_email, user_name, user_type, clinic_id, clinic_name, subject, status, last_message_at) "
@@ -92,9 +131,9 @@ async def create_ticket(payload: TicketCreate, request: Request, user=Depends(ge
     )
     ticket_id = rows[0]["id"]
     run_sql(
-        "INSERT INTO public.support_messages (ticket_id, author_user_id, author_type, author_name, body) "
-        "VALUES (%s,%s,'user',%s,%s)",
-        (ticket_id, user.id, idn["name"], body),
+        "INSERT INTO public.support_messages (ticket_id, author_user_id, author_type, author_name, body, attachments) "
+        "VALUES (%s,%s,'user',%s,%s,%s::jsonb)",
+        (ticket_id, user.id, idn["name"], body, json.dumps(attach)),
     )
     return {"ok": True, "ticket_id": str(ticket_id)}
 
@@ -132,10 +171,11 @@ async def add_message(ticket_id: str, payload: MessageCreate, user=Depends(get_c
     if not rows:
         raise HTTPException(status_code=404, detail="Mensaje no encontrado")
     idn = _identity(user)
+    attach = _clean_attachments(payload.attachments)
     run_sql(
-        "INSERT INTO public.support_messages (ticket_id, author_user_id, author_type, author_name, body) "
-        "VALUES (%s,%s,'user',%s,%s)",
-        (ticket_id, user.id, idn["name"], body),
+        "INSERT INTO public.support_messages (ticket_id, author_user_id, author_type, author_name, body, attachments) "
+        "VALUES (%s,%s,'user',%s,%s,%s::jsonb)",
+        (ticket_id, user.id, idn["name"], body, json.dumps(attach)),
     )
     run_sql(
         "UPDATE public.support_tickets SET status='open', last_message_at=NOW(), updated_at=NOW() WHERE id = %s",
@@ -149,10 +189,24 @@ async def add_message(ticket_id: str, payload: MessageCreate, user=Depends(get_c
 class ReplyCreate(BaseModel):
     body: str
     status: str | None = None
+    attachments: list | None = None
 
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+@router.get("/admin/support/summary")
+async def admin_support_summary(user=Depends(require_super_admin)):
+    """Lightweight counts for the sidebar badge (open tickets)."""
+    counts = run_sql(
+        "SELECT status, count(*) AS n FROM public.support_tickets GROUP BY status",
+        None, fetch=True,
+    ) or []
+    summary = {c["status"]: c["n"] for c in counts}
+    summary["total"] = sum(summary.values())
+    summary.setdefault("open", 0)
+    return summary
 
 
 @router.get("/admin/support/tickets")
@@ -196,10 +250,11 @@ async def admin_reply(ticket_id: str, payload: ReplyCreate, request: Request, us
     ticket = rows[0]
     idn = _identity(user)
     new_status = payload.status if payload.status in VALID_STATUSES else "answered"
+    attach = _clean_attachments(payload.attachments)
     run_sql(
-        "INSERT INTO public.support_messages (ticket_id, author_user_id, author_type, author_name, body) "
-        "VALUES (%s,%s,'super_admin',%s,%s)",
-        (ticket_id, user.id, idn["name"], body),
+        "INSERT INTO public.support_messages (ticket_id, author_user_id, author_type, author_name, body, attachments) "
+        "VALUES (%s,%s,'super_admin',%s,%s,%s::jsonb)",
+        (ticket_id, user.id, idn["name"], body, json.dumps(attach)),
     )
     run_sql(
         "UPDATE public.support_tickets SET status=%s, last_message_at=NOW(), updated_at=NOW() WHERE id = %s",

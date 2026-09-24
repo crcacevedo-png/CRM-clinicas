@@ -128,6 +128,15 @@ export default function AdminSupportPage() {
                   <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${m.author_type === 'super_admin' ? 'bg-teal-50 text-teal-900' : 'bg-slate-100 text-slate-800'}`} data-testid={`admin-msg-${m.id}`}>
                     <p className="text-[10px] font-semibold opacity-60 mb-0.5">{m.author_type === 'super_admin' ? 'Soporte' : (m.author_name || 'Usuario')}</p>
                     <p className="whitespace-pre-wrap">{m.body}</p>
+                    {m.attachments && m.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {m.attachments.map((a, i) => (
+                          <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" data-testid={`admin-attachment-${i}`}>
+                            <img src={a.url} alt={a.name || 'adjunto'} className="w-20 h-20 object-cover rounded border border-black/10 hover:opacity-80 transition-opacity" />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                     <p className="text-[10px] opacity-50 mt-1">{m.created_at ? new Date(m.created_at).toLocaleString('es-GT') : ''}</p>
                   </div>
                 </div>

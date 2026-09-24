@@ -1,4 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -31,9 +33,26 @@ const navItems = [
   { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
 export default function AdminLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, getAuthHeaders } = useAuth();
   const navigate = useNavigate();
+  const [openTickets, setOpenTickets] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadSummary = async () => {
+      try {
+        const res = await axios.get(`${API}/admin/support/summary`, { headers: getAuthHeaders() });
+        if (mounted) setOpenTickets(res.data?.open || 0);
+      } catch { /* silent */ }
+    };
+    loadSummary();
+    const id = setInterval(loadSummary, 60000);
+    return () => { mounted = false; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -72,7 +91,13 @@ export default function AdminLayout() {
             >
               <item.icon className="w-5 h-5" strokeWidth={1.5} />
               <span>{item.label}</span>
-              <ChevronRight className="w-4 h-4 ml-auto opacity-50" strokeWidth={1.5} />
+              {item.label === 'Soporte' && openTickets > 0 ? (
+                <span className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-teal-500 text-white text-[11px] font-bold flex items-center justify-center" data-testid="support-open-badge">
+                  {openTickets}
+                </span>
+              ) : (
+                <ChevronRight className="w-4 h-4 ml-auto opacity-50" strokeWidth={1.5} />
+              )}
             </NavLink>
           ))}
         </nav>

@@ -48,14 +48,41 @@ _ALLOWED_DOC_MIMES = {
 }
 
 
+def _sniff_signature(data: bytes) -> str:
+    """Pure-Python magic-bytes sniff for common types. Used as a fallback when
+    libmagic is unavailable or inconclusive. Returns octet-stream if unknown."""
+    if not data:
+        return 'application/octet-stream'
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if data[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if data[:6] in (b'GIF87a', b'GIF89a'):
+        return 'image/gif'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if data[:4] == b'%PDF':
+        return 'application/pdf'
+    if data[4:8] == b'ftyp':
+        brand = data[8:12]
+        if brand in (b'heic', b'heix', b'mif1', b'msf1', b'heim', b'heis'):
+            return 'image/heic'
+        if brand in (b'hevc', b'hevx'):
+            return 'image/heif'
+    return 'application/octet-stream'
+
+
 def _detect_mime(data: bytes) -> str:
-    """Return mime-type from magic bytes. Falls back to octet-stream on error."""
+    """Return mime-type from magic bytes. Prefers libmagic; falls back to a
+    pure-Python signature sniff (so uploads work even without libmagic)."""
     try:
         import magic
-        return magic.from_buffer(data[:4096], mime=True) or 'application/octet-stream'
+        detected = magic.from_buffer(data[:4096], mime=True) or 'application/octet-stream'
+        if detected and detected != 'application/octet-stream':
+            return detected
     except Exception as e:
-        logger.warning(f"magic detection failed: {e}")
-        return 'application/octet-stream'
+        logger.warning(f"magic detection unavailable, using signature sniff: {e}")
+    return _sniff_signature(data)
 
 
 def validate_image_upload(data: bytes, *, max_bytes: int = 2 * 1024 * 1024) -> str:
