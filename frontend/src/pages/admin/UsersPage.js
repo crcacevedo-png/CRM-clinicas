@@ -31,8 +31,11 @@ import {
   Key,
   Building2,
   Copy,
-  Check
+  Check,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
+import { Label } from '../../components/ui/label';
 import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -62,6 +65,9 @@ export default function UsersPage() {
   const [newClinic, setNewClinic] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [copied, setCopied] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null); // user object
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const { getAuthHeaders } = useAuth();
 
@@ -159,6 +165,25 @@ export default function UsersPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast.success('Contraseña copiada');
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await axios.delete(`${API}/admin/users/${deleteTarget.id}`, {
+        headers: getAuthHeaders()
+      });
+      toast.success(`Usuario "${deleteTarget.name} ${deleteTarget.lastname}" eliminado permanentemente`);
+      setDeleteTarget(null);
+      setDeleteConfirmText('');
+      fetchUsers();
+    } catch (error) {
+      const msg = error.response?.data?.detail || 'Error al eliminar usuario';
+      toast.error(msg);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const formatDate = (dateStr) => {
@@ -303,6 +328,17 @@ export default function UsersPage() {
                             <Building2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
                             Mover a otra clínica
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setDeleteTarget(user);
+                              setDeleteConfirmText('');
+                            }}
+                            className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                            data-testid={`delete-user-${user.id}`}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                            Eliminar permanentemente
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </td>
@@ -395,6 +431,56 @@ export default function UsersPage() {
               </Button>
               <Button onClick={handleMoveClinic} className="btn-primary" disabled={!newClinic} data-testid="confirm-move-btn">
                 Mover
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Delete User Confirmation Modal */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteConfirmText(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold text-red-600 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" strokeWidth={2} />
+              Eliminar usuario permanentemente
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            <div className="bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+              <p className="font-medium mb-1">Esta acción es IRREVERSIBLE.</p>
+              <p>Se eliminará al usuario <strong>{deleteTarget?.name} {deleteTarget?.lastname}</strong> ({deleteTarget?.email}) de la clínica <strong>{deleteTarget?.clinic_name}</strong> junto con su cuenta de acceso al sistema.</p>
+            </div>
+            <div>
+              <Label className="form-label">
+                Para confirmar, escribe el email del usuario: <span className="font-mono font-semibold">{deleteTarget?.email}</span>
+              </Label>
+              <Input
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={deleteTarget?.email || ''}
+                className="form-input mt-2"
+                autoFocus
+                data-testid="delete-user-confirm-input"
+              />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => { setDeleteTarget(null); setDeleteConfirmText(''); }}
+                className="btn-secondary"
+                disabled={deleting}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={handleDeleteUser}
+                disabled={deleting || deleteConfirmText.trim().toLowerCase() !== (deleteTarget?.email || '').trim().toLowerCase()}
+                className="bg-red-600 hover:bg-red-700 text-white"
+                data-testid="confirm-delete-user-btn"
+              >
+                {deleting ? 'Eliminando...' : 'Eliminar permanentemente'}
               </Button>
             </div>
           </div>

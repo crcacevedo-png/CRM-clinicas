@@ -481,6 +481,247 @@ async def reset_user_password(member_id: str, request: Request, user=Depends(req
 
 
 
+# ============== DELETE ROUTES (HARD DELETE) ==============
+
+# Tables that contain a `clinic_id` column and must be purged when a clinic is hard-deleted.
+# Order matters only for readability; deletes are best-effort and isolated in try/except.
+_CLINIC_SCOPED_TABLES = [
+    # Child / dependent rows first (help avoid FK issues if cascades are missing)
+    "sale_items", "prescription_items", "lab_order_items", "purchase_order_items",
+    "payment_plan_installments", "payments", "commissions_earned",
+    "inventory_movements", "inventory_batches", "inventory_stock",
+    "sales", "prescriptions", "lab_orders", "purchase_orders",
+    "medical_records", "appointments", "agenda_blocks",
+    "accounts_receivable", "expenses",
+    "products", "product_categories", "services", "suppliers",
+    "cash_sessions", "cash_registers",
+    "commission_settings",
+    "announcement_dismissals", "announcement_views",
+    "clinic_feature_overrides", "clinic_roles",
+    "member_branches", "branches",
+    "activity_logs", "export_jobs",
+    "support_messages", "support_tickets",
+    "patients",
+    # clinic_members deleted separately (we need user_ids first)
+]
+
+
+def _delete_clinic_data(clinic_id: str) -> dict:
+    """Best-effort purge of every row scoped to a clinic. Returns per-table counts."""
+    stats = {}
+    for tbl in _CLINIC_SCOPED_TABLES:
+        try:
+            # `support_messages` is scoped by ticket_id, not clinic_id — handle special-case
+            if tbl == "support_messages":
+                tickets = sdb.table('support_tickets').select('id').eq('clinic_id', clinic_id).execute()
+                ids = [t['id'] for t in (tickets.data or [])]
+                if ids:
+                    sdb.table('support_messages').delete().in_('ticket_id', ids).execute()
+                    stats[tbl] = len(ids)
+                continue
+            # Child *_items tables — scoped by parent id, not clinic_id
+            if tbl == "sale_items":
+                parents = sdb.table('sales').select('id').eq('clinic_id', clinic_id).execute()
+                ids = [p['id'] for p in (parents.data or [])]
+                if ids:
+                    sdb.table('sale_items').delete().in_('sale_id', ids).execute()
+                continue
+            if tbl == "prescription_items":
+                parents = sdb.table('prescriptions').select('id').eq('clinic_id', clinic_id).execute()
+                ids = [p['id'] for p in (parents.data or [])]
+                if ids:
+                    sdb.table('prescription_items').delete().in_('prescription_id', ids).execute()
+                continue
+            if tbl == "lab_order_items":
+                parents = sdb.table('lab_orders').select('id').eq('clinic_id', clinic_id).execute()
+                ids = [p['id'] for p in (parents.data or [])]
+                if ids:
+                    sdb.table('lab_order_items').delete().in_('lab_order_id', ids).execute()
+                continue
+            if tbl == "purchase_order_items":
+                parents = sdb.table('purchase_orders').select('id').eq('clinic_id', clinic_id).execute()
+                ids = [p['id'] for p in (parents.data or [])]
+                if ids:
+                    sdb.table('purchase_order_items').delete().in_('purchase_order_id', ids).execute()
+                continue
+
+            res = sdb.table(tbl).delete().eq('clinic_id', clinic_id).execute()
+            stats[tbl] = len(res.data or [])
+        except Exception as e:
+            logger.warning(f"purge clinic {clinic_id} table={tbl} failed: {e}")
+            stats[tbl] = f"error:{str(e)[:80]}"
+    return stats
+
+
+@router.delete("/admin/clinics/{clinic_id}")
+async def delete_clinic(
+    clinic_id: str,
+    request: Request,
+    confirm_name: str = "",
+    user=Depends(require_super_admin),
+):
+    """Hard-delete a clinic and every row scoped to it.
+
+    Requires `?confirm_name=<exact clinic name>` as a safety guard.
+    Also deletes Supabase Auth users of every clinic_member.
+    """
+    try:
+        existing = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Clinica no encontrada")
+        clinic = existing.data
+
+        if (confirm_name or "").strip() != (clinic.get("name") or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="El nombre de confirmacion no coincide con el nombre de la clinica.",
+            )
+
+        # Snapshot members (for auth deletion + audit)
+        members_res = sdb.table('clinic_members').select('*').eq('clinic_id', clinic_id).execute()
+        members = members_res.data or []
+        member_user_ids = [m.get('user_id') for m in members if m.get('user_id')]
+
+        # Purge all clinic-scoped data
+        purge_stats = _delete_clinic_data(clinic_id)
+
+        # Delete clinic_members
+        try:
+            sdb.table('clinic_members').delete().eq('clinic_id', clinic_id).execute()
+            purge_stats["clinic_members"] = len(members)
+        except Exception as e:
+            logger.warning(f"delete clinic_members failed: {e}")
+
+        # Delete Supabase Auth users (best-effort)
+        auth_deleted = 0
+        for uid in member_user_ids:
+            try:
+                supabase_admin.auth.admin.delete_user(uid)
+                auth_deleted += 1
+            except Exception as e:
+                logger.warning(f"auth user delete failed user_id={uid}: {e}")
+
+        # Finally, delete the clinic itself
+        sdb.table('clinics').delete().eq('id', clinic_id).execute()
+
+        # Audit
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="clinic_deleted",
+                entity="clinic",
+                entity_id=clinic_id,
+                clinic_id=clinic_id,
+                **actor_from_super_admin(user),
+                old_values={
+                    "name": clinic.get("name"),
+                    "slug": clinic.get("slug"),
+                    "country": clinic.get("country"),
+                    "plan": clinic.get("plan"),
+                    "is_active": clinic.get("is_active"),
+                    "members_count": len(members),
+                },
+                meta={
+                    "purge_stats": purge_stats,
+                    "auth_users_deleted": auth_deleted,
+                    "member_emails": [m.get("email") for m in members if m.get("email")],
+                },
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return {
+            "message": "Clinica eliminada permanentemente",
+            "clinic_id": clinic_id,
+            "auth_users_deleted": auth_deleted,
+            "purge_stats": purge_stats,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete clinic error: {e}")
+        raise HTTPException(status_code=500, detail="Error al eliminar clinica")
+
+
+@router.delete("/admin/users/{member_id}")
+async def delete_user(
+    member_id: str,
+    request: Request,
+    user=Depends(require_super_admin),
+):
+    """Hard-delete a clinic member and their Supabase Auth account."""
+    try:
+        member_res = sdb.table('clinic_members').select('*').eq('id', member_id).maybe_single().execute()
+        if not member_res or not member_res.data:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        member = member_res.data
+
+        # Prevent self-deletion via this endpoint
+        actor_id = None
+        if isinstance(user, dict):
+            actor_id = user.get("id") or user.get("user_id")
+        else:
+            actor_id = getattr(user, "id", None)
+        if actor_id and actor_id == member.get("user_id"):
+            raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta.")
+
+        # Try to fetch email from auth map for audit
+        try:
+            auth_map = get_auth_users_map()
+            email = (auth_map.get(member.get("user_id")) or {}).get("email")
+        except Exception:
+            email = member.get("email")
+
+        # Delete the clinic_members row
+        sdb.table('clinic_members').delete().eq('id', member_id).execute()
+
+        # Delete Supabase Auth user (best-effort) — only if the user has no other memberships
+        auth_deleted = False
+        uid = member.get("user_id")
+        if uid:
+            try:
+                other = sdb.table('clinic_members').select('id', count='exact').eq('user_id', uid).execute()
+                if (other.count or 0) == 0:
+                    supabase_admin.auth.admin.delete_user(uid)
+                    auth_deleted = True
+            except Exception as e:
+                logger.warning(f"auth user delete failed user_id={uid}: {e}")
+
+        # Audit
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="member_deleted",
+                entity="clinic_member",
+                entity_id=member_id,
+                clinic_id=member.get("clinic_id"),
+                **actor_from_super_admin(user),
+                old_values={
+                    "first_name": member.get("first_name"),
+                    "last_name": member.get("last_name"),
+                    "role": member.get("role"),
+                    "email": email,
+                    "user_id": uid,
+                },
+                meta={"auth_user_deleted": auth_deleted},
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return {
+            "message": "Usuario eliminado permanentemente",
+            "member_id": member_id,
+            "auth_user_deleted": auth_deleted,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete user error: {e}")
+        raise HTTPException(status_code=500, detail="Error al eliminar usuario")
+
+
 @router.post("/admin/migrations/run")
 async def admin_run_migrations(user=Depends(require_super_admin)):
     """Force-apply any pending DDL migrations.

@@ -27,8 +27,17 @@ import {
   Check,
   RefreshCw,
   X,
-  Users
+  Users,
+  MoreVertical,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu';
 import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -66,6 +75,9 @@ export default function ClinicsPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null); // clinic object
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -172,6 +184,26 @@ export default function ClinicsPage() {
     toast.success('Credenciales copiadas');
   };
 
+  const handleDeleteClinic = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await axios.delete(
+        `${API}/admin/clinics/${deleteTarget.id}?confirm_name=${encodeURIComponent(deleteTarget.name)}`,
+        { headers: getAuthHeaders() }
+      );
+      toast.success(`Clínica "${deleteTarget.name}" eliminada permanentemente`);
+      setDeleteTarget(null);
+      setDeleteConfirmText('');
+      fetchClinics();
+    } catch (error) {
+      const msg = error.response?.data?.detail || 'Error al eliminar clínica';
+      toast.error(msg);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const formatDate = (dateStr) => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('es-ES', {
@@ -261,11 +293,12 @@ export default function ClinicsPage() {
                 <th>Pacientes</th>
                 <th>Estado</th>
                 <th>Creada</th>
+                <th className="w-12"></th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-8 text-zinc-500">Cargando...</td></tr>
+                <tr><td colSpan={10} className="text-center py-8 text-zinc-500">Cargando...</td></tr>
               ) : clinics.length > 0 ? (
                 clinics.map((clinic) => (
                   <tr 
@@ -287,10 +320,32 @@ export default function ClinicsPage() {
                       </span>
                     </td>
                     <td>{formatDate(clinic.created_at)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" data-testid={`clinic-actions-${clinic.id}`}>
+                            <MoreVertical className="w-4 h-4" strokeWidth={1.5} />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setDeleteTarget(clinic);
+                              setDeleteConfirmText('');
+                            }}
+                            className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                            data-testid={`delete-clinic-${clinic.id}`}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                            Eliminar permanentemente
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
                   </tr>
                 ))
               ) : (
-                <tr><td colSpan={9} className="text-center py-8 text-zinc-500">No hay clínicas</td></tr>
+                <tr><td colSpan={10} className="text-center py-8 text-zinc-500">No hay clínicas</td></tr>
               )}
             </tbody>
           </table>
@@ -515,6 +570,56 @@ export default function ClinicsPage() {
             <p className="text-xs text-zinc-500 text-center mt-4">
               Estas credenciales solo se mostrarán una vez. Asegúrate de enviarlas al administrador.
             </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Delete Clinic Confirmation Modal */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteConfirmText(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold text-red-600 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" strokeWidth={2} />
+              Eliminar clínica permanentemente
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 space-y-4">
+            <div className="bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+              <p className="font-medium mb-1">Esta acción es IRREVERSIBLE.</p>
+              <p>Se eliminarán permanentemente: la clínica, todos sus usuarios (incluyendo sus cuentas de acceso), pacientes, citas, recetas, laboratorios, inventario, ventas, facturas y toda su historia clínica.</p>
+            </div>
+            <div>
+              <Label className="form-label">
+                Para confirmar, escribe el nombre exacto de la clínica: <span className="font-mono font-semibold">{deleteTarget?.name}</span>
+              </Label>
+              <Input
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={deleteTarget?.name || ''}
+                className="form-input mt-2"
+                autoFocus
+                data-testid="delete-clinic-confirm-input"
+              />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => { setDeleteTarget(null); setDeleteConfirmText(''); }}
+                className="btn-secondary"
+                disabled={deleting}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={handleDeleteClinic}
+                disabled={deleting || deleteConfirmText.trim() !== (deleteTarget?.name || '').trim()}
+                className="bg-red-600 hover:bg-red-700 text-white"
+                data-testid="confirm-delete-clinic-btn"
+              >
+                {deleting ? 'Eliminando...' : 'Eliminar permanentemente'}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
