@@ -534,9 +534,9 @@ async def system_capacity(user=Depends(require_super_admin)):
 @router.post("/admin/system/capacity/benchmark")
 async def system_capacity_benchmark(concurrency: int = 20, user=Depends(require_super_admin)):
     """Run a controlled internal load test (parallel lightweight DB queries) and
-    report throughput/latency. `concurrency` is capped at 60 for safety."""
+    report throughput/latency. `concurrency` is capped at 400 for safety."""
     from starlette.concurrency import run_in_threadpool
-    concurrency = max(1, min(int(concurrency), 60))
+    concurrency = max(1, min(int(concurrency), 400))
     total_ops = concurrency * 3  # a few rounds for a stable measurement
     result = await run_in_threadpool(_run_benchmark, concurrency, total_ops)
     result["generated_at"] = datetime.now(timezone.utc).isoformat()

@@ -180,6 +180,7 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - **Backend** (`routes/system_health.py`): `GET /admin/system/capacity` (CPU/mem vía psutil+cgroup, proceso, threadpool en uso/capacidad, Redis ping, latencia PostgREST, config de workers/pool) y `POST /admin/system/capacity/benchmark?concurrency=N` (N≤60; lanza consultas ligeras en paralelo y reporta throughput, p50/p95, errores y estimación de usuarios activos). Ambos gated `require_super_admin`. Requiere `psutil` (añadido a requirements).
   - **Frontend** (`admin/SystemHealthPage.js`): tarjeta `capacity-card` con métricas + selector de concurrencia y botón `run-benchmark-btn`.
   - **Verificado en preview:** Redis ping ~19ms, latencia BD ~77ms, benchmark 20-conc = 135 ops/s, 0 errores.
+  - **2026-09 — Volumen de prueba ampliado:** tope de concurrencia del benchmark subido de 60 → **400**; selector de UI ahora ofrece 20/60/120/240/360 simultáneas (pool httpx se mantiene en 200 por realismo de producción). Verificado: 120-conc = 360 ops 0 err; 360-conc = 1080 ops 424 ops/s 0 err.
   - **Nota deploy:** el build en curso se inició ANTES de estos cambios y de `REDIS_URL`; hay que **redeployar** y agregar `REDIS_URL` (+ workers/CPU) en el entorno de producción para que apliquen. Guía: `/app/memory/SCALING.md`.
 
 - **2026-06 — Redis conectado (Upstash)**: `REDIS_URL` configurada en `backend/.env` (preview); logs confirman "Cache backend: Redis" y las llaves `perm:*` se escriben en Upstash. En producción hay que definir la misma `REDIS_URL` en el deploy.

@@ -175,7 +175,7 @@ export default function SystemHealthPage() {
                 className="text-sm border border-slate-300 rounded-md px-2 py-1 bg-white"
                 data-testid="bench-concurrency-select"
               >
-                {[10, 20, 40, 60].map(v => <option key={v} value={v}>{v} simultáneas</option>)}
+                {[20, 60, 120, 240, 360].map(v => <option key={v} value={v}>{v} simultáneas</option>)}
               </select>
               <Button size="sm" onClick={runBenchmark} disabled={benching} className="bg-teal-600 hover:bg-teal-700" data-testid="run-benchmark-btn">
                 <Play className="w-4 h-4 mr-1" />{benching ? 'Ejecutando…' : 'Ejecutar prueba'}
