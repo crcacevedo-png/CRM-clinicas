@@ -176,6 +176,14 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 
 ## Cambios recientes
 
+- **2026-06 — Optimización de capacidad/concurrencia (backend)**: se corrigió el cuello de botella que serializaba las peticiones.
+  - **Anti-patrón async→sync (endpoint más pesado)**: el Dashboard (`GET /clinic/dashboard`, ~10-12 consultas Supabase) se convirtió de `async def` a `def`, para que FastAPI lo ejecute en su threadpool y NO bloquee el event loop. Las peticiones concurrentes ahora corren en paralelo.
+  - **Caché TTL de permisos/plan (30s)** en `core.get_clinic_features` (hacía hasta 5 llamadas Supabase por request) y `core.get_role_modules`, con invalidación (`clear_perm_cache`) al cambiar roles (`routes/roles.py`) y features/plan (`routes/feature_flags.py`). Reduce las llamadas Supabase en TODOS los endpoints protegidos.
+  - **Reintento global de PostgREST**: `core._install_postgrest_retry()` envuelve `.execute()` de `SyncQueryRequestBuilder`, `SyncSingleRequestBuilder` y `SyncMaybeSingleRequestBuilder` con reintento (5 intentos, backoff corto) ante errores transitorios de httpx (`RemoteProtocolError: Server disconnected` por conexiones keepalive de Supabase cerradas). Hace confiable el acceso concurrente al cliente Supabase compartido (bug que la paralelización dejó al descubierto).
+  - **Resultados medidos (Dashboard):** 15 concurrentes 27s→~5s (100% OK); 30 concurrentes ~54s→6.3s (100% OK); 50 concurrentes (ráfaga extrema) de >120s/inusable → 34.8s (100% OK). Sin regresiones: datos correctos y RBAC intacto (doctor sigue recibiendo 403 en endpoints de admin).
+  - **Pendiente (no aplicable en preview):** subir el número de *workers* de Uvicorn/Gunicorn corresponde al entorno de **producción** — el `supervisord.conf` del preview es READONLY (`--workers 1 --reload`). Otros endpoints `async def` con consultas bloqueantes (p. ej. reportes) aún serializan en el loop; convertirlos a `def` (como el Dashboard) es la siguiente palanca.
+
+
 - **2026-06 — Guía de Usuario: capturas por módulo + versión por rol**:
   - **Capturas reales**: la guía PDF ahora incrusta una captura de pantalla real de cada módulo (12 imágenes en `/app/backend/assets/guide/*.png`: dashboard, patients, prescriptions, lab_orders, agenda, inventory, sales, accounts, expenses, commissions, reports, settings). `_build_guide_pdf` incrusta la imagen si el archivo existe (escala al ancho de página, cap de alto ~105mm) con pie "Vista de <módulo>". PDF resultante ~1.3MB.
   - **Guía por rol**: `GET /api/clinic/user-guide/pdf?scope=role|full`. `scope=role` (default) filtra las secciones a solo los módulos que el miembro puede usar = `get_role_modules(clinic_id, role)` ∩ features activas de la clínica (los administradores siempre reciben la guía completa). `scope=full` = manual completo. La portada muestra el subtítulo "Guía completa" o "Guía para: <Rol>".

@@ -14,7 +14,7 @@ router = APIRouter()
 
 from core import (
     sdb, now_iso, logger, validate_uuid, generate_slug,
-    require_clinic_member, require_clinic_admin,
+    require_clinic_member, require_clinic_admin, clear_perm_cache,
     MODULE_CATALOG, ALL_MODULE_KEYS, SYSTEM_ROLES, SYSTEM_ROLE_LABELS,
     SYSTEM_ROLE_DESCRIPTIONS, DEFAULT_ROLE_MODULES, ENUM_ROLE_VALUES,
 )
@@ -135,6 +135,7 @@ async def create_role(data: RoleCreate, request: Request, ctx=Depends(require_cl
         raise HTTPException(status_code=500, detail="Error al crear rol")
     doc['member_count'] = 0
     doc['locked'] = False
+    clear_perm_cache(clinic_id)
     try:
         from services.audit import log_audit, actor_from_ctx
         await log_audit(
@@ -174,6 +175,7 @@ async def update_role(role_id: str, data: RoleUpdate, request: Request, ctx=Depe
     except Exception as e:
         logger.error(f"update_role error: {e}")
         raise HTTPException(status_code=500, detail="Error al actualizar rol")
+    clear_perm_cache(clinic_id)
     try:
         from services.audit import log_audit, actor_from_ctx
         await log_audit(
@@ -209,6 +211,7 @@ async def delete_role(role_id: str, request: Request, ctx=Depends(require_clinic
     except Exception as e:
         logger.error(f"delete_role error: {e}")
         raise HTTPException(status_code=500, detail="Error al eliminar rol")
+    clear_perm_cache(clinic_id)
     try:
         from services.audit import log_audit, actor_from_ctx
         await log_audit(
@@ -250,6 +253,7 @@ async def assign_member_role(member_id: str, data: MemberRoleAssign, request: Re
     except Exception as e:
         logger.error(f"assign_member_role error: {e}")
         raise HTTPException(status_code=500, detail="Error al asignar rol")
+    clear_perm_cache(clinic_id)
     try:
         from services.audit import log_audit, actor_from_ctx
         await log_audit(

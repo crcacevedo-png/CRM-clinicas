@@ -75,6 +75,51 @@ def run_sql(sql: str, params: tuple | None = None, fetch: bool = False):
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("clinic_crm")
 
+
+def _install_postgrest_retry():
+    """Make every PostgREST `.execute()` resilient to transient httpx connection
+    drops. Supabase closes idle keepalive connections; under concurrency the next
+    reuse raises RemoteProtocolError ('Server disconnected'). Retrying transparently
+    re-establishes a fresh connection. Applied once, globally, so all queries benefit."""
+    import time as _t
+    import httpx
+    try:
+        from postgrest._sync import request_builder as _rb
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"postgrest retry patch skipped: {e}")
+        return
+    transient = (
+        httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError,
+        httpx.WriteError, httpx.PoolTimeout, httpx.ConnectTimeout, httpx.ReadTimeout,
+    )
+
+    def _wrap(cls):
+        orig = cls.__dict__.get("execute")
+        if orig is None or getattr(orig, "_retry_wrapped", False):
+            return
+        def execute(self, *args, **kwargs):
+            last = None
+            for attempt in range(5):
+                try:
+                    return orig(self, *args, **kwargs)
+                except transient as e:
+                    last = e
+                    _t.sleep(0.08 * (attempt + 1))
+            raise last
+        execute._retry_wrapped = True
+        cls.execute = execute
+
+    patched = []
+    for name in ("SyncQueryRequestBuilder", "SyncSingleRequestBuilder", "SyncMaybeSingleRequestBuilder"):
+        cls = getattr(_rb, name, None)
+        if cls is not None and "execute" in cls.__dict__:
+            _wrap(cls)
+            patched.append(name)
+    logger.info(f"PostgREST execute() retry wrapper installed on: {', '.join(patched)}")
+
+
+_install_postgrest_retry()
+
 # ============== HTTP SECURITY ==============
 
 security = HTTPBearer(auto_error=False)
@@ -590,7 +635,42 @@ DEFAULT_ROLE_MODULES = {
 }
 
 
+_PERM_CACHE: dict = {}  # key -> (expires_monotonic, value)
+_PERM_TTL = 30.0        # seconds — short so permission/plan changes take effect quickly
+
+
+def _perm_cache_get(key):
+    v = _PERM_CACHE.get(key)
+    if v and v[0] > _time.monotonic():
+        return v[1]
+    return None
+
+
+def _perm_cache_set(key, value, ttl: float = _PERM_TTL):
+    _PERM_CACHE[key] = (_time.monotonic() + ttl, value)
+
+
+def clear_perm_cache(clinic_id: str | None = None):
+    """Invalidate cached role-modules/features. Call after role or plan/feature
+    changes so access updates immediately instead of waiting for the TTL."""
+    if clinic_id is None:
+        _PERM_CACHE.clear()
+        return
+    for k in [k for k in _PERM_CACHE if clinic_id in k]:
+        _PERM_CACHE.pop(k, None)
+
+
 def get_role_modules(clinic_id: str, role_key: str) -> set:
+    ck = f"rolemods:{clinic_id}:{role_key}"
+    cached = _perm_cache_get(ck)
+    if cached is not None:
+        return cached
+    result = _get_role_modules_uncached(clinic_id, role_key)
+    _perm_cache_set(ck, result)
+    return result
+
+
+def _get_role_modules_uncached(clinic_id: str, role_key: str) -> set:
     """Resolve the set of allowed module keys for a clinic role.
 
     clinic_admin always has full access. Otherwise read the persisted
@@ -640,6 +720,16 @@ def require_finance_role(ctx):
     return ctx
 
 def get_clinic_features(clinic_id: str) -> set:
+    ck = f"feats:{clinic_id}"
+    cached = _perm_cache_get(ck)
+    if cached is not None:
+        return cached
+    result = _get_clinic_features_uncached(clinic_id)
+    _perm_cache_set(ck, result)
+    return result
+
+
+def _get_clinic_features_uncached(clinic_id: str) -> set:
     """Resolve the active feature codes for a clinic (plan + overrides)."""
     try:
         clinic = sdb.table('clinics').select('plan').eq('id', clinic_id).maybe_single().execute()

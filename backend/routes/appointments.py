@@ -304,7 +304,7 @@ async def change_appointment_status(apt_id: str, data: AppointmentStatusUpdate, 
 
 
 @router.get("/clinic/dashboard")
-async def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
+def clinic_dashboard_stats(ctx=Depends(require_clinic_member)):
     clinic_id = ctx["member"]["clinic_id"]
     member_id = ctx["member"]["id"]
     role = ctx["member"].get("role") or "staff"

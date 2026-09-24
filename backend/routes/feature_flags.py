@@ -12,7 +12,7 @@ from core import (
     sdb, supabase_admin, supabase_user, logger, now_iso,
     generate_password, generate_slug, enrich_member, get_auth_users_map,
     get_plan_limits, parse_presentations,
-    require_clinic_member, require_super_admin, get_current_user, get_role_modules,
+    require_clinic_member, require_super_admin, get_current_user, get_role_modules, clear_perm_cache,
     LoginRequest, LoginResponse, ClinicCreate, ClinicUpdate, ClinicMemberCreate, UserUpdate,
     MedicationCreate, MedicationBulkImport, LabStudyCreate, LabStudyBulkImport,
     ICD10CodeCreate, ICD10BulkImport,
@@ -156,6 +156,7 @@ async def admin_toggle_clinic_feature(clinic_id: str, feature_id: str, data: dic
         is_enabled = data.get('is_enabled')
         if is_enabled is None:
             sdb.table('clinic_feature_overrides').delete().eq('clinic_id', clinic_id).eq('feature_id', feature_id).execute()
+            clear_perm_cache(clinic_id)
             return {"message": "Override eliminado"}
         existing = sdb.table('clinic_feature_overrides').select('id').eq('clinic_id', clinic_id).eq('feature_id', feature_id).maybe_single().execute()
         if existing and existing.data:
@@ -164,6 +165,7 @@ async def admin_toggle_clinic_feature(clinic_id: str, feature_id: str, data: dic
             sdb.table('clinic_feature_overrides').insert({
                 "clinic_id": clinic_id, "feature_id": feature_id, "is_enabled": is_enabled,
             }).execute()
+        clear_perm_cache(clinic_id)
         return {"message": "Override actualizado"}
     except Exception as e:
         logger.error(f"Toggle clinic feature error: {e}")
@@ -186,6 +188,7 @@ async def admin_change_clinic_plan(clinic_id: str, data: dict, user=Depends(requ
             "max_storage_mb": plan.data['max_storage_mb'],
             "updated_at": now_iso(),
         }).eq('id', clinic_id).execute()
+        clear_perm_cache(clinic_id)
         return {"message": "Plan actualizado"}
     except HTTPException:
         raise
