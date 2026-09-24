@@ -1,0 +1,22 @@
+{
+  "summary": "Verified two items end-to-end via public URL. (1) BUG FIX: Super Admin panel now loads /admin (dashboard), /admin/clinicas, /admin/usuarios with ZERO HTTP 500 responses in Network (previously multiple AttributeError 500s from .maybe_single().execute() returning None). Console shows only expected 403s from clinic-scoped endpoints, matching agent-to-agent context. (2) NOTIFICATION IN-APP: Complete flow works. Clinic admin (prueba3@gmail.com) creates ticket TEST_NOTIF_1790221826 -> pre-existing badge=0 as expected. Super Admin (info@cortexiagt.com) opens the ticket in /admin/soporte and replies via admin-send-reply-btn -> success toast 'Respuesta enviada'. Clinic admin re-login: sidebar shows [data-testid=support-unread-badge] with text '1'. /dashboard/soporte shows ticket-unread-dot-6c2450f3-...-e61fbaaf12cd (unique) plus 'Nueva respuesta' label and highlighted card. After opening the ticket and reloading, badge count=0 and unread dot count=0. Feature and bug fix both PASS.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Send button for admin replies has no visible text (icon-only). Consider adding aria-label 'Enviar respuesta' for a11y — data-testid admin-send-reply-btn is present, but screen-reader users would benefit from an accessible name."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (0/0 500s during panel navigation)", "frontend": "100%" },
+  "test_credentials": "Super Admin info@cortexiagt.com / Armagedon1980$ ; Clinic Admin prueba3@gmail.com / Test123456!",
+  "seed_data_creation": "Created ticket id=6c2450f3-1453-4326-a822-e61fbaaf12cd (subject: TEST_NOTIF_1790221826) in Clinica la salud. Super Admin replied to it (status='Respondido'). Clinic admin opened it (user_unread now false).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Verified: (a) support-unread-badge in ClinicLayout sidebar refreshes on mount and reads /support/unread-count; (b) ticket-unread-dot-<id> and 'Nueva respuesta' render in SupportPage list when user_unread=true; (c) opening a ticket clears user_unread server-side and after reload the badge/dot are gone. No 500s during Super Admin panel navigation — the .maybe_single() None fix works.",
+  "rca of the issue": "N/A — bug fix and feature both verified working."
+}
