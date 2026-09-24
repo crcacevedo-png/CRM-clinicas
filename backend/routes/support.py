@@ -138,10 +138,20 @@ async def create_ticket(payload: TicketCreate, request: Request, user=Depends(ge
     return {"ok": True, "ticket_id": str(ticket_id)}
 
 
+@router.get("/support/unread-count")
+async def support_unread_count(user=Depends(get_current_user)):
+    """Number of the user's own tickets with an unread super-admin reply."""
+    rows = run_sql(
+        "SELECT count(*) AS n FROM public.support_tickets WHERE user_id = %s AND user_unread = true",
+        (user.id,), fetch=True,
+    ) or [{"n": 0}]
+    return {"unread": rows[0]["n"]}
+
+
 @router.get("/support/tickets")
 async def my_tickets(user=Depends(get_current_user)):
     rows = run_sql(
-        "SELECT id, subject, status, created_at, updated_at, last_message_at "
+        "SELECT id, subject, status, user_unread, created_at, updated_at, last_message_at "
         "FROM public.support_tickets WHERE user_id = %s ORDER BY last_message_at DESC",
         (user.id,), fetch=True,
     ) or []
@@ -156,6 +166,8 @@ async def get_ticket(ticket_id: str, user=Depends(get_current_user)):
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+    # Opening the ticket marks any super-admin reply as read
+    run_sql("UPDATE public.support_tickets SET user_unread = false WHERE id = %s AND user_id = %s", (ticket_id, user.id))
     return {"ticket": _row(rows[0]), "messages": _messages(ticket_id)}
 
 
@@ -257,7 +269,7 @@ async def admin_reply(ticket_id: str, payload: ReplyCreate, request: Request, us
         (ticket_id, user.id, idn["name"], body, json.dumps(attach)),
     )
     run_sql(
-        "UPDATE public.support_tickets SET status=%s, last_message_at=NOW(), updated_at=NOW() WHERE id = %s",
+        "UPDATE public.support_tickets SET status=%s, user_unread=true, last_message_at=NOW(), updated_at=NOW() WHERE id = %s",
         (new_status, ticket_id),
     )
     # Email notification (best-effort)

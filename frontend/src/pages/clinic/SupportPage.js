@@ -203,11 +203,17 @@ export default function SupportPage() {
       ) : (
         <div className="space-y-2" data-testid="ticket-list">
           {tickets.map((t) => (
-            <Card key={t.id} className="border border-slate-200 hover:shadow-sm transition-shadow cursor-pointer" onClick={() => openTicket(t)} data-testid={`ticket-row-${t.id}`}>
+            <Card key={t.id} className={`border hover:shadow-sm transition-shadow cursor-pointer ${t.user_unread ? 'border-teal-400 bg-teal-50/40' : 'border-slate-200'}`} onClick={() => openTicket(t)} data-testid={`ticket-row-${t.id}`}>
               <CardContent className="p-4 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-800">{t.subject}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Actualizado {t.last_message_at ? new Date(t.last_message_at).toLocaleString('es-GT') : ''}</p>
+                  <div className="flex items-center gap-2">
+                    {t.user_unread && <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" data-testid={`ticket-unread-dot-${t.id}`} />}
+                    <p className="text-sm font-medium text-slate-800">{t.subject}</p>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {t.user_unread ? <span className="text-teal-600 font-medium">Nueva respuesta · </span> : ''}
+                    Actualizado {t.last_message_at ? new Date(t.last_message_at).toLocaleString('es-GT') : ''}
+                  </p>
                 </div>
                 <Badge className={`text-[10px] ${STATUS[t.status]?.cls || ''}`}>{STATUS[t.status]?.label || t.status}</Badge>
               </CardContent>

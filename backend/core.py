@@ -76,11 +76,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("clinic_crm")
 
 
+class _EmptyPostgrestResponse:
+    """Stand-in for a PostgREST response when the driver returns None (0 rows on
+    a maybe_single query). Exposes `.data`/`.count` so callers never crash."""
+    __slots__ = ("data", "count")
+    def __init__(self):
+        self.data = None
+        self.count = None
+
+
 def _install_postgrest_retry():
     """Make every PostgREST `.execute()` resilient to transient httpx connection
     drops. Supabase closes idle keepalive connections; under concurrency the next
     reuse raises RemoteProtocolError ('Server disconnected'). Retrying transparently
-    re-establishes a fresh connection. Applied once, globally, so all queries benefit."""
+    re-establishes a fresh connection. Applied once, globally, so all queries benefit.
+
+    Also normalizes a `None` return (some postgrest-py versions return None from
+    `.maybe_single().execute()` when there are zero rows) into an empty response
+    object so downstream `result.data` access never raises AttributeError."""
     import time as _t
     import httpx
     try:
@@ -101,7 +114,8 @@ def _install_postgrest_retry():
             last = None
             for attempt in range(5):
                 try:
-                    return orig(self, *args, **kwargs)
+                    res = orig(self, *args, **kwargs)
+                    return res if res is not None else _EmptyPostgrestResponse()
                 except transient as e:
                     last = e
                     _t.sleep(0.08 * (attempt + 1))

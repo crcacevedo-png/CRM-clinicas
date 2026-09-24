@@ -507,6 +507,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "2026_09_support_user_unread",
+        """
+        ALTER TABLE public.support_tickets ADD COLUMN IF NOT EXISTS user_unread BOOLEAN DEFAULT false;
+        """,
+    ),
+    (
         "2026_09_benchmark_runs",
         """
         CREATE TABLE IF NOT EXISTS public.benchmark_runs (

@@ -38,13 +38,21 @@ export default function ClinicLayout() {
   const navigate = useNavigate();
 
   const [clinicBrand, setClinicBrand] = useState({ name: '', logo_url: null });
+  const [supportUnread, setSupportUnread] = useState(0);
   useEffect(() => {
     if (!user) return;
     let mounted = true;
     axios.get(`${API}/clinic/settings`, { headers: getAuthHeaders() })
       .then(res => { if (mounted) setClinicBrand({ name: res.data?.name || '', logo_url: res.data?.logo_url || null }); })
       .catch(() => {});
-    return () => { mounted = false; };
+    const loadUnread = () => {
+      axios.get(`${API}/support/unread-count`, { headers: getAuthHeaders() })
+        .then(res => { if (mounted) setSupportUnread(res.data?.unread || 0); })
+        .catch(() => {});
+    };
+    loadUnread();
+    const id = setInterval(loadUnread, 60000);
+    return () => { mounted = false; clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -124,7 +132,13 @@ export default function ClinicLayout() {
             >
               <item.icon className="w-5 h-5" strokeWidth={1.5} />
               <span>{item.label}</span>
-              <ChevronRight className="w-4 h-4 ml-auto opacity-50" strokeWidth={1.5} />
+              {item.label === 'Soporte' && supportUnread > 0 ? (
+                <span className="ml-auto min-w-[20px] h-5 px-1.5 rounded-full bg-teal-500 text-white text-[11px] font-bold flex items-center justify-center" data-testid="support-unread-badge">
+                  {supportUnread}
+                </span>
+              ) : (
+                <ChevronRight className="w-4 h-4 ml-auto opacity-50" strokeWidth={1.5} />
+              )}
             </NavLink>
           ))}
         </nav>
