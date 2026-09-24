@@ -85,6 +85,26 @@ export default function ClinicSettingsPage() {
   const [syncActive, setSyncActive] = useState(true);
   const [loadingCalendars, setLoadingCalendars] = useState(false);
 
+  // Billing / subscription
+  const [subscription, setSubscription] = useState(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  const startCheckout = async () => {
+    setCheckoutLoading(true);
+    try {
+      const res = await axios.post(`${API}/billing/checkout`, { billing_cycle: 'monthly' }, { headers });
+      if (res.data?.checkout_url) {
+        window.location.href = res.data.checkout_url;
+      } else {
+        toast.info(res.data?.message || 'La pasarela de pago aún no está configurada.');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
   useEffect(() => {
     const success = searchParams.get('gcal_success');
     const error = searchParams.get('gcal_error');
@@ -103,6 +123,7 @@ export default function ClinicSettingsPage() {
           axios.get(`${API}/google-calendar/status`, { headers }).catch(() => ({ data: { connected: false } })),
           axios.get(`${API}/clinic/config`, { headers }).catch(() => ({ data: {} })),
         ]);
+        axios.get(`${API}/billing/subscription`, { headers }).then(r => setSubscription(r.data)).catch(() => {});
         const c = clinicRes.data;
         setClinic(c);
         if (configRes.data?.current_member?.id) setCurrentMemberId(configRes.data.current_member.id);
@@ -903,11 +924,52 @@ export default function ClinicSettingsPage() {
               </CardContent>
             </Card>
 
-            <Card className="border border-dashed border-slate-300">
-              <CardContent className="p-8 text-center">
-                <Shield className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm text-slate-500 font-medium">Integración de pagos</p>
-                <p className="text-xs text-slate-400 mt-1">Stripe / dLocal — Próximamente</p>
+            <Card className="border border-slate-200">
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2"><CreditCard className="w-4 h-4 text-teal-500" />Facturación y pagos</CardTitle></CardHeader>
+              <CardContent>
+                {subscription ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-50 rounded-lg border border-slate-100">
+                      <div>
+                        <p className="text-xs text-slate-500">Cargo mensual</p>
+                        <p className="text-2xl font-bold text-slate-800">
+                          {subscription.price_monthly != null
+                            ? `${subscription.currency === 'GTQ' ? 'Q' : '$'}${Number(subscription.price_monthly).toLocaleString('es-GT', { minimumFractionDigits: 2 })}`
+                            : '—'}
+                          <span className="text-sm font-normal text-slate-400"> /mes</span>
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Plan {subscription.plan_name} · {subscription.status === 'active' ? 'Al día' : 'Suspendido'}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <Badge className={subscription.stripe_configured ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
+                          {subscription.stripe_configured ? 'Pago automático activo' : 'Pago automático pendiente'}
+                        </Badge>
+                        <Button
+                          size="sm"
+                          className="bg-teal-600 hover:bg-teal-700 text-xs"
+                          onClick={startCheckout}
+                          disabled={checkoutLoading}
+                          data-testid="billing-checkout-btn"
+                        >
+                          <CreditCard className="w-3.5 h-3.5 mr-1" />
+                          {checkoutLoading ? 'Abriendo…' : 'Administrar método de pago'}
+                        </Button>
+                      </div>
+                    </div>
+                    {!subscription.stripe_configured && (
+                      <p className="text-xs text-slate-400">
+                        La ruta de cobros está lista. En cuanto se conecte Stripe, podrás pagar tu suscripción y actualizar tu tarjeta desde aquí.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-6 text-center text-sm text-slate-400">
+                    <Shield className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    Cargando información de facturación…
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

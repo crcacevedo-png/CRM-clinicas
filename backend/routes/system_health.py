@@ -531,6 +531,62 @@ async def system_capacity(user=Depends(require_super_admin)):
     return snap
 
 
+def _persist_benchmark(result: dict, triggered_by: str | None):
+    """Save a benchmark run to benchmark_runs (raw SQL, avoids PostgREST cache)."""
+    try:
+        lat = result.get("latency_ms") or {}
+        run_sql(
+            """
+            INSERT INTO public.benchmark_runs
+                (concurrency, total_ops, ok_count, errors, wall_s, throughput_ops_s,
+                 p50_ms, p95_ms, max_ms, estimated_active_users, triggered_by)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                result.get("concurrency"), result.get("total_ops"), result.get("ok"),
+                result.get("errors"), result.get("wall_s"), result.get("throughput_ops_s"),
+                lat.get("p50"), lat.get("p95"), lat.get("max"),
+                result.get("estimated_active_users"), triggered_by,
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"persist benchmark failed: {e}")
+
+
+@router.get("/admin/system/capacity/benchmark/history")
+async def system_capacity_benchmark_history(limit: int = 20, user=Depends(require_super_admin)):
+    """Return the most recent capacity benchmark runs (newest first)."""
+    from starlette.concurrency import run_in_threadpool
+    limit = max(1, min(int(limit), 100))
+
+    def _fetch():
+        rows = run_sql(
+            """
+            SELECT id, created_at, concurrency, total_ops, ok_count, errors,
+                   wall_s, throughput_ops_s, p50_ms, p95_ms, max_ms,
+                   estimated_active_users, triggered_by
+            FROM public.benchmark_runs
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+            fetch=True,
+        ) or []
+        out = []
+        for r in rows:
+            d = dict(r)
+            if d.get("created_at"):
+                d["created_at"] = d["created_at"].isoformat()
+            for k in ("wall_s", "throughput_ops_s", "p50_ms", "p95_ms", "max_ms"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            out.append(d)
+        return out
+
+    runs = await run_in_threadpool(_fetch)
+    return {"runs": runs, "count": len(runs)}
+
+
 @router.post("/admin/system/capacity/benchmark")
 async def system_capacity_benchmark(concurrency: int = 20, user=Depends(require_super_admin)):
     """Run a controlled internal load test (parallel lightweight DB queries) and
@@ -539,5 +595,7 @@ async def system_capacity_benchmark(concurrency: int = 20, user=Depends(require_
     concurrency = max(1, min(int(concurrency), 400))
     total_ops = concurrency * 3  # a few rounds for a stable measurement
     result = await run_in_threadpool(_run_benchmark, concurrency, total_ops)
+    triggered_by = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None)
+    await run_in_threadpool(_persist_benchmark, result, triggered_by)
     result["generated_at"] = datetime.now(timezone.utc).isoformat()
     return result

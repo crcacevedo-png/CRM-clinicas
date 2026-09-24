@@ -233,6 +233,39 @@ def start_scheduler():
         coalesce=True,
     )
 
+    # Capacity watchdog: every 5 min, email super admin if CPU/connections > threshold.
+    CAP_TICK_MIN = int(os.environ.get("CAPACITY_ALERT_TICK_MIN", "5"))
+
+    async def _capacity_wrapper():
+        try:
+            from core import run_sql
+            import socket, uuid as _uuid
+            holder = f"{socket.gethostname()}:{os.getpid()}:{_uuid.uuid4().hex[:8]}"
+            got = run_sql(
+                "SELECT public.try_acquire_lock(%s, %s, %s) AS ok",
+                ('capacity_alert_tick', holder, 120),
+                fetch=True,
+            )
+            if not (got and got[0].get("ok")):
+                return
+            try:
+                from services.capacity_alerts import check_capacity_and_alert
+                await check_capacity_and_alert()
+            finally:
+                run_sql("SELECT public.release_lock(%s, %s)", ('capacity_alert_tick', holder))
+        except Exception as e:
+            logger.warning(f"capacity watchdog failed: {e}")
+
+    _scheduler.add_job(
+        _capacity_wrapper,
+        trigger='interval',
+        minutes=CAP_TICK_MIN,
+        id='capacity_watchdog',
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=45),
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler started — reminder tick every {REMINDER_TICK_MIN}min "

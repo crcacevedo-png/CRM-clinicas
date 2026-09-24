@@ -22,6 +22,7 @@ import UsersPage from "./pages/admin/UsersPage";
 import CatalogsPage from "./pages/admin/CatalogsPage";
 import SettingsPage from "./pages/admin/SettingsPage";
 import PlansPage from "./pages/admin/PlansPage";
+import CobrosPage from "./pages/admin/CobrosPage";
 import AnnouncementsPage from "./pages/admin/AnnouncementsPage";
 import AuditLogPage from "./pages/admin/AuditLogPage";
 import SystemHealthPage from "./pages/admin/SystemHealthPage";
@@ -83,6 +84,7 @@ function App() {
             <Route path="usuarios" element={<UsersPage />} />
             <Route path="catalogos" element={<CatalogsPage />} />
             <Route path="planes" element={<PlansPage />} />
+            <Route path="cobros" element={<CobrosPage />} />
             <Route path="comunicacion" element={<AnnouncementsPage />} />
             <Route path="auditoria" element={<AuditLogPage />} />
             <Route path="salud" element={<SystemHealthPage />} />

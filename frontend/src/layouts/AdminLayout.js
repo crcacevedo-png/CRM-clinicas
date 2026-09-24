@@ -11,7 +11,8 @@ import {
   CreditCard,
   Megaphone,
   Shield,
-  Activity
+  Activity,
+  DollarSign
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/admin/usuarios', icon: Users, label: 'Usuarios' },
   { to: '/admin/catalogos', icon: BookOpen, label: 'Catálogos' },
   { to: '/admin/planes', icon: CreditCard, label: 'Planes' },
+  { to: '/admin/cobros', icon: DollarSign, label: 'Cobros' },
   { to: '/admin/comunicacion', icon: Megaphone, label: 'Comunicación' },
   { to: '/admin/auditoria', icon: Shield, label: 'Auditoría' },
   { to: '/admin/salud', icon: Activity, label: 'Salud sistema' },

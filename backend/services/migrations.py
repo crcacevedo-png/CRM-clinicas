@@ -450,6 +450,28 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE public.clinics ADD COLUMN IF NOT EXISTS quick_start JSONB;
         """,
     ),
+    (
+        "2026_09_benchmark_runs",
+        """
+        CREATE TABLE IF NOT EXISTS public.benchmark_runs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            concurrency INT,
+            total_ops INT,
+            ok_count INT,
+            errors INT,
+            wall_s NUMERIC,
+            throughput_ops_s NUMERIC,
+            p50_ms NUMERIC,
+            p95_ms NUMERIC,
+            max_ms NUMERIC,
+            estimated_active_users INT,
+            triggered_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_benchmark_runs_created
+            ON public.benchmark_runs (created_at DESC);
+        """,
+    ),
 ]
 
 

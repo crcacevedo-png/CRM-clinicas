@@ -53,6 +53,14 @@ export default function SystemHealthPage() {
   const [bench, setBench] = useState(null);
   const [benching, setBenching] = useState(false);
   const [benchConc, setBenchConc] = useState(20);
+  const [benchHistory, setBenchHistory] = useState([]);
+
+  const loadBenchHistory = async () => {
+    try {
+      const res = await axios.get(`${API}/admin/system/capacity/benchmark/history?limit=20`, { headers });
+      setBenchHistory(res.data?.runs || []);
+    } catch { /* silent */ }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -65,6 +73,7 @@ export default function SystemHealthPage() {
       setData(health.data);
       setArchives(arch.data.archives || []);
       setCap(capacity.data);
+      loadBenchHistory();
     } catch (err) {
       toast.error('Error al cargar métricas: ' + (err.response?.data?.detail || err.message));
     } finally {
@@ -80,6 +89,7 @@ export default function SystemHealthPage() {
       setBench(res.data);
       const c = await axios.get(`${API}/admin/system/capacity`, { headers }).catch(() => null);
       if (c) setCap(c.data);
+      loadBenchHistory();
       toast.success('Prueba de capacidad completada');
     } catch (err) {
       toast.error('Error en la prueba: ' + (err.response?.data?.detail || err.message));
@@ -192,6 +202,42 @@ export default function SystemHealthPage() {
             )}
             {bench && <p className="text-xs text-slate-400">{bench.estimate_note}</p>}
           </div>
+
+          {/* Benchmark history */}
+          {benchHistory.length > 0 && (
+            <div className="rounded-lg border border-slate-200 p-4" data-testid="bench-history">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-slate-500" />
+                <span className="text-sm font-medium text-slate-700">Historial de pruebas (últimas {benchHistory.length})</span>
+              </div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Fecha</TableHead>
+                      <TableHead className="text-xs text-right">Concurrencia</TableHead>
+                      <TableHead className="text-xs text-right">Throughput</TableHead>
+                      <TableHead className="text-xs text-right">p50 / p95 (ms)</TableHead>
+                      <TableHead className="text-xs text-right">Errores</TableHead>
+                      <TableHead className="text-xs text-right">Usuarios est.</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {benchHistory.map((r) => (
+                      <TableRow key={r.id} data-testid={`bench-history-row-${r.id}`}>
+                        <TableCell className="text-xs text-slate-500">{r.created_at ? new Date(r.created_at).toLocaleString('es-GT') : '-'}</TableCell>
+                        <TableCell className="text-xs text-right font-mono">{fmt(r.concurrency)}</TableCell>
+                        <TableCell className="text-xs text-right font-mono">{r.throughput_ops_s}/s</TableCell>
+                        <TableCell className="text-xs text-right font-mono">{r.p50_ms} / {r.p95_ms}</TableCell>
+                        <TableCell className={`text-xs text-right font-mono ${(r.errors || 0) > 0 ? 'text-rose-600 font-semibold' : 'text-slate-500'}`}>{fmt(r.errors)}</TableCell>
+                        <TableCell className="text-xs text-right font-mono">{fmt(r.estimated_active_users)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
