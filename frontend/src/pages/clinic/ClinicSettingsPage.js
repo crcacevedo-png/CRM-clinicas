@@ -398,16 +398,16 @@ export default function ClinicSettingsPage() {
     }
   };
 
-  const [downloadingGuide, setDownloadingGuide] = useState(false);
-  const downloadUserGuide = async () => {
-    setDownloadingGuide(true);
+  const [downloadingGuide, setDownloadingGuide] = useState(null);
+  const downloadUserGuide = async (scope = 'role') => {
+    setDownloadingGuide(scope);
     try {
-      const res = await axios.get(`${API}/clinic/user-guide/pdf`, { headers, responseType: 'blob' });
+      const res = await axios.get(`${API}/clinic/user-guide/pdf?scope=${scope}`, { headers, responseType: 'blob' });
       const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
       const a = document.createElement('a');
       a.href = blobUrl;
       const ts = new Date().toISOString().slice(0, 10);
-      a.download = `guia_usuario_${ts}.pdf`;
+      a.download = `guia_usuario_${scope === 'full' ? 'completa' : 'rol'}_${ts}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -416,7 +416,7 @@ export default function ClinicSettingsPage() {
     } catch (e) {
       toast.error('No se pudo generar la guía');
     } finally {
-      setDownloadingGuide(false);
+      setDownloadingGuide(null);
     }
   };
 
@@ -965,7 +965,7 @@ export default function ClinicSettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-slate-600">
-                Descarga el manual completo del sistema en PDF. Incluye el <span className="font-medium">logo de tu clínica</span> (si ya lo configuraste) y cubre paso a paso todas las áreas:
+                Descarga el manual del sistema en PDF. Incluye el <span className="font-medium">logo de tu clínica</span> (si ya lo configuraste), capturas de cada módulo y cubre paso a paso todas las áreas:
               </p>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                 <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600 list-disc pl-5">
@@ -983,18 +983,35 @@ export default function ClinicSettingsPage() {
                   <li>Recomendaciones y soporte</li>
                 </ul>
               </div>
-              <Button
-                onClick={downloadUserGuide}
-                disabled={downloadingGuide}
-                className="bg-teal-600 hover:bg-teal-700"
-                data-testid="download-user-guide-btn"
-              >
-                {downloadingGuide ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando guía…</>
-                ) : (
-                  <><Download className="w-4 h-4 mr-2" />Descargar guía (PDF)</>
-                )}
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button
+                  onClick={() => downloadUserGuide('full')}
+                  disabled={!!downloadingGuide}
+                  className="bg-teal-600 hover:bg-teal-700"
+                  data-testid="download-user-guide-btn"
+                >
+                  {downloadingGuide === 'full' ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando…</>
+                  ) : (
+                    <><Download className="w-4 h-4 mr-2" />Descargar guía completa (PDF)</>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => downloadUserGuide('role')}
+                  disabled={!!downloadingGuide}
+                  data-testid="download-user-guide-role-btn"
+                >
+                  {downloadingGuide === 'role' ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando…</>
+                  ) : (
+                    <><BookOpen className="w-4 h-4 mr-2" />Descargar guía para mi rol</>
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-slate-400">
+                La <span className="font-medium">guía para mi rol</span> incluye solo las áreas que tu usuario puede usar. Los administradores obtienen siempre la guía completa.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>

@@ -176,6 +176,13 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 
 ## Cambios recientes
 
+- **2026-06 — Guía de Usuario: capturas por módulo + versión por rol**:
+  - **Capturas reales**: la guía PDF ahora incrusta una captura de pantalla real de cada módulo (12 imágenes en `/app/backend/assets/guide/*.png`: dashboard, patients, prescriptions, lab_orders, agenda, inventory, sales, accounts, expenses, commissions, reports, settings). `_build_guide_pdf` incrusta la imagen si el archivo existe (escala al ancho de página, cap de alto ~105mm) con pie "Vista de <módulo>". PDF resultante ~1.3MB.
+  - **Guía por rol**: `GET /api/clinic/user-guide/pdf?scope=role|full`. `scope=role` (default) filtra las secciones a solo los módulos que el miembro puede usar = `get_role_modules(clinic_id, role)` ∩ features activas de la clínica (los administradores siempre reciben la guía completa). `scope=full` = manual completo. La portada muestra el subtítulo "Guía completa" o "Guía para: <Rol>".
+  - **Frontend** `ClinicSettingsPage.js` (pestaña Guía): dos botones — `download-user-guide-btn` (completa) y `download-user-guide-role-btn` (según rol).
+  - Verificado: curl (admin/full=1.3MB, doctor/role filtrado más pequeño, doctor/full completo) + análisis del PDF (capturas nítidas y completas por sección). Las capturas se regeneran ejecutando un script Playwright de login (no versionado).
+
+
 - **2026-06 — Guía de Usuario descargable (PDF)**: manual completo del sistema generado con ReportLab, disponible para cualquier miembro de la clínica.
   - **Backend NUEVO** `routes/user_guide.py`: `GET /api/clinic/user-guide/pdf` (require_clinic_member) genera y transmite un PDF A4 con portada (logo de la clínica vía `fetch_clinic_logo_image` si `clinics.logo_url` existe, + nombre + título + fecha), tabla de contenido y 15 secciones numeradas cubriendo todos los módulos (Acceso, Inicio/Inicio rápido, Pacientes, Consulta, Recetas, Laboratorio, Agenda, Inventario, Ventas/POS, Cuentas por cobrar, Gastos, Comisiones, Reportes, Configuración, Recomendaciones). Pie de página con nombre de clínica + número de página. Registrado en `server.py` como `_r_guide`.
   - **Frontend MODIFICADO** `ClinicSettingsPage.js`: nueva pestaña **"Guía"** (`tab-guide`, visible a todos los miembros) con tarjeta `user-guide-card` que lista el contenido y botón `download-user-guide-btn` para descargar el PDF. Añadido `guide` a los VALID_TABS del deep-link `?tab=`.
