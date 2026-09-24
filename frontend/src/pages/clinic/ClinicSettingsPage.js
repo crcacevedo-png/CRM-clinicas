@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Building2, Calendar, Link2, Unlink, RefreshCw, CheckCircle, Users,
   UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image,
-  Download, Database, Loader2, X, FileSpreadsheet, Rocket
+  Download, Database, Loader2, X, FileSpreadsheet, Rocket, BookOpen
 } from 'lucide-react';
 import AuditLogTable from '../../components/AuditLogTable';
 import RolesTab from './RolesTab';
@@ -91,7 +91,7 @@ export default function ClinicSettingsPage() {
     if (success === 'true') toast.success('Google Calendar conectado exitosamente');
     if (error) toast.error(`Error al conectar: ${error}`);
     const tab = searchParams.get('tab');
-    const VALID_TABS = ['clinic', 'members', 'prescriptions', 'billing', 'integrations', 'roles', 'data', 'audit'];
+    const VALID_TABS = ['clinic', 'members', 'prescriptions', 'billing', 'integrations', 'roles', 'data', 'audit', 'guide'];
     if (tab && VALID_TABS.includes(tab)) setActiveTab(tab);
   }, [searchParams]);
 
@@ -344,8 +344,7 @@ export default function ClinicSettingsPage() {
   };
 
   const [restoringQS, setRestoringQS] = useState(false);
-  const restoreQuickStart = async () => {
-    setRestoringQS(true);
+  const restoreQuickStart = async () => {    setRestoringQS(true);
     try {
       await axios.put(`${API}/clinic/quick-start`, { dismissed: false }, { headers });
       toast.success('El inicio rápido se mostrará de nuevo en la pantalla de Inicio');
@@ -396,6 +395,28 @@ export default function ClinicSettingsPage() {
       toast.error(msg);
     } finally {
       setDownloadingExcel(false);
+    }
+  };
+
+  const [downloadingGuide, setDownloadingGuide] = useState(false);
+  const downloadUserGuide = async () => {
+    setDownloadingGuide(true);
+    try {
+      const res = await axios.get(`${API}/clinic/user-guide/pdf`, { headers, responseType: 'blob' });
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const ts = new Date().toISOString().slice(0, 10);
+      a.download = `guia_usuario_${ts}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success('Guía de usuario descargada');
+    } catch (e) {
+      toast.error('No se pudo generar la guía');
+    } finally {
+      setDownloadingGuide(false);
     }
   };
 
@@ -465,6 +486,7 @@ export default function ClinicSettingsPage() {
           <TabsTrigger value="prescriptions" data-testid="tab-prescriptions"><FileText className="w-3.5 h-3.5 mr-1.5" />Recetas</TabsTrigger>
           <TabsTrigger value="billing" data-testid="tab-billing"><CreditCard className="w-3.5 h-3.5 mr-1.5" />Plan</TabsTrigger>
           <TabsTrigger value="integrations" data-testid="tab-integrations"><Calendar className="w-3.5 h-3.5 mr-1.5" />Integraciones</TabsTrigger>
+          <TabsTrigger value="guide" data-testid="tab-guide"><BookOpen className="w-3.5 h-3.5 mr-1.5" />Guía</TabsTrigger>
           {isClinicAdmin && (
             <TabsTrigger value="roles" data-testid="tab-roles"><Shield className="w-3.5 h-3.5 mr-1.5" />Roles</TabsTrigger>
           )}
@@ -929,6 +951,50 @@ export default function ClinicSettingsPage() {
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ===== USER GUIDE (all members) ===== */}
+        <TabsContent value="guide">
+          <Card className="border border-slate-200" data-testid="user-guide-card">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-teal-600" />Guía de usuario
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-slate-600">
+                Descarga el manual completo del sistema en PDF. Incluye el <span className="font-medium">logo de tu clínica</span> (si ya lo configuraste) y cubre paso a paso todas las áreas:
+              </p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600 list-disc pl-5">
+                  <li>Acceso al sistema y roles</li>
+                  <li>Inicio y panel de Inicio rápido</li>
+                  <li>Pacientes y expedientes</li>
+                  <li>Consulta médica</li>
+                  <li>Recetas médicas</li>
+                  <li>Laboratorio (órdenes de estudios)</li>
+                  <li>Agenda y bloqueos</li>
+                  <li>Inventario, Ventas / POS</li>
+                  <li>Cuentas por cobrar y Gastos</li>
+                  <li>Comisiones y Reportes</li>
+                  <li>Configuración completa</li>
+                  <li>Recomendaciones y soporte</li>
+                </ul>
+              </div>
+              <Button
+                onClick={downloadUserGuide}
+                disabled={downloadingGuide}
+                className="bg-teal-600 hover:bg-teal-700"
+                data-testid="download-user-guide-btn"
+              >
+                {downloadingGuide ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando guía…</>
+                ) : (
+                  <><Download className="w-4 h-4 mr-2" />Descargar guía (PDF)</>
+                )}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

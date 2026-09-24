@@ -159,6 +159,7 @@ from routes import (
     agenda_blocks as _r_ab,
     roles as _r_roles,
     quick_start as _r_qs,
+    user_guide as _r_guide,
 )
 from core import require_module
 
@@ -167,7 +168,7 @@ from core import require_module
 for _r in (
     _r_auth, _r_sa, _r_cat, _r_cs, _r_br, _r_ff,
     _r_pat, _r_apt, _r_gc,
-    _r_exp_full, _r_ann, _r_metrics, _r_audit, _r_health, _r_wa, _r_roles, _r_qs,
+    _r_exp_full, _r_ann, _r_metrics, _r_audit, _r_health, _r_wa, _r_roles, _r_qs, _r_guide,
 ):
     api_router.include_router(_r.router)
 

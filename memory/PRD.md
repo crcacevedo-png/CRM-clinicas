@@ -176,6 +176,12 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 
 ## Cambios recientes
 
+- **2026-06 — Guía de Usuario descargable (PDF)**: manual completo del sistema generado con ReportLab, disponible para cualquier miembro de la clínica.
+  - **Backend NUEVO** `routes/user_guide.py`: `GET /api/clinic/user-guide/pdf` (require_clinic_member) genera y transmite un PDF A4 con portada (logo de la clínica vía `fetch_clinic_logo_image` si `clinics.logo_url` existe, + nombre + título + fecha), tabla de contenido y 15 secciones numeradas cubriendo todos los módulos (Acceso, Inicio/Inicio rápido, Pacientes, Consulta, Recetas, Laboratorio, Agenda, Inventario, Ventas/POS, Cuentas por cobrar, Gastos, Comisiones, Reportes, Configuración, Recomendaciones). Pie de página con nombre de clínica + número de página. Registrado en `server.py` como `_r_guide`.
+  - **Frontend MODIFICADO** `ClinicSettingsPage.js`: nueva pestaña **"Guía"** (`tab-guide`, visible a todos los miembros) con tarjeta `user-guide-card` que lista el contenido y botón `download-user-guide-btn` para descargar el PDF. Añadido `guide` a los VALID_TABS del deep-link `?tab=`.
+  - Verificado por curl (200, `application/pdf`, ~6 páginas) y análisis de estructura del PDF (portada + TOC + secciones en español, correcto). El logo se incluye solo si la clínica ya lo configuró.
+
+
 - **2026-06 — Inicio rápido (onboarding guiado para administradores)**: panel destacado en la parte superior del Inicio (`/dashboard`) visible **solo para clinic_admin**, que guía a recorrer y poner en orden las áreas del sistema.
   - **Backend NUEVO** `routes/quick_start.py`: `GET /api/clinic/quick-start` y `PUT /api/clinic/quick-start` (require_clinic_admin). Estado a nivel de clínica en columna nueva `clinics.quick_start JSONB` = `{completed: [step_keys], dismissed: bool}` (compartido entre admins). Migración `2026_06_quick_start_clinics` (añadida a `services/migrations.py` y aplicada vía run_sql). Registrado en `server.py` como `_r_qs`.
   - **Frontend NUEVO** `components/QuickStartPanel.js`: catálogo de 14 pasos (7 base siempre + 7 gated por feature: inventory, sales, accounts_receivable, expenses, commissions, financial_reports, multi_branch). Cada paso: ícono, título, descripción, toggle "hecho" (marca/desmarca, persistente) y botón "Ir" que navega al área. Barra de progreso "X de N completados". Al completar todos los pasos visibles aparece el banner con "Retirar inicio rápido" (dismiss). Fetch con 1 reintento; fail-closed si falla.
