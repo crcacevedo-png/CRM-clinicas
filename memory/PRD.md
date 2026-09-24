@@ -10,6 +10,15 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **RECORDATORIOS DE CITA POR WHATSAPP** (24 Sept 2026):
+  - [x] Migración: columna `whatsapp_reminder_sent_at` en `appointments`
+  - [x] `GET /api/clinic/appointments/whatsapp-reminders?window_hours=24` — lista citas próximas (1–168h) con mensaje pre-formateado y wa.me URL con teléfono normalizado por país
+  - [x] `POST /api/clinic/appointments/{id}/whatsapp-reminder-sent` marca como enviado; `/whatsapp-reminder-reset` revierte
+  - [x] Botón «Recordatorios WhatsApp» en Agenda que abre modal con lista, vista previa del mensaje, envío individual y masivo (window.open a wa.me), filtro de ventana (24/48/72h/7días) y filtro «Ver ya enviados»
+  - [x] Pacientes sin teléfono se muestran como aviso separado
+  - [x] Manual de usuario: nueva sección detallada en Agenda
+  - [x] Tests: 13/13 pasando
+
 - [x] **REPORTE ASEGURADORAS** (24 Sept 2026):
   - [x] `GET /api/clinic/reports/insurance?period=year` — totales (cobrado, pendiente, acumulado), summary por aseguradora + monthly breakdown por mes × aseguradora
   - [x] Nueva pestaña "Aseguradoras" en Reportes financieros con: 4 KPI cards, tabla resumen ordenada por acumulado, bar chart horizontal cobrado vs pendiente, pie chart de participación, matriz mensual pivoteada aseguradora × mes con totales de fila y columna

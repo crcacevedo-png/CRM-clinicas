@@ -720,9 +720,10 @@ async def whatsapp_reminders_queue(
     from routes.whatsapp_share import _normalize_wa_phone
 
     clinic_id = ctx["member"]["clinic_id"]
+    window_hours_eff = max(1, min(window_hours, 168))  # cap at 7 days
     try:
         now = dt.now(timezone.utc)
-        window_end = now + _td(hours=max(1, min(window_hours, 168)))  # cap at 7 days
+        window_end = now + _td(hours=window_hours_eff)
 
         query = (
             sdb.table('appointments')
@@ -737,7 +738,7 @@ async def whatsapp_reminders_queue(
         apts = query.order('starts_at').execute().data or []
 
         if not apts:
-            return {"appointments": [], "count": 0, "window_hours": window_hours}
+            return {"appointments": [], "count": 0, "skipped_no_phone": 0, "window_hours": window_hours_eff}
 
         # Fetch clinic + patients + doctors in bulk
         clinic = sdb.table('clinics').select('name,country,timezone,phone').eq('id', clinic_id).maybe_single().execute()
@@ -832,7 +833,7 @@ async def whatsapp_reminders_queue(
             "appointments": result,
             "count": len(result),
             "skipped_no_phone": skipped_no_phone,
-            "window_hours": window_hours,
+            "window_hours": window_hours_eff,
         }
     except Exception as e:
         logger.error(f"WhatsApp reminders queue error: {e}")

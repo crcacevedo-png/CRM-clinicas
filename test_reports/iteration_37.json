@@ -1,0 +1,32 @@
+{
+  "summary": "Backend testing of WhatsApp appointment reminders. Created /app/backend/tests/test_whatsapp_reminders.py with 13 pytest cases covering all 11 requirements from the review request. All 13 tests PASSED (100%). Endpoints verified: GET /api/clinic/appointments/whatsapp-reminders (default structure, window cap at 168h, auth), POST /whatsapp-reminder-sent (200, 404 for missing/other-clinic, removes from queue, include_sent shows already_sent=true), POST /whatsapp-reminder-reset (restores to queue), phone normalization to 502... for Guatemala local 8-digit numbers, patient-without-phone skipped, cancelled appointments excluded, and GET /api/clinic/user-guide/pdf regression passes with valid %PDF header.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/clinic/appointments/whatsapp-reminders?window_hours=999", "issue": "Response echoes the requested window_hours (999) even though internal window is capped at 168h. Not incorrect but could mislead the UI. Consider returning the effective capped value."},
+      {"endpoint": "GET /api/clinic/appointments/whatsapp-reminders", "issue": "When appointments list is empty, response omits `skipped_no_phone` (early return only includes appointments/count/window_hours). Should always include skipped_no_phone=0 for consistent API contract."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_whatsapp_reminders.py",
+    "/app/test_reports/pytest/whatsapp_reminders.xml"
+  ],
+  "action_items": [
+    "(Optional) Always return skipped_no_phone (default 0) even when appointments list is empty for consistent response shape.",
+    "(Optional) Consider returning the effective capped window_hours (min(requested, 168)) instead of echoing the raw request value."
+  ],
+  "critical_code_review_comments": [
+    "appointments.py grew to 882 lines; consider splitting WhatsApp reminders + main appointments into separate modules.",
+    "Phone normalization is imported inside the endpoint function; fine but a top-level import would be cleaner.",
+    "The endpoint filters skipped_no_phone with a second loop over apts — duplicate iteration; can be tallied inside the main loop."
+  ],
+  "updated_files": ["/app/backend/tests/test_whatsapp_reminders.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A"},
+  "test_credentials": "Clinic admin prueba3@gmail.com / Test123456! (clinic c0321ed8-97da-47a1-b601-3b94bffabdd7)",
+  "seed_data_creation": "Created 2 TEST_-prefixed patients (TEST_WA and TEST_WA_NOP) with unique last_names per run. Appointments created during tests were cleaned up (status=cancelled) at teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_whatsapp_reminders.py is a full regression suite for WhatsApp reminders. It logs in as clinic_admin, finds a doctor via /api/clinic/members, creates patients and appointments in MAIN branch 79c47aab..., and cancels appointments at teardown. If clinic schedule changes, adjust _next_business_slot() to pick valid slots. All tests currently pass.",
+  "rca of the issue": "N/A — no issues found"
+}
