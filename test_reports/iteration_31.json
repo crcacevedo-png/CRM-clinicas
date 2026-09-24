@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend-only testing of the 3 new features (Cobros Super Admin, Historial de Benchmarks, and Clinic Admin Billing tab). All acceptance criteria PASS. Super Admin /admin/cobros loads with stripe-status-card banner, all 4 KPI cards (MRR $78.00, ARR $936.00, 8 activas, 8 total — MRR is >0 as expected; note MRR is $78 because there are 2 Professional clinics of $39 each, not $39 as stated in the request), 'Ingresos por plan' section, and 8 clinic rows (data-testid=cobro-row-<id>). 'Conectar Stripe' button shows informative toast 'Configura STRIPE_API_KEY en el backend para habilitar los cobros. (Integración pendiente)' without breaking the app. In /admin/salud the concurrency select (native <select data-testid='bench-concurrency-select'>) contains all required options [20, 60, 120, 240, 360]; executing a benchmark returns results (223.2/s throughput, p50 62.2ms) and 'Historial de pruebas' table (data-testid=bench-history) shows 3 rows (bench-history-row-*) with fecha, concurrencia, throughput, p50/p95, errores, usuarios est. In clinic admin (prueba3@gmail.com) at /dashboard/configuracion the Plan tab (data-testid=tab-billing) renders 'Plan actual' (Professional badge) and 'Facturación y pagos' card with $39.00/mes, 'Pago automático pendiente' badge, and 'Administrar método de pago' button (data-testid=billing-checkout-btn). Clicking it shows toast 'La pasarela de pago (Stripe) aún no está configurada. Se habilitará próximamente.' and stays on same page (no redirect, no error).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "SystemHealthPage / concurrency select", "issues": ["Se usa un <select> HTML nativo en lugar del componente Select de shadcn usado en el resto de la app (inconsistencia visual). Además genera una hydration warning en consola: 'In HTML, <span> cannot be a child of <option>' — proviene del wrapper de x-ve overlay pero conviene revisarlo."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Opcional) Reemplazar el <select> nativo de bench-concurrency-select por el componente Select de shadcn para consistencia visual con el resto de la app.",
+    "(Informativo, no bug) El texto del requerimiento decía MRR debe ser >0 con un Plan Professional de $39; en realidad hay 2 clínicas Professional en la seed, por lo que el MRR mostrado es $78.00. Cumple el criterio (>0)."
+  ],
+  "critical_code_review_comments": [
+    "Los múltiples errores 500 en consola durante la navegación provienen de otros endpoints no relacionados con estas features (dashboard/otros); no afectan las funcionalidades probadas. Recomendable revisar por separado.",
+    "Recharts warning 'width(-1) and height(-1)' en /admin/salud — ajustar contenedor con min-width/height o aspect para evitar layout thrash."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend only)", "frontend": "100%"},
+  "test_credentials": "Super Admin: info@cortexiagt.com / Armagedon1980$; Clinic Admin: prueba3@gmail.com / Test123456!",
+  "seed_data_creation": "Ninguno — se ejecutó un benchmark de concurrencia 20 que añadió una fila al historial (persistencia funciona).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Las 3 features nuevas están operativas end-to-end en UI. Rutas clave: /admin/cobros, /admin/salud (con historial), /dashboard/configuracion (tab Plan). Todos los stubs de Stripe muestran toast informativo correctamente. La ruta de clinic settings es /dashboard/configuracion (no /clinic/...)."
+}
