@@ -20,7 +20,8 @@ import {
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, DollarSign, Wallet, Users, CalendarCheck,
-  Receipt, ShoppingCart, Building2, FileDown, Layers, AlertCircle, Package
+  Receipt, ShoppingCart, Building2, FileDown, Layers, AlertCircle, Package,
+  ShieldCheck
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -68,12 +69,14 @@ export default function ReportsPage() {
             <TabsTrigger value="income" data-testid="rep-tab-income"><DollarSign className="w-3.5 h-3.5 mr-1" />Ingresos</TabsTrigger>
             <TabsTrigger value="pnl" data-testid="rep-tab-pnl"><Receipt className="w-3.5 h-3.5 mr-1" />Estado de resultados</TabsTrigger>
             <TabsTrigger value="inventory" data-testid="rep-tab-inventory"><Package className="w-3.5 h-3.5 mr-1" />Inventario</TabsTrigger>
+            <TabsTrigger value="insurance" data-testid="rep-tab-insurance"><ShieldCheck className="w-3.5 h-3.5 mr-1" />Aseguradoras</TabsTrigger>
             {hasFeature('multi_branch') && <TabsTrigger value="branch" data-testid="rep-tab-branch"><Building2 className="w-3.5 h-3.5 mr-1" />Por sucursal</TabsTrigger>}
           </TabsList>
           <TabsContent value="summary"><SummaryTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
           <TabsContent value="income"><IncomeTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
           <TabsContent value="pnl"><PnLTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
           <TabsContent value="inventory"><InventoryTab headers={headers} branches={branches} activeBranch={activeBranch} cache={cache} /></TabsContent>
+          <TabsContent value="insurance"><InsuranceTab headers={headers} cache={cache} /></TabsContent>
           {hasFeature('multi_branch') && <TabsContent value="branch"><BranchTab headers={headers} cache={cache} /></TabsContent>}
         </Tabs>
       </div>
@@ -698,3 +701,287 @@ function BranchTab({ headers, cache }) {
     </>
   );
 }
+
+/* ============ INSURANCE TAB ============ */
+function InsuranceTab({ headers, cache }) {
+  const [period, setPeriod] = useState('year');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ period });
+      if (period === 'custom' && dateFrom && dateTo) {
+        params.set('date_from', dateFrom); params.set('date_to', dateTo);
+      }
+      const key = `insurance-${params.toString()}`;
+      if (cache.get(key)) { setData(cache.get(key)); setLoading(false); return; }
+      const r = await axios.get(`${API}/clinic/reports/insurance?${params}`, { headers });
+      cache.set(key, r.data);
+      setData(r.data);
+    } catch (e) {
+      toast.error('Error al cargar reporte de aseguradoras');
+    } finally { setLoading(false); }
+  }, [period, dateFrom, dateTo, headers, cache]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Build the pivoted monthly matrix — all providers × months
+  const monthlyMatrix = useMemo(() => {
+    if (!data) return { months: [], providers: [], grid: {}, colTotals: {}, rowTotals: {} };
+    const monthList = (data.monthly || []).map(m => m.month);
+    const provSet = new Set();
+    (data.monthly || []).forEach(m => (m.providers || []).forEach(p => provSet.add(p.name)));
+    const providers = Array.from(provSet).sort();
+    const grid = {}; // grid[provider][month] = amount
+    const colTotals = {}; // colTotals[month] = amount
+    const rowTotals = {}; // rowTotals[provider] = amount
+    providers.forEach(p => { grid[p] = {}; rowTotals[p] = 0; });
+    monthList.forEach(m => { colTotals[m] = 0; });
+    (data.monthly || []).forEach(m => {
+      (m.providers || []).forEach(p => {
+        grid[p._name || p.name] = grid[p._name || p.name] || {};
+        grid[p.name][m.month] = p.billed;
+        colTotals[m.month] = (colTotals[m.month] || 0) + p.billed;
+        rowTotals[p.name] = (rowTotals[p.name] || 0) + p.billed;
+      });
+    });
+    return { months: monthList, providers, grid, colTotals, rowTotals };
+  }, [data]);
+
+  const formatMonthLabel = (m) => {
+    // m = 'YYYY-MM'
+    const [y, mm] = m.split('-');
+    const names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    return `${names[parseInt(mm) - 1] || mm} ${y}`;
+  };
+
+  const exportCSV = () => {
+    if (!data) return;
+    const rows = [['Aseguradora', 'Ventas (# pagos seguro)', 'Cuentas por cobrar (#)', 'Cobrado (Q)', 'Pendiente (Q)', 'Acumulado (Q)']];
+    (data.summary || []).forEach(p => {
+      rows.push([p.name, p.sales_count, p.ar_count, p.collected.toFixed(2), p.pending.toFixed(2), p.total_billed.toFixed(2)]);
+    });
+    rows.push([]);
+    rows.push(['Mensual — Cobrado por seguro (Q)']);
+    const header = ['Mes', ...monthlyMatrix.providers, 'Total mes'];
+    rows.push(header);
+    monthlyMatrix.months.forEach(m => {
+      const line = [formatMonthLabel(m)];
+      monthlyMatrix.providers.forEach(p => line.push((monthlyMatrix.grid[p]?.[m] || 0).toFixed(2)));
+      line.push((monthlyMatrix.colTotals[m] || 0).toFixed(2));
+      rows.push(line);
+    });
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `reporte_aseguradoras_${data.date_from}_${data.date_to}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-3 items-end mb-4">
+        <div>
+          <Label className="text-xs">Período</Label>
+          <Select value={period} onValueChange={setPeriod}>
+            <SelectTrigger className="w-40 text-sm" data-testid="rep-ins-period"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="current_month">Mes actual</SelectItem>
+              <SelectItem value="previous_month">Mes anterior</SelectItem>
+              <SelectItem value="quarter">Trimestre</SelectItem>
+              <SelectItem value="year">Año en curso</SelectItem>
+              <SelectItem value="custom">Personalizado</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {period === 'custom' && (
+          <>
+            <div>
+              <Label className="text-xs">Desde</Label>
+              <Input type="date" className="w-36 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Hasta</Label>
+              <Input type="date" className="w-36 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            </div>
+          </>
+        )}
+        <div className="flex-1" />
+        <Button variant="outline" size="sm" onClick={exportCSV} disabled={!data} data-testid="rep-ins-export-csv">
+          <FileDown className="w-3.5 h-3.5 mr-1" /> CSV
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-16"><div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>
+      ) : !data ? null : (
+        <>
+          {/* Totales */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <Card><CardContent className="p-4">
+              <div className="flex items-center justify-between"><p className="text-xs text-slate-500 font-medium">Aseguradoras activas</p><ShieldCheck className="w-4 h-4 text-blue-600" /></div>
+              <p className="text-2xl font-bold mt-1 text-blue-600">{data.totals.providers_count}</p>
+            </CardContent></Card>
+            <Card><CardContent className="p-4">
+              <div className="flex items-center justify-between"><p className="text-xs text-slate-500 font-medium">Acumulado</p><Receipt className="w-4 h-4 text-slate-600" /></div>
+              <p className="text-2xl font-bold mt-1 text-slate-800">Q{data.totals.total_billed.toFixed(2)}</p>
+              <p className="text-xs text-slate-400">Cobrado + pendiente</p>
+            </CardContent></Card>
+            <Card><CardContent className="p-4">
+              <div className="flex items-center justify-between"><p className="text-xs text-slate-500 font-medium">Cobrado por seguros</p><DollarSign className="w-4 h-4 text-emerald-600" /></div>
+              <p className="text-2xl font-bold mt-1 text-emerald-600">Q{data.totals.collected.toFixed(2)}</p>
+            </CardContent></Card>
+            <Card><CardContent className="p-4">
+              <div className="flex items-center justify-between"><p className="text-xs text-slate-500 font-medium">Pendiente por cobrar</p><AlertCircle className="w-4 h-4 text-red-600" /></div>
+              <p className="text-2xl font-bold mt-1 text-red-600">Q{data.totals.pending.toFixed(2)}</p>
+            </CardContent></Card>
+          </div>
+
+          {data.summary.length === 0 ? (
+            <Card><CardContent className="p-12 text-center text-slate-400">
+              <ShieldCheck className="w-10 h-10 mx-auto mb-2 opacity-40" strokeWidth={1} />
+              <p className="text-sm">No hay ventas con pago de seguro en el período seleccionado.</p>
+              <p className="text-xs mt-1">Registra una venta en el POS eligiendo el método <strong>Seguro</strong> para verla aquí.</p>
+            </CardContent></Card>
+          ) : (
+            <>
+              {/* Summary per provider */}
+              <Card className="mb-4">
+                <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Resumen por aseguradora</CardTitle></CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader><TableRow className="bg-slate-50/80">
+                      <TableHead className="text-xs font-semibold">Aseguradora</TableHead>
+                      <TableHead className="text-xs font-semibold text-center"># Pagos</TableHead>
+                      <TableHead className="text-xs font-semibold text-center"># CxC</TableHead>
+                      <TableHead className="text-xs font-semibold text-right">Cobrado</TableHead>
+                      <TableHead className="text-xs font-semibold text-right">Pendiente</TableHead>
+                      <TableHead className="text-xs font-semibold text-right">Acumulado</TableHead>
+                      <TableHead className="text-xs font-semibold text-right">% del total</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {data.summary.map(p => {
+                        const pct = data.totals.total_billed > 0 ? (p.total_billed / data.totals.total_billed) * 100 : 0;
+                        return (
+                          <TableRow key={p.name} data-testid={`ins-row-${p.name}`}>
+                            <TableCell className="text-sm font-medium">
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{p.name}</Badge>
+                            </TableCell>
+                            <TableCell className="text-center text-xs">{p.sales_count}</TableCell>
+                            <TableCell className="text-center text-xs">{p.ar_count}</TableCell>
+                            <TableCell className="text-right text-sm text-emerald-600 font-medium">Q{p.collected.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm text-red-600 font-medium">Q{p.pending.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm font-bold">Q{p.total_billed.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-xs">{pct.toFixed(1)}%</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              {/* Bar chart: pending vs collected per provider */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Cobrado vs Pendiente por aseguradora</CardTitle></CardHeader>
+                  <CardContent className="pt-2">
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={data.summary.slice(0, 8)} layout="vertical" margin={{ left: 0, right: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" />
+                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                        <Tooltip formatter={(v) => `Q${(+v).toFixed(2)}`} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="collected" name="Cobrado" fill="#10B981" />
+                        <Bar dataKey="pending" name="Pendiente" fill="#EF4444" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Participación (% del acumulado)</CardTitle></CardHeader>
+                  <CardContent className="pt-2">
+                    <ResponsiveContainer width="100%" height={260}>
+                      <PieChart>
+                        <Pie
+                          data={data.summary.slice(0, 8)}
+                          dataKey="total_billed"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={90}
+                          label={(e) => e.name}
+                          labelLine={false}
+                        >
+                          {data.summary.slice(0, 8).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v) => `Q${(+v).toFixed(2)}`} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Monthly breakdown */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold">Cobrado por aseguradora y mes</CardTitle>
+                  <p className="text-xs text-slate-500 mt-1">Monto cobrado (payments.method = seguro) por cada aseguradora en cada mes.</p>
+                </CardHeader>
+                <CardContent>
+                  {monthlyMatrix.months.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-4 text-center">Sin actividad mensual en el período.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader><TableRow className="bg-slate-50/80">
+                          <TableHead className="text-xs font-semibold">Mes</TableHead>
+                          {monthlyMatrix.providers.map(p => (
+                            <TableHead key={p} className="text-xs font-semibold text-right whitespace-nowrap">{p}</TableHead>
+                          ))}
+                          <TableHead className="text-xs font-semibold text-right">Total mes</TableHead>
+                        </TableRow></TableHeader>
+                        <TableBody>
+                          {monthlyMatrix.months.map(m => (
+                            <TableRow key={m} data-testid={`ins-month-${m}`}>
+                              <TableCell className="text-sm font-medium">{formatMonthLabel(m)}</TableCell>
+                              {monthlyMatrix.providers.map(p => {
+                                const val = monthlyMatrix.grid[p]?.[m] || 0;
+                                return (
+                                  <TableCell key={p} className="text-right text-xs">
+                                    {val > 0 ? `Q${val.toFixed(2)}` : <span className="text-slate-300">—</span>}
+                                  </TableCell>
+                                );
+                              })}
+                              <TableCell className="text-right text-sm font-bold">Q{(monthlyMatrix.colTotals[m] || 0).toFixed(2)}</TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow className="bg-slate-50 font-semibold">
+                            <TableCell className="text-xs">Total</TableCell>
+                            {monthlyMatrix.providers.map(p => (
+                              <TableCell key={p} className="text-right text-xs">Q{(monthlyMatrix.rowTotals[p] || 0).toFixed(2)}</TableCell>
+                            ))}
+                            <TableCell className="text-right text-sm text-teal-600">Q{Object.values(monthlyMatrix.colTotals).reduce((s, v) => s + v, 0).toFixed(2)}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+

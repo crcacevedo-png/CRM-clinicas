@@ -611,3 +611,118 @@ async def pnl_pdf(
         raise HTTPException(status_code=500, detail="Error")
 
 
+@router.get("/clinic/reports/insurance")
+async def insurance_report(
+    period: str = "year", date_from: str = "", date_to: str = "",
+    ctx=Depends(require_clinic_member),
+):
+    """Insurance report: totals billed/collected/pending per insurance provider
+    and a monthly breakdown showing what was sold via each insurance each month.
+
+    Data sources:
+      - `payments.insurance_name` for insurance-collected amounts (real cash from insurer).
+      - `accounts_receivable.insurance_name` for pending balance owed by insurer.
+      - We derive "billed via insurance" as collected + pending per provider so the
+        UI can show a single "acumulado" column that matches sale reality.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
+    try:
+        d_from, d_to = _period_dates(period, date_from, date_to)
+
+        # 1) Insurance payments in period (collected)
+        pays = (
+            sdb.table('payments')
+            .select('insurance_name,amount,paid_at')
+            .eq('clinic_id', clinic_id)
+            .eq('payment_method', 'insurance')
+            .not_.is_('insurance_name', 'null')
+            .gte('paid_at', d_from)
+            .lte('paid_at', f"{d_to}T23:59:59Z")
+            .execute()
+            .data or []
+        )
+        # 2) Accounts receivable with insurance_name (pending balance snapshot; no date filter — pending is a live snapshot)
+        ars = (
+            sdb.table('accounts_receivable')
+            .select('insurance_name,insurance_amount,balance,paid_amount,original_amount,created_at,status')
+            .eq('clinic_id', clinic_id)
+            .not_.is_('insurance_name', 'null')
+            .execute()
+            .data or []
+        )
+
+        # 3) Aggregate by provider
+        by_provider = {}  # key: name.lower() -> {name, collected, pending, sales_count, ar_count}
+        for p in pays:
+            name = (p.get('insurance_name') or '').strip()
+            if not name:
+                continue
+            k = name.lower()
+            prov = by_provider.setdefault(k, {"name": name, "collected": 0.0, "pending": 0.0, "sales_count": 0, "ar_count": 0})
+            prov["collected"] += float(p.get('amount') or 0)
+            prov["sales_count"] += 1
+
+        for a in ars:
+            name = (a.get('insurance_name') or '').strip()
+            if not name:
+                continue
+            k = name.lower()
+            prov = by_provider.setdefault(k, {"name": name, "collected": 0.0, "pending": 0.0, "sales_count": 0, "ar_count": 0})
+            # Only unpaid AR contributes to the pending column
+            if a.get('status') != 'paid':
+                prov["pending"] += float(a.get('balance') or 0)
+                prov["ar_count"] += 1
+
+        summary = []
+        for v in by_provider.values():
+            v["collected"] = round(v["collected"], 2)
+            v["pending"] = round(v["pending"], 2)
+            v["total_billed"] = round(v["collected"] + v["pending"], 2)
+            summary.append(v)
+        summary.sort(key=lambda x: -x["total_billed"])
+
+        # 4) Monthly breakdown within [d_from..d_to]
+        #    Bucket: YYYY-MM. Metrics per month per provider: billed_via_insurance (paid amount for that month).
+        monthly = {}  # month -> { provider_name -> billed }
+        for p in pays:
+            paid_at = (p.get('paid_at') or '')[:7]  # YYYY-MM
+            if not paid_at:
+                continue
+            name = (p.get('insurance_name') or '').strip()
+            if not name:
+                continue
+            monthly.setdefault(paid_at, {}).setdefault(name, 0.0)
+            monthly[paid_at][name] += float(p.get('amount') or 0)
+
+        # Convert monthly to sorted array of rows: [{ month, providers: [{name, billed}], total }]
+        monthly_rows = []
+        for month in sorted(monthly.keys()):
+            provs = monthly[month]
+            provs_list = sorted(
+                [{"name": n, "billed": round(v, 2)} for n, v in provs.items()],
+                key=lambda x: -x["billed"],
+            )
+            total = round(sum(p["billed"] for p in provs_list), 2)
+            monthly_rows.append({"month": month, "providers": provs_list, "total": total})
+
+        totals = {
+            "collected": round(sum(p["collected"] for p in summary), 2),
+            "pending": round(sum(p["pending"] for p in summary), 2),
+            "total_billed": round(sum(p["total_billed"] for p in summary), 2),
+            "providers_count": len(summary),
+        }
+
+        return {
+            "date_from": d_from,
+            "date_to": d_to,
+            "totals": totals,
+            "summary": summary,
+            "monthly": monthly_rows,
+        }
+    except Exception as e:
+        logger.error(f"Insurance report error: {e}")
+        raise HTTPException(status_code=500, detail="Error")
+
+
+

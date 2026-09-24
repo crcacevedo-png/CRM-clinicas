@@ -10,6 +10,12 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **REPORTE ASEGURADORAS** (24 Sept 2026):
+  - [x] `GET /api/clinic/reports/insurance?period=year` — totales (cobrado, pendiente, acumulado), summary por aseguradora + monthly breakdown por mes × aseguradora
+  - [x] Nueva pestaña "Aseguradoras" en Reportes financieros con: 4 KPI cards, tabla resumen ordenada por acumulado, bar chart horizontal cobrado vs pendiente, pie chart de participación, matriz mensual pivoteada aseguradora × mes con totales de fila y columna
+  - [x] Exportación a CSV con datos completos
+  - [x] Filtro de período (mes actual, mes anterior, trimestre, año, personalizado)
+
 - [x] **PAPELERA 30 DÍAS (Super Admin)** (24 Sept 2026):
   - [x] Migración: `deleted_at` + `deleted_by` en `clinics` y `clinic_members`
   - [x] `DELETE /api/admin/clinics/{id}?confirm_name=<>` ahora hace SOFT delete (marca deleted_at) e inactiva miembros
