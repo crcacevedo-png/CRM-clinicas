@@ -44,6 +44,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def startup_event():
     """Initialize super admin on startup"""
     try:
+        import os as _os
+        import anyio.to_thread
+        tokens = int(_os.environ.get("THREADPOOL_TOKENS", "128"))
+        anyio.to_thread.current_default_thread_limiter().total_tokens = tokens
+        logger.info(f"AnyIO threadpool capacity set to {tokens}")
+    except Exception as e:
+        logger.warning(f"Could not raise threadpool capacity: {e}")
+    try:
         result = sdb.table('super_admins').select('id').eq('email', settings.super_admin_email).execute()
         if result.data:
             return

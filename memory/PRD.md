@@ -176,6 +176,14 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 
 ## Cambios recientes
 
+- **2026-06 — Escalado a 200 clínicas / 100-150 usuarios simultáneos (fase código)**. Ver guía completa en `/app/memory/SCALING.md`.
+  - **Caché compartida Redis-ready** (`services/cache.py`): `get_clinic_features`/`get_role_modules` usan Redis si existe `REDIS_URL` (compartida entre workers), si no caen a memoria. TTL 45s, invalidación en cambios de rol/plan/feature.
+  - **Pool httpx a Supabase ampliado** (`_tune_supabase_httpx`: max_connections=200, keepalive=50, expiry=10s; vars `SUPABASE_MAX_CONNECTIONS`/`SUPABASE_MAX_KEEPALIVE`).
+  - **Threadpool AnyIO** subido a 128 en el startup (var `THREADPOOL_TOKENS`).
+  - **Medido (1 worker preview):** Dashboard 30 conc. 3.6s (100% OK); 100 peticiones ligeras conc. 12.5s (100% OK); permisos intactos. Un worker rinde bien hasta ~30 acciones pesadas simultáneas.
+  - **Requiere INFRA en Emergent para la meta 100-150 conc.:** subir procesador (4-8 vCPU), correr **8 workers** (gunicorn/uvicorn sin `--reload`; el supervisord del preview es READONLY con `--workers 1`), **provisionar Redis (`REDIS_URL`)** y usar el **connection pooler de Supabase**. Detalle y comandos exactos en `SCALING.md`.
+
+
 - **2026-06 — Optimización de capacidad/concurrencia (backend)**: se corrigió el cuello de botella que serializaba las peticiones.
   - **Anti-patrón async→sync (endpoint más pesado)**: el Dashboard (`GET /clinic/dashboard`, ~10-12 consultas Supabase) se convirtió de `async def` a `def`, para que FastAPI lo ejecute en su threadpool y NO bloquee el event loop. Las peticiones concurrentes ahora corren en paralelo.
   - **Caché TTL de permisos/plan (30s)** en `core.get_clinic_features` (hacía hasta 5 llamadas Supabase por request) y `core.get_role_modules`, con invalidación (`clear_perm_cache`) al cambiar roles (`routes/roles.py`) y features/plan (`routes/feature_flags.py`). Reduce las llamadas Supabase en TODOS los endpoints protegidos.

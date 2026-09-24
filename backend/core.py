@@ -120,6 +120,40 @@ def _install_postgrest_retry():
 
 _install_postgrest_retry()
 
+
+def _tune_supabase_httpx():
+    """Enlarge the PostgREST httpx connection pool and shorten keepalive so the
+    shared Supabase clients cope with high concurrency (100+ simultaneous users)
+    without pool timeouts, and reuse fewer stale connections (fewer disconnects)."""
+    import httpx
+    try:
+        max_conn = int(os.environ.get("SUPABASE_MAX_CONNECTIONS", "200"))
+        keepalive = int(os.environ.get("SUPABASE_MAX_KEEPALIVE", "50"))
+        limits = httpx.Limits(
+            max_connections=max_conn,
+            max_keepalive_connections=keepalive,
+            keepalive_expiry=10.0,
+        )
+        for client in (supabase_admin, supabase_user):
+            try:
+                sess = client.postgrest.session  # httpx.Client
+                new = httpx.Client(
+                    base_url=sess.base_url,
+                    headers=sess.headers,
+                    timeout=sess.timeout,
+                    limits=limits,
+                    follow_redirects=True,
+                )
+                client.postgrest.session = new
+            except Exception as e:
+                logger.warning(f"httpx tune skipped for a client: {e}")
+        logger.info(f"Supabase httpx pool tuned: max_connections={max_conn}, keepalive={keepalive}")
+    except Exception as e:
+        logger.warning(f"Supabase httpx tune skipped: {e}")
+
+
+_tune_supabase_httpx()
+
 # ============== HTTP SECURITY ==============
 
 security = HTTPBearer(auto_error=False)
@@ -635,38 +669,26 @@ DEFAULT_ROLE_MODULES = {
 }
 
 
-_PERM_CACHE: dict = {}  # key -> (expires_monotonic, value)
-_PERM_TTL = 30.0        # seconds — short so permission/plan changes take effect quickly
-
-
-def _perm_cache_get(key):
-    v = _PERM_CACHE.get(key)
-    if v and v[0] > _time.monotonic():
-        return v[1]
-    return None
-
-
-def _perm_cache_set(key, value, ttl: float = _PERM_TTL):
-    _PERM_CACHE[key] = (_time.monotonic() + ttl, value)
+_PERM_TTL = 45.0  # seconds — short so permission/plan changes take effect quickly
 
 
 def clear_perm_cache(clinic_id: str | None = None):
-    """Invalidate cached role-modules/features. Call after role or plan/feature
-    changes so access updates immediately instead of waiting for the TTL."""
+    """Invalidate cached role-modules/features (Redis or in-process). Call after
+    role or plan/feature changes so access updates immediately."""
+    from services.cache import cache_delete_contains
     if clinic_id is None:
-        _PERM_CACHE.clear()
-        return
-    for k in [k for k in _PERM_CACHE if clinic_id in k]:
-        _PERM_CACHE.pop(k, None)
+        clinic_id = ""  # matches all perm keys
+    cache_delete_contains(clinic_id)
 
 
 def get_role_modules(clinic_id: str, role_key: str) -> set:
-    ck = f"rolemods:{clinic_id}:{role_key}"
-    cached = _perm_cache_get(ck)
+    from services.cache import cache_get, cache_set
+    ck = f"perm:rolemods:{clinic_id}:{role_key}"
+    cached = cache_get(ck)
     if cached is not None:
-        return cached
+        return set(cached)
     result = _get_role_modules_uncached(clinic_id, role_key)
-    _perm_cache_set(ck, result)
+    cache_set(ck, sorted(result), _PERM_TTL)
     return result
 
 
@@ -720,12 +742,13 @@ def require_finance_role(ctx):
     return ctx
 
 def get_clinic_features(clinic_id: str) -> set:
-    ck = f"feats:{clinic_id}"
-    cached = _perm_cache_get(ck)
+    from services.cache import cache_get, cache_set
+    ck = f"perm:feats:{clinic_id}"
+    cached = cache_get(ck)
     if cached is not None:
-        return cached
+        return set(cached)
     result = _get_clinic_features_uncached(clinic_id)
-    _perm_cache_set(ck, result)
+    cache_set(ck, sorted(result), _PERM_TTL)
     return result
 
 
