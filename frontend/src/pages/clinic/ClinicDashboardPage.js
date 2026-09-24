@@ -16,6 +16,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import AnnouncementsBanner from '../../components/AnnouncementsBanner';
+import QuickStartPanel from '../../components/QuickStartPanel';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -358,6 +359,9 @@ export default function ClinicDashboardPage() {
     <div className="p-6 lg:p-8" data-testid="clinic-dashboard">
       {/* Global announcements banner (super admin → all clinics) */}
       <AnnouncementsBanner />
+
+      {/* Quick-start onboarding — clinic_admin only */}
+      {role === 'clinic_admin' && <QuickStartPanel features={features} />}
 
       {/* Greeting */}
       <div className="mb-6 flex items-center justify-between">

@@ -444,6 +444,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         ALTER TABLE public.clinic_members ADD COLUMN IF NOT EXISTS role_key TEXT;
         """,
     ),
+    (
+        "2026_06_quick_start_clinics",
+        """
+        ALTER TABLE public.clinics ADD COLUMN IF NOT EXISTS quick_start JSONB;
+        """,
+    ),
 ]
 
 

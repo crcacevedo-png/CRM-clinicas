@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   Building2, Calendar, Link2, Unlink, RefreshCw, CheckCircle, Users,
   UserPlus, Edit, Upload, Clock, FileText, CreditCard, Shield, Save, Image,
-  Download, Database, Loader2, X, FileSpreadsheet
+  Download, Database, Loader2, X, FileSpreadsheet, Rocket
 } from 'lucide-react';
 import AuditLogTable from '../../components/AuditLogTable';
 import RolesTab from './RolesTab';
@@ -90,6 +90,9 @@ export default function ClinicSettingsPage() {
     const error = searchParams.get('gcal_error');
     if (success === 'true') toast.success('Google Calendar conectado exitosamente');
     if (error) toast.error(`Error al conectar: ${error}`);
+    const tab = searchParams.get('tab');
+    const VALID_TABS = ['clinic', 'members', 'prescriptions', 'billing', 'integrations', 'roles', 'data', 'audit'];
+    if (tab && VALID_TABS.includes(tab)) setActiveTab(tab);
   }, [searchParams]);
 
   useEffect(() => {
@@ -338,6 +341,19 @@ export default function ClinicSettingsPage() {
 
   const toggleExcelSheet = (key) => {
     setExcelSheets(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+
+  const [restoringQS, setRestoringQS] = useState(false);
+  const restoreQuickStart = async () => {
+    setRestoringQS(true);
+    try {
+      await axios.put(`${API}/clinic/quick-start`, { dismissed: false }, { headers });
+      toast.success('El inicio rápido se mostrará de nuevo en la pantalla de Inicio');
+    } catch (e) {
+      toast.error('No se pudo restaurar el inicio rápido');
+    } finally {
+      setRestoringQS(false);
+    }
   };
 
   const downloadExcelExport = async () => {
@@ -1084,6 +1100,31 @@ export default function ClinicSettingsPage() {
                     <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generando export…</>
                   ) : (
                     <><Download className="w-4 h-4 mr-2" />Descargar export (ZIP)</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-slate-200" data-testid="quick-start-restore-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <Rocket className="w-4 h-4 text-teal-500" />Inicio rápido (onboarding)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-slate-600">
+                  El panel de <span className="font-medium">Inicio rápido</span> te guía a poner en orden las áreas del sistema desde la pantalla de Inicio. Si lo retiraste, puedes volver a mostrarlo aquí.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={restoreQuickStart}
+                  disabled={restoringQS}
+                  data-testid="restore-quick-start-btn"
+                >
+                  {restoringQS ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Restaurando…</>
+                  ) : (
+                    <><Rocket className="w-4 h-4 mr-2" />Volver a mostrar el inicio rápido</>
                   )}
                 </Button>
               </CardContent>
