@@ -271,3 +271,123 @@ async def change_password(payload: ChangePasswordRequest, request: Request, user
 
     return {"ok": True, "message": "Contraseña actualizada correctamente"}
 
+
+# ============== FORGOT / RESET PASSWORD (public, token-based) ==============
+
+def _resolve_user_for_reset(email: str) -> dict | None:
+    """Return {user_id, email, name} if the email belongs to a super admin or an
+    ACTIVE clinic member; else None. Clinic member emails live in Supabase Auth."""
+    email_l = (email or "").strip().lower()
+    if not email_l:
+        return None
+    try:
+        sa = sdb.table('super_admins').select('user_id,first_name,last_name,email').ilike('email', email_l).execute()
+        if sa.data:
+            r = sa.data[0]
+            return {"user_id": r["user_id"], "email": r.get("email") or email_l,
+                    "name": f"{r.get('first_name','')} {r.get('last_name','')}".strip() or "Administrador"}
+    except Exception as e:
+        logger.warning(f"forgot: super_admin lookup failed: {e}")
+    try:
+        users = supabase_admin.auth.admin.list_users()
+        match = next((u for u in users if (getattr(u, 'email', '') or '').lower() == email_l), None)
+    except Exception as e:
+        logger.warning(f"forgot: auth list_users failed: {e}")
+        match = None
+    if match:
+        try:
+            cm = sdb.table('clinic_members').select('first_name,last_name').eq('user_id', match.id).eq('is_active', True).maybe_single().execute()
+            d = getattr(cm, 'data', None)
+            if d:
+                return {"user_id": match.id, "email": match.email,
+                        "name": f"{d.get('first_name','')} {d.get('last_name','')}".strip() or "Usuario"}
+        except Exception as e:
+            logger.warning(f"forgot: clinic_member lookup failed: {e}")
+    return None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+@router.post("/auth/forgot-password")
+@limiter.limit("5/minute")
+async def forgot_password(payload: ForgotPasswordRequest, request: Request):
+    """Send a secure reset link if the email belongs to a known active user.
+    If unknown, returns 404 with a clear message (product decision)."""
+    import os
+    from services.audit import log_audit
+    from services.db_rate_limit import check_rate_limit, rate_limit_key
+    from services.password_tokens import create_reset_token
+    from services.email_service import send_email
+    from services.email_templates import password_reset_link
+
+    await check_rate_limit(
+        rate_limit_key(request, "forgot", extra=(payload.email or '').lower()),
+        limit=5, window_sec=900,
+    )
+
+    info = _resolve_user_for_reset(payload.email)
+    if not info:
+        await log_audit(action="password_forgot_unknown", entity="auth", actor_email=payload.email, request=request)
+        raise HTTPException(status_code=404, detail="Este correo no está registrado. Hable con su administrador.")
+
+    raw = create_reset_token(info["user_id"], info["email"], purpose="reset", ttl_minutes=60)
+    reset_url = f"{os.environ.get('FRONTEND_URL', '')}/restablecer-password?token={raw}"
+    tpl = password_reset_link(user_name=info["name"], reset_url=reset_url, minutes=60)
+    try:
+        await send_email(to=info["email"], subject=tpl["subject"], html=tpl["html"], text=tpl["text"])
+    except Exception as e:
+        logger.warning(f"forgot: email send failed: {e}")
+    await log_audit(action="password_forgot_requested", entity="auth",
+                    actor_user_id=info["user_id"], actor_email=info["email"], request=request)
+    return {"ok": True, "message": "Te enviamos un correo con instrucciones para restablecer tu contraseña."}
+
+
+@router.get("/auth/reset-token/validate")
+async def validate_reset_token(token: str):
+    """Check a reset/welcome token without consuming it (for the reset page)."""
+    from services.password_tokens import peek_token
+    r = peek_token(token)
+    if not r:
+        return {"valid": False}
+    return {"valid": True, "email": r.get("email"), "purpose": r.get("purpose")}
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/auth/reset-password")
+@limiter.limit("10/minute")
+async def reset_password(payload: ResetPasswordRequest, request: Request):
+    """Set a new password using a valid single-use token."""
+    from services.password_policy import validate_password
+    from services.password_tokens import peek_token, mark_token_used
+    from services.audit import log_audit
+    from core import mark_password_needs_reset
+
+    r = peek_token(payload.token)
+    if not r:
+        raise HTTPException(status_code=400, detail="El enlace es inválido o expiró. Solicita uno nuevo.")
+
+    validate_password(payload.new_password, email=r.get("email"))
+
+    try:
+        supabase_admin.auth.admin.update_user_by_id(r["user_id"], {"password": payload.new_password})
+        mark_token_used(r["id"])
+        mark_password_needs_reset(r["user_id"], needs=False)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"reset_password persist error: {e}")
+        raise HTTPException(status_code=500, detail="Error al actualizar la contraseña")
+
+    try:
+        await log_audit(action="password_reset_completed", entity="auth",
+                        actor_user_id=r["user_id"], actor_email=r.get("email"), request=request)
+    except Exception:
+        pass
+    return {"ok": True, "message": "Contraseña actualizada. Ya puedes iniciar sesión."}
+

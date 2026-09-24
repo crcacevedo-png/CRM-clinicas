@@ -157,9 +157,30 @@ async def create_clinic(data: ClinicCreate, user=Depends(require_super_admin)):
         from core import mark_password_needs_reset
         mark_password_needs_reset(admin_user_id, needs=True)
 
+        # Welcome email with a secure set-password link (best-effort; never blocks)
+        welcome_email_sent = False
+        try:
+            import os
+            from services.password_tokens import create_reset_token
+            from services.email_service import send_email
+            from services.email_templates import welcome_clinic_link
+            raw = create_reset_token(admin_user_id, data.admin_email, purpose="welcome", ttl_minutes=60 * 72)
+            setup_url = f"{os.environ.get('FRONTEND_URL', '')}/restablecer-password?token={raw}&welcome=1"
+            tpl = welcome_clinic_link(
+                admin_name=data.admin_name,
+                clinic_name=data.name,
+                login_email=data.admin_email,
+                setup_url=setup_url,
+            )
+            res = await send_email(to=data.admin_email, subject=tpl["subject"], html=tpl["html"], text=tpl["text"])
+            welcome_email_sent = bool(res.get("ok"))
+        except Exception as e:
+            logger.warning(f"welcome email failed: {e}")
+
         return {
             "message": "Clinica creada exitosamente",
             "clinic": clinic_doc,
+            "welcome_email_sent": welcome_email_sent,
             "admin_credentials": {
                 "email": data.admin_email,
                 "password": data.admin_password

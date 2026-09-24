@@ -12,7 +12,8 @@ import {
   Megaphone,
   Shield,
   Activity,
-  DollarSign
+  DollarSign,
+  LifeBuoy
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -26,6 +27,7 @@ const navItems = [
   { to: '/admin/comunicacion', icon: Megaphone, label: 'Comunicación' },
   { to: '/admin/auditoria', icon: Shield, label: 'Auditoría' },
   { to: '/admin/salud', icon: Activity, label: 'Salud sistema' },
+  { to: '/admin/soporte', icon: LifeBuoy, label: 'Soporte' },
   { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 

@@ -125,6 +125,108 @@ def password_reset(*, user_name: str, new_password: str, login_url: str, set_by:
     }
 
 
+def password_reset_link(*, user_name: str, reset_url: str, minutes: int = 60) -> dict:
+    u = _esc(user_name)
+    url = _esc(reset_url)
+    content = f"""
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:{_TEXT};">Restablece tu contraseña</h2>
+<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:{_TEXT};">
+  Hola {u}, recibimos una solicitud para restablecer la contraseña de tu cuenta en Cortexia Medical.
+</p>
+<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">
+  Haz clic en el botón para crear una nueva contraseña. Este enlace vence en <strong>{minutes} minutos</strong> y solo puede usarse una vez.
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0;">
+  <tr><td style="background:{_BRAND_TEAL};border-radius:8px;">
+    <a href="{url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Restablecer contraseña →</a>
+  </td></tr>
+</table>
+<p style="margin:18px 0 0;font-size:12px;color:{_MUTED};line-height:1.5;">
+  Si no solicitaste este cambio, ignora este correo: tu contraseña seguirá siendo la misma.
+</p>
+"""
+    text = f"Hola {user_name},\n\nRestablece tu contraseña en Cortexia Medical (enlace válido {minutes} min, un solo uso):\n{reset_url}\n\nSi no lo solicitaste, ignora este correo.\n"
+    return {
+        "subject": "Restablece tu contraseña — Cortexia Medical",
+        "html": _wrapper(preheader="Enlace para restablecer tu contraseña.", content_html=content),
+        "text": text,
+    }
+
+
+def welcome_clinic_link(*, admin_name: str, clinic_name: str, login_email: str, setup_url: str) -> dict:
+    a = _esc(admin_name)
+    c = _esc(clinic_name)
+    le = _esc(login_email)
+    url = _esc(setup_url)
+    content = f"""
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:{_TEXT};">¡Bienvenido/a, {a}!</h2>
+<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:{_TEXT};">
+  Tu clínica <strong>{c}</strong> ya está activa en Cortexia Medical. Estamos felices de tenerte a bordo.
+</p>
+<div style="margin:18px 0;padding:14px;background:#F1F5F9;border-radius:8px;font-size:13px;color:{_TEXT};line-height:1.6;">
+  <strong>Tu correo de acceso:</strong><br>
+  <code style="font-family:monospace;background:#FFFFFF;padding:4px 8px;border-radius:4px;display:inline-block;margin-top:4px;">{le}</code>
+</div>
+<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">
+  Por seguridad, define tu propia contraseña con el siguiente botón (enlace de un solo uso):
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0;">
+  <tr><td style="background:{_BRAND_TEAL};border-radius:8px;">
+    <a href="{url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Crear mi contraseña →</a>
+  </td></tr>
+</table>
+<div style="margin:18px 0;padding:14px;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:8px;font-size:13px;color:#065F46;line-height:1.6;">
+  <strong>Para empezar:</strong>
+  <ul style="margin:8px 0 0;padding-left:18px;">
+    <li>Sigue el panel de <strong>Inicio rápido</strong> apenas ingreses.</li>
+    <li>Descarga la <strong>Guía de usuario</strong> desde Configuración.</li>
+    <li>Invita a tu equipo y configura tus horarios de atención.</li>
+  </ul>
+</div>
+<p style="margin:18px 0 0;font-size:12px;color:{_MUTED};">¿Dudas? Usa la sección de <strong>Soporte</strong> dentro de la plataforma y con gusto te ayudamos.</p>
+"""
+    text = (
+        f"¡Bienvenido/a, {admin_name}!\n\nTu clínica {clinic_name} ya está activa en Cortexia Medical.\n"
+        f"Correo de acceso: {login_email}\n"
+        f"Define tu contraseña (enlace de un solo uso): {setup_url}\n"
+    )
+    return {
+        "subject": f"Bienvenido/a a Cortexia Medical, {clinic_name}",
+        "html": _wrapper(preheader=f"Tu clínica {c} ya está activa. Define tu contraseña.", content_html=content),
+        "text": text,
+    }
+
+
+def support_reply_notice(*, user_name: str, subject: str, login_url: str) -> dict:
+    u = _esc(user_name)
+    s = _esc(subject)
+    url = _esc(login_url)
+    content = f"""
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:700;color:{_TEXT};">Tienes una respuesta de soporte</h2>
+<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:{_TEXT};">
+  Hola {u}, el equipo de soporte de Cortexia Medical respondió a tu mensaje:
+</p>
+<div style="margin:14px 0;padding:12px 14px;background:#F1F5F9;border-radius:8px;font-size:14px;color:{_TEXT};">
+  <strong>{s}</strong>
+</div>
+<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:{_TEXT};">
+  Inicia sesión en la plataforma y abre la sección <strong>Soporte</strong> para leer la respuesta completa.
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0;">
+  <tr><td style="background:{_BRAND_TEAL};border-radius:8px;">
+    <a href="{url}" style="display:inline-block;padding:12px 26px;color:#FFFFFF;text-decoration:none;font-weight:600;font-size:14px;">Ver respuesta →</a>
+  </td></tr>
+</table>
+<p style="margin:18px 0 0;font-size:12px;color:{_MUTED};">Por tu seguridad, nunca te pediremos tu contraseña por correo.</p>
+"""
+    text = f"Hola {user_name},\n\nSoporte de Cortexia Medical respondió a tu mensaje \"{subject}\".\nInicia sesión para leer la respuesta: {login_url}\n"
+    return {
+        "subject": "Tienes una respuesta de soporte — Cortexia Medical",
+        "html": _wrapper(preheader="El equipo de soporte respondió a tu mensaje.", content_html=content),
+        "text": text,
+    }
+
+
 def prescription_issued(*, patient_name: str, clinic_name: str, doctor_name: str, date_str: str, diagnosis: str | None = None, item_count: int = 0) -> dict:
     p = _esc(patient_name)
     c = _esc(clinic_name)

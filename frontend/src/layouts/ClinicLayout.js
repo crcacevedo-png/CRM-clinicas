@@ -7,7 +7,7 @@ import { useBranch } from '../context/BranchContext';
 import { 
   LayoutDashboard, CalendarDays, Users, LogOut, ChevronRight,
   Pill, FlaskConical, Settings, Package, ShoppingCart, Receipt,
-  CreditCard, BarChart3, GitBranch, MapPin, Percent
+  CreditCard, BarChart3, GitBranch, MapPin, Percent, LifeBuoy
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -28,6 +28,7 @@ const allNavItems = [
   { to: '/dashboard/reportes', icon: BarChart3, label: 'Reportes', feature: 'financial_reports', module: 'reports' },
   { to: '/dashboard/sucursales', icon: GitBranch, label: 'Sucursales', feature: 'multi_branch', module: 'branches' },
   { to: '/dashboard/configuracion', icon: Settings, label: 'Configuración' },
+  { to: '/dashboard/soporte', icon: LifeBuoy, label: 'Soporte' },
 ];
 
 export default function ClinicLayout() {

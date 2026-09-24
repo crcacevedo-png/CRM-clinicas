@@ -12,6 +12,8 @@ import { Toaster } from "./components/ui/sonner";
 import LoginPage from "./pages/LoginPage";
 import NoAccessPage from "./pages/NoAccessPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 
 // Admin Pages
 import AdminLayout from "./layouts/AdminLayout";
@@ -26,6 +28,7 @@ import CobrosPage from "./pages/admin/CobrosPage";
 import AnnouncementsPage from "./pages/admin/AnnouncementsPage";
 import AuditLogPage from "./pages/admin/AuditLogPage";
 import SystemHealthPage from "./pages/admin/SystemHealthPage";
+import AdminSupportPage from "./pages/admin/AdminSupportPage";
 
 // Clinic Pages
 import ClinicLayout from "./layouts/ClinicLayout";
@@ -46,6 +49,7 @@ import AccountsReceivablePage from "./pages/clinic/AccountsReceivablePage";
 import ExpensesPage from "./pages/clinic/ExpensesPage";
 import CommissionsPage from "./pages/clinic/CommissionsPage";
 import ReportsPage from "./pages/clinic/ReportsPage";
+import SupportPage from "./pages/clinic/SupportPage";
 
 function App() {
   return (
@@ -58,6 +62,8 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/no-access" element={<NoAccessPage />} />
+          <Route path="/recuperar-password" element={<ForgotPasswordPage />} />
+          <Route path="/restablecer-password" element={<ResetPasswordPage />} />
 
           {/* Self-service password change (authenticated but bypasses type gate) */}
           <Route
@@ -88,6 +94,7 @@ function App() {
             <Route path="comunicacion" element={<AnnouncementsPage />} />
             <Route path="auditoria" element={<AuditLogPage />} />
             <Route path="salud" element={<SystemHealthPage />} />
+            <Route path="soporte" element={<AdminSupportPage />} />
             <Route path="configuracion" element={<SettingsPage />} />
           </Route>
 
@@ -110,6 +117,7 @@ function App() {
             <Route path="laboratorio" element={<ModuleRoute module="lab_orders"><LabOrdersPage /></ModuleRoute>} />
             <Route path="laboratorio/nueva" element={<ModuleRoute module="lab_orders"><NewLabOrderPage /></ModuleRoute>} />
             <Route path="configuracion" element={<ClinicSettingsPage />} />
+            <Route path="soporte" element={<SupportPage />} />
             <Route path="sucursales" element={<ModuleRoute module="branches"><BranchesPage /></ModuleRoute>} />
             <Route path="inventario" element={<ModuleRoute module="inventory"><InventoryPage /></ModuleRoute>} />
             <Route path="ventas" element={<ModuleRoute module="sales"><SalesPage /></ModuleRoute>} />

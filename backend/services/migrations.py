@@ -451,6 +451,56 @@ MIGRATIONS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "2026_09_password_reset_tokens",
+        """
+        CREATE TABLE IF NOT EXISTS public.password_reset_tokens (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL,
+            email TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            purpose TEXT NOT NULL DEFAULT 'reset',
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON public.password_reset_tokens (token_hash);
+        CREATE INDEX IF NOT EXISTS idx_prt_user ON public.password_reset_tokens (user_id);
+        """,
+    ),
+    (
+        "2026_09_support_tickets",
+        """
+        CREATE TABLE IF NOT EXISTS public.support_tickets (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL,
+            user_email TEXT,
+            user_name TEXT,
+            user_type TEXT,
+            clinic_id UUID,
+            clinic_name TEXT,
+            subject TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            last_message_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_support_tickets_user ON public.support_tickets (user_id);
+        CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON public.support_tickets (status);
+        CREATE INDEX IF NOT EXISTS idx_support_tickets_last_msg ON public.support_tickets (last_message_at DESC);
+
+        CREATE TABLE IF NOT EXISTS public.support_messages (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            ticket_id UUID NOT NULL REFERENCES public.support_tickets(id) ON DELETE CASCADE,
+            author_user_id UUID,
+            author_type TEXT,
+            author_name TEXT,
+            body TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_support_messages_ticket ON public.support_messages (ticket_id, created_at);
+        """,
+    ),
+    (
         "2026_09_benchmark_runs",
         """
         CREATE TABLE IF NOT EXISTS public.benchmark_runs (
