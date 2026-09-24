@@ -15,7 +15,8 @@ import {
   Shield,
   Activity,
   DollarSign,
-  LifeBuoy
+  LifeBuoy,
+  Trash2
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
@@ -30,6 +31,7 @@ const navItems = [
   { to: '/admin/auditoria', icon: Shield, label: 'Auditoría' },
   { to: '/admin/salud', icon: Activity, label: 'Salud sistema' },
   { to: '/admin/soporte', icon: LifeBuoy, label: 'Soporte' },
+  { to: '/admin/papelera', icon: Trash2, label: 'Papelera' },
   { to: '/admin/configuracion', icon: Settings, label: 'Configuración' },
 ];
 

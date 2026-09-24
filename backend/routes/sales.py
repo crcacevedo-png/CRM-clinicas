@@ -12,6 +12,41 @@ from routes.commissions import _compute_commissions_for_sale
 
 # ============== SALES / POS ROUTES ==============
 
+# --- Insurance Providers (autocomplete for POS "Pago con seguro") ---
+@router.get("/clinic/insurance-providers")
+async def list_insurance_providers(q: str = "", ctx=Depends(require_clinic_member)):
+    """Return the clinic's saved insurance providers, optionally filtered by name."""
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        query = sdb.table('insurance_providers').select('id,name').eq('clinic_id', clinic_id)
+        if q:
+            query = query.ilike('name', f'%{q}%')
+        result = query.order('name').limit(50).execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"List insurance providers error: {e}")
+        raise HTTPException(status_code=500, detail="Error al listar seguros")
+
+
+@router.post("/clinic/insurance-providers")
+async def create_insurance_provider(data: dict, ctx=Depends(require_clinic_member)):
+    """Manually add an insurance provider (also auto-created on first POS use)."""
+    clinic_id = ctx["member"]["clinic_id"]
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nombre requerido")
+    try:
+        existing = sdb.table('insurance_providers').select('id,name').eq('clinic_id', clinic_id).ilike('name', name).limit(1).execute()
+        if existing.data:
+            return existing.data[0]
+        row = {"id": str(uuid.uuid4()), "clinic_id": clinic_id, "name": name, "created_at": now_iso()}
+        sdb.table('insurance_providers').insert(row).execute()
+        return {"id": row["id"], "name": name}
+    except Exception as e:
+        logger.error(f"Create insurance provider error: {e}")
+        raise HTTPException(status_code=500, detail="Error al guardar seguro")
+
+
 # --- Services CRUD ---
 @router.get("/clinic/sales/services")
 async def list_services(q: str = "", category: str = "", active_only: bool = False, ctx=Depends(require_clinic_member)):
@@ -293,11 +328,15 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             raise
         except Exception as _e:
             logger.warning(f"Could not validate cash session branch: {_e}")
-    valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "other"}
+    valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "insurance", "other"}
     for p in payments:
         m = p.get("payment_method")
         if m and m not in valid_methods:
             raise HTTPException(status_code=400, detail=f"Método de pago inválido: {m}")
+        # Insurance payments must carry an insurance name
+        if m == "insurance":
+            if not (p.get("insurance_name") or "").strip():
+                raise HTTPException(status_code=400, detail="Los pagos con seguro requieren el nombre del seguro médico.")
     # Validate item numeric ranges (no negative/invalid values)
     for it in items:
         try:
@@ -417,18 +456,36 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                         "performed_by": member["id"], "created_at": now,
                     }).execute()
 
-            # Insert payments
+            # Insert payments (and upsert insurance provider names for autocomplete)
+            _seen_insurance = set()
             for p in payments:
                 amt = round(float(p.get("amount") or 0), 2)
                 if amt <= 0:
                     continue
+                pm = p.get("payment_method", "cash")
+                insurance_name = (p.get("insurance_name") or "").strip() if pm == "insurance" else None
                 sdb.table('payments').insert({
                     "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
-                    "payment_method": p.get("payment_method", "cash"),
+                    "payment_method": pm,
                     "amount": amt, "reference": p.get("reference"),
                     "notes": p.get("notes"), "received_by": member["id"],
+                    "insurance_name": insurance_name,
                     "paid_at": now, "created_at": now,
                 }).execute()
+                if insurance_name and insurance_name.lower() not in _seen_insurance:
+                    _seen_insurance.add(insurance_name.lower())
+                    try:
+                        # Upsert on (clinic_id, lower(name)) — ignore duplicates
+                        existing_prov = sdb.table('insurance_providers').select('id').eq('clinic_id', clinic_id).ilike('name', insurance_name).limit(1).execute()
+                        if not (existing_prov.data or []):
+                            sdb.table('insurance_providers').insert({
+                                "id": str(uuid.uuid4()),
+                                "clinic_id": clinic_id,
+                                "name": insurance_name,
+                                "created_at": now,
+                            }).execute()
+                    except Exception as _e:
+                        logger.warning(f"insurance_providers upsert failed: {_e}")
         except Exception as inner_e:
             # Rollback: delete payments, inventory movements (ref this sale), sale_items, sale
             logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}", exc_info=True)
@@ -448,6 +505,13 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                 from datetime import datetime as dt, timedelta
                 due_default = (dt.now(timezone.utc) + timedelta(days=30)).date().isoformat()
                 installments = int(data.get("ar_installments") or 0)
+                # Extract insurance info from payments (if any payment used insurance)
+                _ins_payments = [p for p in payments if p.get("payment_method") == "insurance" and (p.get("insurance_name") or "").strip()]
+                _insurance_name = None
+                _insurance_amount = None
+                if _ins_payments:
+                    _insurance_name = _ins_payments[0].get("insurance_name").strip()
+                    _insurance_amount = round(sum(float(p.get("amount") or 0) for p in _ins_payments), 2)
                 sdb.table('accounts_receivable').insert({
                     "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
                     "patient_id": data.get("patient_id"),
@@ -455,6 +519,8 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                     "due_date": data.get("ar_due_date") or due_default,
                     "status": "pending",
                     "has_payment_plan": installments > 1, "installments": installments,
+                    "insurance_name": _insurance_name,
+                    "insurance_amount": _insurance_amount,
                     "created_at": now, "updated_at": now,
                 }).execute()
             except Exception as _e:
@@ -779,8 +845,10 @@ async def generate_sale_pdf(sale_id: str, clinic_id: str) -> Optional[str]:
         if payments:
             elements.append(Paragraph("<b>Pagos:</b>", styles['Lbl2']))
             for p in payments:
-                method_label = {'cash':'Efectivo','credit_card':'Tarjeta crédito','debit_card':'Tarjeta débito','transfer':'Transferencia','credit':'Crédito','check':'Cheque','other':'Otro'}.get(p.get('payment_method'), p.get('payment_method'))
+                method_label = {'cash':'Efectivo','credit_card':'Tarjeta crédito','debit_card':'Tarjeta débito','transfer':'Transferencia','credit':'Crédito','check':'Cheque','insurance':'Seguro','other':'Otro'}.get(p.get('payment_method'), p.get('payment_method'))
                 line = f"{method_label}: Q{float(p.get('amount') or 0):.2f}"
+                if p.get('insurance_name'):
+                    line += f" — {p['insurance_name']}"
                 if p.get('reference'):
                     line += f" — Ref: {p['reference']}"
                 elements.append(Paragraph(line, styles['Val2']))

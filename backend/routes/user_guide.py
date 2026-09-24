@@ -119,6 +119,9 @@ GUIDE_SECTIONS = [
         "bullets": [
             "Abre caja al iniciar el turno y ciérrala al finalizar.",
             "Registra ventas de productos y servicios; el sistema calcula subtotales, impuestos y total.",
+            "Puedes combinar varios métodos de pago en una misma venta: Efectivo, Tarjeta crédito/débito, Transferencia, Cheque, Crédito, Seguro médico u Otro.",
+            "Pago con Seguro: al elegir «Seguro» debes escribir el nombre del seguro médico (con autocompletado desde los seguros que ya has usado antes). Puedes indicar solo la porción que cubre el seguro y dejar el resto como saldo pendiente.",
+            "Pagos parciales: si el paciente paga solo una parte (por ejemplo, el seguro cubre Q400 de una consulta de Q600), el sistema crea automáticamente una Cuenta por cobrar con el saldo restante, el nombre del seguro y su monto aplicado para futuras conciliaciones.",
             "Las ventas alimentan los reportes financieros y las cuentas por cobrar.",
         ],
     },
@@ -128,6 +131,9 @@ GUIDE_SECTIONS = [
         "bullets": [
             "Consulta los saldos por paciente y su antigüedad.",
             "Registra pagos parciales o totales.",
+            "Filtra cuentas por Seguro médico para conciliar rápidamente lo que cada aseguradora te adeuda.",
+            "Filtra por rango de fechas de creación para cerrar cortes contables mensuales o quincenales.",
+            "Cada cuenta por cobrar guarda el seguro asociado y el monto de la porción cubierta, lo que facilita el reporte de comisiones y cobros a aseguradoras.",
         ],
     },
     {

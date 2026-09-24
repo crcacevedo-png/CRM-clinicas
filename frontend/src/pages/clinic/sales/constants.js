@@ -6,6 +6,7 @@ export const PAY_LABEL = {
   debit_card: 'Tarjeta débito',
   transfer: 'Transferencia',
   credit: 'Crédito',
+  insurance: 'Seguro',
   check: 'Cheque',
   other: 'Otro',
 };

@@ -266,6 +266,35 @@ def start_scheduler():
         next_run_time=datetime.now(timezone.utc) + timedelta(seconds=45),
     )
 
+    # Trash purge: daily at 04:00 UTC — purge soft-deleted rows > 30 days.
+    async def _trash_purge_wrapper():
+        try:
+            from core import run_sql
+            import socket, uuid as _uuid
+            holder = f"{socket.gethostname()}:{os.getpid()}:{_uuid.uuid4().hex[:8]}"
+            got = run_sql(
+                "SELECT public.try_acquire_lock(%s, %s, %s) AS ok",
+                ('trash_purge_daily', holder, 600),
+                fetch=True,
+            )
+            if not (got and got[0].get("ok")):
+                return
+            try:
+                from services.trash_purge import purge_expired_trash
+                purge_expired_trash()
+            finally:
+                run_sql("SELECT public.release_lock(%s, %s)", ('trash_purge_daily', holder))
+        except Exception as e:
+            logger.warning(f"trash purge job failed: {e}")
+
+    _scheduler.add_job(
+        _trash_purge_wrapper,
+        trigger=CronTrigger(hour=4, minute=0),
+        id='trash_purge_daily',
+        max_instances=1,
+        coalesce=True,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler started — reminder tick every {REMINDER_TICK_MIN}min "

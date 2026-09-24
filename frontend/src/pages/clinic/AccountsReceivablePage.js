@@ -21,7 +21,7 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const STATUS_LABEL = { pending: 'Pendiente', partial: 'Parcial', paid: 'Pagada' };
-const PAY_LABEL = { cash: 'Efectivo', credit_card: 'Tarjeta crédito', debit_card: 'Tarjeta débito', transfer: 'Transferencia', credit: 'Crédito', check: 'Cheque', other: 'Otro' };
+const PAY_LABEL = { cash: 'Efectivo', credit_card: 'Tarjeta crédito', debit_card: 'Tarjeta débito', transfer: 'Transferencia', credit: 'Crédito', insurance: 'Seguro', check: 'Cheque', other: 'Otro' };
 const TRAFFIC_CLASS = { green: 'bg-emerald-50 text-emerald-700', amber: 'bg-amber-50 text-amber-700', red: 'bg-red-50 text-red-700' };
 
 export default function AccountsReceivablePage() {
@@ -57,12 +57,23 @@ function AccountsTab({ headers }) {
   const [pages, setPages] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [insuranceFilter, setInsuranceFilter] = useState('all');
+  const [insuranceProviders, setInsuranceProviders] = useState([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
   const [showPay, setShowPay] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
   const [showCreateAR, setShowCreateAR] = useState(false);
+
+  // Load insurance providers once for the filter dropdown
+  useEffect(() => {
+    axios.get(`${API}/clinic/insurance-providers`, { headers })
+      .then(r => setInsuranceProviders(r.data || []))
+      .catch(() => setInsuranceProviders([]));
+  }, [headers]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,6 +82,9 @@ function AccountsTab({ headers }) {
       if (statusFilter !== 'all') params.set('status', statusFilter);
       if (onlyOverdue) params.set('only_overdue', 'true');
       if (search) params.set('q', search);
+      if (insuranceFilter && insuranceFilter !== 'all') params.set('insurance', insuranceFilter);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
       const [d, l] = await Promise.all([
         axios.get(`${API}/clinic/accounts-receivable/dashboard`, { headers }),
         axios.get(`${API}/clinic/accounts-receivable?${params}`, { headers }),
@@ -80,7 +94,7 @@ function AccountsTab({ headers }) {
       setPages(l.data.pages || 1);
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [page, statusFilter, onlyOverdue, search, headers]);
+  }, [page, statusFilter, onlyOverdue, search, insuranceFilter, dateFrom, dateTo, headers]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -114,6 +128,24 @@ function AccountsTab({ headers }) {
             <SelectItem value="paid">Pagada</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={insuranceFilter} onValueChange={setInsuranceFilter}>
+          <SelectTrigger className="w-52" data-testid="ar-insurance-filter"><SelectValue placeholder="Seguro médico" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los seguros</SelectItem>
+            {insuranceProviders.map(p => (
+              <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1">
+          <Label className="text-xs text-slate-600">Desde</Label>
+          <Input type="date" className="text-sm h-9 w-36" value={dateFrom} onChange={e => setDateFrom(e.target.value)} data-testid="ar-date-from" />
+          <Label className="text-xs text-slate-600 ml-1">Hasta</Label>
+          <Input type="date" className="text-sm h-9 w-36" value={dateTo} onChange={e => setDateTo(e.target.value)} data-testid="ar-date-to" />
+          {(dateFrom || dateTo) && (
+            <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => { setDateFrom(''); setDateTo(''); }} data-testid="ar-clear-dates">Limpiar</Button>
+          )}
+        </div>
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" className="rounded" checked={onlyOverdue} onChange={e => setOnlyOverdue(e.target.checked)} data-testid="only-overdue-cb" />
           Solo vencidas
@@ -131,6 +163,7 @@ function AccountsTab({ headers }) {
               <TableHead className="text-xs font-semibold">Paciente</TableHead>
               <TableHead className="text-xs font-semibold">No. Venta</TableHead>
               <TableHead className="text-xs font-semibold">Origen</TableHead>
+              <TableHead className="text-xs font-semibold">Seguro</TableHead>
               <TableHead className="text-xs font-semibold text-right">Original</TableHead>
               <TableHead className="text-xs font-semibold text-right">Pagado</TableHead>
               <TableHead className="text-xs font-semibold text-right">Saldo</TableHead>
@@ -144,6 +177,14 @@ function AccountsTab({ headers }) {
                   <TableCell className="text-sm font-medium">{a.patient_name}</TableCell>
                   <TableCell className="text-xs font-mono">{a.sale_number || '—'}</TableCell>
                   <TableCell className="text-xs text-slate-500">{a.sale_created_at?.substring(0, 10) || a.created_at?.substring(0, 10)}</TableCell>
+                  <TableCell className="text-xs">
+                    {a.insurance_name ? (
+                      <div>
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px]">{a.insurance_name}</Badge>
+                        {a.insurance_amount ? <p className="text-[10px] text-slate-500 mt-0.5">Q{(+a.insurance_amount).toFixed(2)}</p> : null}
+                      </div>
+                    ) : <span className="text-slate-300">—</span>}
+                  </TableCell>
                   <TableCell className="text-right text-sm">Q{(a.original_amount || 0).toFixed(2)}</TableCell>
                   <TableCell className="text-right text-sm text-emerald-600">Q{(a.paid_amount || 0).toFixed(2)}</TableCell>
                   <TableCell className="text-right text-sm font-bold">Q{(a.balance || 0).toFixed(2)}</TableCell>
@@ -157,7 +198,7 @@ function AccountsTab({ headers }) {
                   <TableCell className="text-right"><Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openDetail(a.id)} data-testid={`ar-open-${a.id}`}>Ver</Button></TableCell>
                 </TableRow>
               ))}
-              {accounts.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-400">Sin cuentas por cobrar</TableCell></TableRow>}
+              {accounts.length === 0 && <TableRow><TableCell colSpan={10} className="text-center py-8 text-slate-400">Sin cuentas por cobrar</TableCell></TableRow>}
             </TableBody>
           </Table>
         </Card>}

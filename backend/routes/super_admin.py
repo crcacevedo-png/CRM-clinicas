@@ -25,12 +25,12 @@ from core import (
 @router.get("/admin/dashboard")
 async def get_dashboard_stats(user=Depends(require_super_admin)):
     try:
-        active = sdb.table('clinics').select('id', count='exact').eq('is_active', True).execute()
-        inactive = sdb.table('clinics').select('id', count='exact').eq('is_active', False).execute()
-        users_count = sdb.table('clinic_members').select('id', count='exact').execute()
+        active = sdb.table('clinics').select('id', count='exact').eq('is_active', True).is_('deleted_at', 'null').execute()
+        inactive = sdb.table('clinics').select('id', count='exact').eq('is_active', False).is_('deleted_at', 'null').execute()
+        users_count = sdb.table('clinic_members').select('id', count='exact').is_('deleted_at', 'null').execute()
         patients_count = sdb.table('patients').select('id', count='exact').execute()
 
-        recent = sdb.table('clinics').select('*').order('created_at', desc=True).limit(10).execute()
+        recent = sdb.table('clinics').select('*').is_('deleted_at', 'null').order('created_at', desc=True).limit(10).execute()
         recent_clinics = recent.data or []
 
         for clinic in recent_clinics:
@@ -61,7 +61,7 @@ async def list_clinics(
     user=Depends(require_super_admin)
 ):
     try:
-        query = sdb.table('clinics').select('*')
+        query = sdb.table('clinics').select('*').is_('deleted_at', 'null')
 
         if search:
             query = query.ilike('name', f'%{search}%')
@@ -367,7 +367,7 @@ async def list_users(
     user=Depends(require_super_admin)
 ):
     try:
-        query = sdb.table('clinic_members').select('*')
+        query = sdb.table('clinic_members').select('*').is_('deleted_at', 'null')
 
         if search:
             from services.input_sanitizer import sanitize_postgrest_search
@@ -560,10 +560,12 @@ async def delete_clinic(
     confirm_name: str = "",
     user=Depends(require_super_admin),
 ):
-    """Hard-delete a clinic and every row scoped to it.
+    """Soft-delete a clinic — moves it to the 30-day Papelera.
 
     Requires `?confirm_name=<exact clinic name>` as a safety guard.
-    Also deletes Supabase Auth users of every clinic_member.
+    The clinic (and its members) are hidden from listings but data is preserved.
+    A daily job in Papelera will purge items whose deleted_at is older than 30 days.
+    Use POST /admin/trash/clinics/{id}/restore to undo before purge.
     """
     try:
         existing = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
@@ -571,79 +573,67 @@ async def delete_clinic(
             raise HTTPException(status_code=404, detail="Clinica no encontrada")
         clinic = existing.data
 
+        if clinic.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="La clinica ya esta en la papelera.")
+
         if (confirm_name or "").strip() != (clinic.get("name") or "").strip():
             raise HTTPException(
                 status_code=400,
                 detail="El nombre de confirmacion no coincide con el nombre de la clinica.",
             )
 
-        # Snapshot members (for auth deletion + audit)
-        members_res = sdb.table('clinic_members').select('*').eq('clinic_id', clinic_id).execute()
-        members = members_res.data or []
-        member_user_ids = [m.get('user_id') for m in members if m.get('user_id')]
+        # Actor identity for audit trail
+        actor_email = None
+        if isinstance(user, dict):
+            actor_email = user.get("email")
+        else:
+            actor_email = getattr(user, "email", None)
 
-        # Purge all clinic-scoped data
-        purge_stats = _delete_clinic_data(clinic_id)
+        now = now_iso()
+        sdb.table('clinics').update({
+            "deleted_at": now,
+            "deleted_by": actor_email,
+            "is_active": False,
+            "updated_at": now,
+        }).eq('id', clinic_id).execute()
 
-        # Delete clinic_members
-        try:
-            sdb.table('clinic_members').delete().eq('clinic_id', clinic_id).execute()
-            purge_stats["clinic_members"] = len(members)
-        except Exception as e:
-            logger.warning(f"delete clinic_members failed: {e}")
-
-        # Delete Supabase Auth users (best-effort) — only for users with no remaining memberships
-        auth_deleted = 0
-        for uid in member_user_ids:
-            try:
-                other = sdb.table('clinic_members').select('id', count='exact').eq('user_id', uid).execute()
-                if (other.count or 0) > 0:
-                    continue  # user still belongs to another clinic — keep the auth account
-                supabase_admin.auth.admin.delete_user(uid)
-                auth_deleted += 1
-            except Exception as e:
-                logger.warning(f"auth user delete failed user_id={uid}: {e}")
-
-        # Finally, delete the clinic itself
-        sdb.table('clinics').delete().eq('id', clinic_id).execute()
+        # Soft-delete members too so they cannot log in
+        sdb.table('clinic_members').update({
+            "deleted_at": now,
+            "deleted_by": actor_email,
+            "is_active": False,
+            "updated_at": now,
+        }).eq('clinic_id', clinic_id).is_('deleted_at', 'null').execute()
 
         # Audit
         try:
             from services.audit import log_audit, actor_from_super_admin
             await log_audit(
-                action="clinic_deleted",
+                action="clinic_soft_deleted",
                 entity="clinic",
                 entity_id=clinic_id,
                 clinic_id=clinic_id,
                 **actor_from_super_admin(user),
                 old_values={
                     "name": clinic.get("name"),
-                    "slug": clinic.get("slug"),
-                    "country": clinic.get("country"),
                     "plan": clinic.get("plan"),
                     "is_active": clinic.get("is_active"),
-                    "members_count": len(members),
                 },
-                meta={
-                    "purge_stats": purge_stats,
-                    "auth_users_deleted": auth_deleted,
-                    "member_emails": [m.get("email") for m in members if m.get("email")],
-                },
+                meta={"deleted_at": now, "purge_after_days": 30},
                 request=request,
             )
         except Exception:
             pass
 
         return {
-            "message": "Clinica eliminada permanentemente",
+            "message": "Clinica enviada a la papelera. Se purgara automaticamente en 30 dias.",
             "clinic_id": clinic_id,
-            "auth_users_deleted": auth_deleted,
-            "purge_stats": purge_stats,
+            "deleted_at": now,
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete clinic error: {e}")
+        logger.error(f"Soft-delete clinic error: {e}")
         raise HTTPException(status_code=500, detail="Error al eliminar clinica")
 
 
@@ -653,33 +643,291 @@ async def delete_user(
     request: Request,
     user=Depends(require_super_admin),
 ):
-    """Hard-delete a clinic member and their Supabase Auth account."""
+    """Soft-delete a clinic member — moves to Papelera (30 days)."""
     try:
         member_res = sdb.table('clinic_members').select('*').eq('id', member_id).maybe_single().execute()
         if not member_res or not member_res.data:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         member = member_res.data
 
-        # Prevent self-deletion via this endpoint
+        if member.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="El usuario ya esta en la papelera.")
+
         actor_id = None
+        actor_email = None
         if isinstance(user, dict):
             actor_id = user.get("id") or user.get("user_id")
+            actor_email = user.get("email")
         else:
             actor_id = getattr(user, "id", None)
+            actor_email = getattr(user, "email", None)
         if actor_id and actor_id == member.get("user_id"):
             raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta.")
 
-        # Try to fetch email from auth map for audit
         try:
             auth_map = get_auth_users_map()
             email = (auth_map.get(member.get("user_id")) or {}).get("email")
         except Exception:
             email = member.get("email")
 
-        # Delete the clinic_members row
+        now = now_iso()
+        sdb.table('clinic_members').update({
+            "deleted_at": now,
+            "deleted_by": actor_email,
+            "is_active": False,
+            "updated_at": now,
+        }).eq('id', member_id).execute()
+
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="member_soft_deleted",
+                entity="clinic_member",
+                entity_id=member_id,
+                clinic_id=member.get("clinic_id"),
+                **actor_from_super_admin(user),
+                old_values={
+                    "first_name": member.get("first_name"),
+                    "last_name": member.get("last_name"),
+                    "role": member.get("role"),
+                    "email": email,
+                    "user_id": member.get("user_id"),
+                },
+                meta={"deleted_at": now, "purge_after_days": 30},
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return {
+            "message": "Usuario enviado a la papelera. Se purgara automaticamente en 30 dias.",
+            "member_id": member_id,
+            "deleted_at": now,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Soft-delete user error: {e}")
+        raise HTTPException(status_code=500, detail="Error al eliminar usuario")
+
+
+# ============== PAPELERA (TRASH) ROUTES ==============
+
+def _days_left_in_trash(deleted_at_iso: str) -> int:
+    """Return remaining days before auto-purge (30 days retention)."""
+    try:
+        from datetime import datetime as dt
+        d = dt.fromisoformat(deleted_at_iso.replace('Z', '+00:00'))
+        now = dt.now(timezone.utc)
+        elapsed = (now - d).days
+        return max(0, 30 - elapsed)
+    except Exception:
+        return 0
+
+
+@router.get("/admin/trash")
+async def list_trash(user=Depends(require_super_admin)):
+    """Return soft-deleted clinics and users with remaining days before purge."""
+    try:
+        clinics = sdb.table('clinics').select('*').not_.is_('deleted_at', 'null').order('deleted_at', desc=True).execute().data or []
+        members = sdb.table('clinic_members').select('*').not_.is_('deleted_at', 'null').order('deleted_at', desc=True).execute().data or []
+
+        auth_map = get_auth_users_map()
+
+        clinics_out = []
+        for c in clinics:
+            clinics_out.append({
+                **c,
+                "days_left": _days_left_in_trash(c.get('deleted_at') or ''),
+            })
+
+        users_out = []
+        for m in members:
+            enriched = enrich_member(m, auth_map)
+            clinic = sdb.table('clinics').select('name').eq('id', m.get('clinic_id', '')).maybe_single().execute()
+            enriched["clinic_name"] = clinic.data["name"] if clinic and clinic.data else "N/A"
+            enriched["days_left"] = _days_left_in_trash(m.get('deleted_at') or '')
+            users_out.append(enriched)
+
+        return {"clinics": clinics_out, "users": users_out}
+    except Exception as e:
+        logger.error(f"List trash error: {e}")
+        raise HTTPException(status_code=500, detail="Error al listar papelera")
+
+
+@router.post("/admin/trash/clinics/{clinic_id}/restore")
+async def restore_clinic(clinic_id: str, request: Request, user=Depends(require_super_admin)):
+    """Restore a soft-deleted clinic. Also restores any members deleted in the same wave."""
+    try:
+        existing = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Clinica no encontrada")
+        if not existing.data.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="La clinica no esta en la papelera.")
+
+        deleted_at = existing.data["deleted_at"]
+        now = now_iso()
+
+        sdb.table('clinics').update({
+            "deleted_at": None,
+            "deleted_by": None,
+            "is_active": True,
+            "updated_at": now,
+        }).eq('id', clinic_id).execute()
+
+        # Restore members that were deleted within 60 seconds of the clinic delete (same wave)
+        try:
+            from datetime import datetime as dt, timedelta
+            base = dt.fromisoformat(deleted_at.replace('Z', '+00:00'))
+            lo = (base - timedelta(seconds=60)).isoformat()
+            hi = (base + timedelta(seconds=60)).isoformat()
+            sdb.table('clinic_members').update({
+                "deleted_at": None,
+                "deleted_by": None,
+                "is_active": True,
+                "updated_at": now,
+            }).eq('clinic_id', clinic_id).gte('deleted_at', lo).lte('deleted_at', hi).execute()
+        except Exception as e:
+            logger.warning(f"Could not restore members for {clinic_id}: {e}")
+
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="clinic_restored",
+                entity="clinic",
+                entity_id=clinic_id,
+                clinic_id=clinic_id,
+                **actor_from_super_admin(user),
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return {"message": "Clinica restaurada", "clinic_id": clinic_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Restore clinic error: {e}")
+        raise HTTPException(status_code=500, detail="Error al restaurar clinica")
+
+
+@router.post("/admin/trash/users/{member_id}/restore")
+async def restore_user(member_id: str, request: Request, user=Depends(require_super_admin)):
+    """Restore a soft-deleted user."""
+    try:
+        existing = sdb.table('clinic_members').select('*').eq('id', member_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        if not existing.data.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="El usuario no esta en la papelera.")
+
+        # If the parent clinic is still in the trash, block restore
+        clinic = sdb.table('clinics').select('deleted_at,name').eq('id', existing.data["clinic_id"]).maybe_single().execute()
+        if clinic and clinic.data and clinic.data.get("deleted_at"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"La clinica '{clinic.data.get('name')}' esta en la papelera. Restaura primero la clinica.",
+            )
+
+        sdb.table('clinic_members').update({
+            "deleted_at": None,
+            "deleted_by": None,
+            "is_active": True,
+            "updated_at": now_iso(),
+        }).eq('id', member_id).execute()
+
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="member_restored",
+                entity="clinic_member",
+                entity_id=member_id,
+                clinic_id=existing.data.get("clinic_id"),
+                **actor_from_super_admin(user),
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return {"message": "Usuario restaurado", "member_id": member_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Restore user error: {e}")
+        raise HTTPException(status_code=500, detail="Error al restaurar usuario")
+
+
+@router.delete("/admin/trash/clinics/{clinic_id}")
+async def purge_clinic_now(clinic_id: str, request: Request, user=Depends(require_super_admin)):
+    """Purge a clinic from the Papelera immediately (bypass 30-day wait)."""
+    try:
+        existing = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Clinica no encontrada")
+        if not existing.data.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="La clinica no esta en la papelera.")
+        clinic = existing.data
+
+        members_res = sdb.table('clinic_members').select('*').eq('clinic_id', clinic_id).execute()
+        members = members_res.data or []
+        member_user_ids = [m.get('user_id') for m in members if m.get('user_id')]
+
+        purge_stats = _delete_clinic_data(clinic_id)
+        try:
+            sdb.table('clinic_members').delete().eq('clinic_id', clinic_id).execute()
+            purge_stats["clinic_members"] = len(members)
+        except Exception as e:
+            logger.warning(f"delete clinic_members failed: {e}")
+
+        auth_deleted = 0
+        for uid in member_user_ids:
+            try:
+                other = sdb.table('clinic_members').select('id', count='exact').eq('user_id', uid).execute()
+                if (other.count or 0) > 0:
+                    continue
+                supabase_admin.auth.admin.delete_user(uid)
+                auth_deleted += 1
+            except Exception as e:
+                logger.warning(f"auth user delete failed user_id={uid}: {e}")
+
+        sdb.table('clinics').delete().eq('id', clinic_id).execute()
+
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="clinic_purged",
+                entity="clinic",
+                entity_id=clinic_id,
+                clinic_id=clinic_id,
+                **actor_from_super_admin(user),
+                old_values={"name": clinic.get("name"), "slug": clinic.get("slug")},
+                meta={"purge_stats": purge_stats, "auth_users_deleted": auth_deleted, "manual_purge": True},
+                request=request,
+            )
+        except Exception:
+            pass
+
+        return {"message": "Clinica purgada permanentemente", "clinic_id": clinic_id, "purge_stats": purge_stats}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Purge clinic error: {e}")
+        raise HTTPException(status_code=500, detail="Error al purgar clinica")
+
+
+@router.delete("/admin/trash/users/{member_id}")
+async def purge_user_now(member_id: str, request: Request, user=Depends(require_super_admin)):
+    """Purge a user from the Papelera immediately."""
+    try:
+        member_res = sdb.table('clinic_members').select('*').eq('id', member_id).maybe_single().execute()
+        if not member_res or not member_res.data:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        if not member_res.data.get("deleted_at"):
+            raise HTTPException(status_code=400, detail="El usuario no esta en la papelera.")
+        member = member_res.data
+
         sdb.table('clinic_members').delete().eq('id', member_id).execute()
 
-        # Delete Supabase Auth user (best-effort) — only if the user has no other memberships
         auth_deleted = False
         uid = member.get("user_id")
         if uid:
@@ -691,11 +939,10 @@ async def delete_user(
             except Exception as e:
                 logger.warning(f"auth user delete failed user_id={uid}: {e}")
 
-        # Audit
         try:
             from services.audit import log_audit, actor_from_super_admin
             await log_audit(
-                action="member_deleted",
+                action="member_purged",
                 entity="clinic_member",
                 entity_id=member_id,
                 clinic_id=member.get("clinic_id"),
@@ -704,25 +951,20 @@ async def delete_user(
                     "first_name": member.get("first_name"),
                     "last_name": member.get("last_name"),
                     "role": member.get("role"),
-                    "email": email,
                     "user_id": uid,
                 },
-                meta={"auth_user_deleted": auth_deleted},
+                meta={"auth_user_deleted": auth_deleted, "manual_purge": True},
                 request=request,
             )
         except Exception:
             pass
 
-        return {
-            "message": "Usuario eliminado permanentemente",
-            "member_id": member_id,
-            "auth_user_deleted": auth_deleted,
-        }
+        return {"message": "Usuario purgado permanentemente", "member_id": member_id, "auth_user_deleted": auth_deleted}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete user error: {e}")
-        raise HTTPException(status_code=500, detail="Error al eliminar usuario")
+        logger.error(f"Purge user error: {e}")
+        raise HTTPException(status_code=500, detail="Error al purgar usuario")
 
 
 @router.post("/admin/migrations/run")

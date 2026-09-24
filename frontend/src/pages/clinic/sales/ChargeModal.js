@@ -1,28 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../../components/ui/dialog';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { toast } from 'sonner';
-import { Banknote, CreditCard, ArrowRight, Wallet, Plus, X } from 'lucide-react';
+import { Banknote, CreditCard, ArrowRight, Wallet, Plus, X, ShieldCheck } from 'lucide-react';
+import { useAuth } from '../../../context/AuthContext';
+import { API } from './constants';
 
 export default function ChargeModal({ open, onClose, total, onConfirm, hasPatient, patientName }) {
-  const [payments, setPayments] = useState([{ payment_method: 'cash', amount: 0, reference: '' }]);
+  const [payments, setPayments] = useState([{ payment_method: 'cash', amount: 0, reference: '', insurance_name: '' }]);
   const [submitting, setSubmitting] = useState(false);
   const [arDueDate, setArDueDate] = useState('');
   const [arInstallments, setArInstallments] = useState(1);
+  const [insuranceProviders, setInsuranceProviders] = useState([]);
+  const { getAuthHeaders } = useAuth();
 
   useEffect(() => {
     if (open) {
-      setPayments([{ payment_method: 'cash', amount: total, reference: '' }]);
+      setPayments([{ payment_method: 'cash', amount: total, reference: '', insurance_name: '' }]);
       const d = new Date(); d.setDate(d.getDate() + 30);
       setArDueDate(d.toISOString().slice(0, 10));
       setArInstallments(1);
+      // Load insurance providers for autocomplete
+      axios.get(`${API}/clinic/insurance-providers`, { headers: getAuthHeaders() })
+        .then(r => setInsuranceProviders(r.data || []))
+        .catch(() => setInsuranceProviders([]));
     }
-  }, [open, total]);
+  }, [open, total, getAuthHeaders]);
 
-  const addPay = () => setPayments(p => [...p, { payment_method: 'credit_card', amount: 0, reference: '' }]);
+  const addPay = () => setPayments(p => [...p, { payment_method: 'credit_card', amount: 0, reference: '', insurance_name: '' }]);
   const removePay = (i) => setPayments(p => p.filter((_, idx) => idx !== i));
   const updPay = (i, field, value) => setPayments(p => p.map((x, idx) => idx === i ? { ...x, [field]: value } : x));
 
@@ -34,6 +43,9 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
 
   const handleConfirm = async () => {
     if (totalPaid <= 0 && !isPartial) { toast.error('Ingrese al menos un pago'); return; }
+    // Insurance payments must have a provider name
+    const insMissing = payments.find(p => p.payment_method === 'insurance' && (parseFloat(p.amount) || 0) > 0 && !(p.insurance_name || '').trim());
+    if (insMissing) { toast.error('Para el pago con seguro, escribe el nombre del seguro médico.'); return; }
     if (isPartial && !hasPatient) {
       toast.error('Para pagos parciales o crédito, primero selecciona un paciente registrado en el carrito.');
       return;
@@ -47,7 +59,9 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
       if (p.payment_method === 'cash' && totalPaid > total) {
         amt = Math.max(0, amt - change);
       }
-      return { ...p, amount: amt };
+      const out = { payment_method: p.payment_method, amount: amt, reference: p.reference || '', notes: p.notes || '' };
+      if (p.payment_method === 'insurance') out.insurance_name = (p.insurance_name || '').trim();
+      return out;
     }).filter(p => p.amount > 0);
     setSubmitting(true);
     try {
@@ -65,33 +79,44 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
             <p className="text-3xl font-bold text-teal-600">Q{total.toFixed(2)}</p>
           </div>
           {payments.map((p, i) => (
-            <div key={i} className="flex items-end gap-2 p-2 border rounded">
-              <div className="flex-1">
-                <Label className="text-xs">Método</Label>
-                <Select value={p.payment_method} onValueChange={v => updPay(i, 'payment_method', v)}>
-                  <SelectTrigger className="mt-1 text-sm h-8" data-testid={`pay-method-${i}`}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash"><Banknote className="w-3 h-3 inline mr-1" />Efectivo</SelectItem>
-                    <SelectItem value="credit_card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta crédito</SelectItem>
-                    <SelectItem value="debit_card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta débito</SelectItem>
-                    <SelectItem value="transfer"><ArrowRight className="w-3 h-3 inline mr-1" />Transferencia</SelectItem>
-                    <SelectItem value="credit"><Wallet className="w-3 h-3 inline mr-1" />Crédito</SelectItem>
-                    <SelectItem value="check">Cheque</SelectItem>
-                    <SelectItem value="other">Otro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="w-24">
-                <Label className="text-xs">Monto</Label>
-                <Input type="number" step="0.01" className="mt-1 text-sm h-8" value={p.amount} onChange={e => updPay(i, 'amount', e.target.value)} data-testid={`pay-amount-${i}`} />
-              </div>
-              {(p.payment_method === 'credit_card' || p.payment_method === 'debit_card' || p.payment_method === 'transfer' || p.payment_method === 'check') && (
-                <div className="w-24">
-                  <Label className="text-xs">Ref.</Label>
-                  <Input className="mt-1 text-sm h-8" value={p.reference || ''} onChange={e => updPay(i, 'reference', e.target.value)} placeholder="Auth" />
+            <div key={i} className="p-2 border rounded space-y-2">
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Label className="text-xs">Método</Label>
+                  <Select value={p.payment_method} onValueChange={v => updPay(i, 'payment_method', v)}>
+                    <SelectTrigger className="mt-1 text-sm h-8" data-testid={`pay-method-${i}`}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash"><Banknote className="w-3 h-3 inline mr-1" />Efectivo</SelectItem>
+                      <SelectItem value="credit_card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta crédito</SelectItem>
+                      <SelectItem value="debit_card"><CreditCard className="w-3 h-3 inline mr-1" />Tarjeta débito</SelectItem>
+                      <SelectItem value="transfer"><ArrowRight className="w-3 h-3 inline mr-1" />Transferencia</SelectItem>
+                      <SelectItem value="credit"><Wallet className="w-3 h-3 inline mr-1" />Crédito</SelectItem>
+                      <SelectItem value="insurance"><ShieldCheck className="w-3 h-3 inline mr-1" />Seguro</SelectItem>
+                      <SelectItem value="check">Cheque</SelectItem>
+                      <SelectItem value="other">Otro</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
+                <div className="w-24">
+                  <Label className="text-xs">Monto</Label>
+                  <Input type="number" step="0.01" className="mt-1 text-sm h-8" value={p.amount} onChange={e => updPay(i, 'amount', e.target.value)} data-testid={`pay-amount-${i}`} />
+                </div>
+                {(p.payment_method === 'credit_card' || p.payment_method === 'debit_card' || p.payment_method === 'transfer' || p.payment_method === 'check') && (
+                  <div className="w-24">
+                    <Label className="text-xs">Ref.</Label>
+                    <Input className="mt-1 text-sm h-8" value={p.reference || ''} onChange={e => updPay(i, 'reference', e.target.value)} placeholder="Auth" />
+                  </div>
+                )}
+                {payments.length > 1 && <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removePay(i)}><X className="w-3.5 h-3.5 text-red-500" /></Button>}
+              </div>
+              {p.payment_method === 'insurance' && (
+                <InsuranceInput
+                  value={p.insurance_name || ''}
+                  onChange={v => updPay(i, 'insurance_name', v)}
+                  providers={insuranceProviders}
+                  testid={`pay-insurance-${i}`}
+                />
               )}
-              {payments.length > 1 && <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removePay(i)}><X className="w-3.5 h-3.5 text-red-500" /></Button>}
             </div>
           ))}
           <Button variant="outline" size="sm" onClick={addPay}><Plus className="w-3.5 h-3.5 mr-1" />Agregar método</Button>
@@ -112,7 +137,9 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
                 </p>
               ) : (
                 <p className="text-xs text-amber-800">
-                  Se creará una cuenta por cobrar a nombre de <strong>{patientName}</strong> por <strong>Q{due.toFixed(2)}</strong>.
+                  Se creará una cuenta por cobrar a nombre de <strong>{patientName}</strong> por <strong>Q{due.toFixed(2)}</strong>
+                  {payments.some(p => p.payment_method === 'insurance' && (p.insurance_name || '').trim()) &&
+                    ' (asociada al seguro médico indicado)'}.
                 </p>
               )}
               <div className="grid grid-cols-2 gap-2">
@@ -137,5 +164,50 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* Insurance autocomplete input — free text with suggestion list */
+function InsuranceInput({ value, onChange, providers, testid }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const onDoc = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const q = (value || '').toLowerCase();
+  const suggestions = (providers || []).filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 8);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <Label className="text-xs">Nombre del seguro *</Label>
+      <Input
+        className="mt-1 text-sm h-8"
+        placeholder="Ej: Mapfre, Aseguradora General…"
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        data-testid={testid}
+      />
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded shadow-sm max-h-40 overflow-auto">
+          {suggestions.map(s => (
+            <button
+              type="button"
+              key={s.id}
+              className="block w-full text-left px-3 py-1.5 text-sm hover:bg-teal-50"
+              onClick={() => { onChange(s.name); setOpen(false); }}
+              data-testid={`${testid}-suggestion-${s.id}`}
+            >
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px] text-slate-500 mt-1">Se guardará automáticamente para autocompletado futuro.</p>
+    </div>
   );
 }

@@ -192,7 +192,7 @@ export default function ClinicsPage() {
         `${API}/admin/clinics/${deleteTarget.id}?confirm_name=${encodeURIComponent(deleteTarget.name)}`,
         { headers: getAuthHeaders() }
       );
-      toast.success(`Clínica "${deleteTarget.name}" eliminada permanentemente`);
+      toast.success(`Clínica "${deleteTarget.name}" enviada a Papelera (30 días para restaurar)`);
       setDeleteTarget(null);
       setDeleteConfirmText('');
       fetchClinics();
@@ -337,7 +337,7 @@ export default function ClinicsPage() {
                             data-testid={`delete-clinic-${clinic.id}`}
                           >
                             <Trash2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                            Eliminar permanentemente
+                            Enviar a Papelera
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -579,13 +579,13 @@ export default function ClinicsPage() {
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-red-600 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" strokeWidth={2} />
-              Eliminar clínica permanentemente
+              Enviar clínica a la Papelera
             </DialogTitle>
           </DialogHeader>
           <div className="mt-4 space-y-4">
-            <div className="bg-red-50 border border-red-200 p-3 text-sm text-red-800">
-              <p className="font-medium mb-1">Esta acción es IRREVERSIBLE.</p>
-              <p>Se eliminarán permanentemente: la clínica, todos sus usuarios (incluyendo sus cuentas de acceso), pacientes, citas, recetas, laboratorios, inventario, ventas, facturas y toda su historia clínica.</p>
+            <div className="bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">
+              <p className="font-medium mb-1">La clínica se moverá a la Papelera por 30 días.</p>
+              <p>Durante ese tiempo puedes restaurarla desde <strong>Papelera</strong>. Después de 30 días se eliminará automáticamente junto con todos sus datos: usuarios, pacientes, citas, recetas, laboratorios, inventario y ventas.</p>
             </div>
             <div>
               <Label className="form-label">
@@ -617,7 +617,7 @@ export default function ClinicsPage() {
                 className="bg-red-600 hover:bg-red-700 text-white"
                 data-testid="confirm-delete-clinic-btn"
               >
-                {deleting ? 'Eliminando...' : 'Eliminar permanentemente'}
+                {deleting ? 'Enviando...' : 'Enviar a Papelera'}
               </Button>
             </div>
           </div>

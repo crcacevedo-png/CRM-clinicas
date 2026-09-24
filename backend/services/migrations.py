@@ -534,6 +534,48 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON public.benchmark_runs (created_at DESC);
         """,
     ),
+    (
+        "2026_09_24_soft_delete_trash",
+        """
+        -- Soft-delete columns for the 30-day Papelera / Trash
+        ALTER TABLE public.clinics
+            ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS deleted_by TEXT;
+        ALTER TABLE public.clinic_members
+            ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS deleted_by TEXT;
+        CREATE INDEX IF NOT EXISTS idx_clinics_deleted_at
+            ON public.clinics (deleted_at) WHERE deleted_at IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_clinic_members_deleted_at
+            ON public.clinic_members (deleted_at) WHERE deleted_at IS NOT NULL;
+        """,
+    ),
+    (
+        "2026_09_24_insurance_payments",
+        """
+        -- Insurance providers per clinic (for POS autocomplete)
+        CREATE TABLE IF NOT EXISTS public.insurance_providers (
+            id UUID PRIMARY KEY,
+            clinic_id UUID NOT NULL,
+            name TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_insurance_provider_clinic_name
+            ON public.insurance_providers (clinic_id, lower(name));
+        CREATE INDEX IF NOT EXISTS idx_insurance_provider_clinic
+            ON public.insurance_providers (clinic_id);
+
+        -- Attach insurance_name to payments and AR for reporting/filters
+        ALTER TABLE public.payments
+            ADD COLUMN IF NOT EXISTS insurance_name TEXT;
+        ALTER TABLE public.accounts_receivable
+            ADD COLUMN IF NOT EXISTS insurance_name TEXT,
+            ADD COLUMN IF NOT EXISTS insurance_amount NUMERIC;
+        CREATE INDEX IF NOT EXISTS idx_ar_insurance_name
+            ON public.accounts_receivable (clinic_id, lower(insurance_name))
+            WHERE insurance_name IS NOT NULL;
+        """,
+    ),
 ]
 
 

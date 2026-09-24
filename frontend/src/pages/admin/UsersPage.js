@@ -174,7 +174,7 @@ export default function UsersPage() {
       await axios.delete(`${API}/admin/users/${deleteTarget.id}`, {
         headers: getAuthHeaders()
       });
-      toast.success(`Usuario "${deleteTarget.name} ${deleteTarget.lastname}" eliminado permanentemente`);
+      toast.success(`Usuario "${deleteTarget.name} ${deleteTarget.lastname}" enviado a Papelera (30 días para restaurar)`);
       setDeleteTarget(null);
       setDeleteConfirmText('');
       fetchUsers();
@@ -337,7 +337,7 @@ export default function UsersPage() {
                             data-testid={`delete-user-${user.id}`}
                           >
                             <Trash2 className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                            Eliminar permanentemente
+                            Enviar a Papelera
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -442,13 +442,13 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-red-600 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" strokeWidth={2} />
-              Eliminar usuario permanentemente
+              Enviar usuario a la Papelera
             </DialogTitle>
           </DialogHeader>
           <div className="mt-4 space-y-4">
-            <div className="bg-red-50 border border-red-200 p-3 text-sm text-red-800">
-              <p className="font-medium mb-1">Esta acción es IRREVERSIBLE.</p>
-              <p>Se eliminará al usuario <strong>{deleteTarget?.name} {deleteTarget?.lastname}</strong> ({deleteTarget?.email}) de la clínica <strong>{deleteTarget?.clinic_name}</strong> junto con su cuenta de acceso al sistema.</p>
+            <div className="bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">
+              <p className="font-medium mb-1">El usuario se moverá a la Papelera por 30 días.</p>
+              <p>Se enviará a Papelera al usuario <strong>{deleteTarget?.name} {deleteTarget?.lastname}</strong> ({deleteTarget?.email}) de la clínica <strong>{deleteTarget?.clinic_name}</strong>. Podrás restaurarlo desde <strong>Papelera</strong> antes de 30 días; después se eliminará automáticamente junto con su cuenta de acceso.</p>
             </div>
             <div>
               <Label className="form-label">
@@ -480,7 +480,7 @@ export default function UsersPage() {
                 className="bg-red-600 hover:bg-red-700 text-white"
                 data-testid="confirm-delete-user-btn"
               >
-                {deleting ? 'Eliminando...' : 'Eliminar permanentemente'}
+                {deleting ? 'Enviando...' : 'Enviar a Papelera'}
               </Button>
             </div>
           </div>

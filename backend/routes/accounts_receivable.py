@@ -154,6 +154,7 @@ async def list_pending_installments(days_ahead: int = 90, ctx=Depends(require_cl
 @router.get("/clinic/accounts-receivable")
 async def list_accounts_receivable(
     status: str = "", patient_id: str = "", q: str = "",
+    insurance: str = "", date_from: str = "", date_to: str = "",
     only_overdue: bool = False, page: int = 1, limit: int = 30,
     ctx=Depends(require_clinic_member),
 ):
@@ -168,6 +169,14 @@ async def list_accounts_receivable(
             query = query.eq('patient_id', patient_id)
         if only_overdue:
             query = query.lt('due_date', today.isoformat()).neq('status', 'paid')
+        if insurance:
+            # Case-insensitive equality on insurance_name (single provider filter)
+            query = query.ilike('insurance_name', insurance)
+        if date_from:
+            query = query.gte('created_at', date_from)
+        if date_to:
+            # Include the whole day: append 23:59:59
+            query = query.lte('created_at', f"{date_to}T23:59:59Z")
         offset = (page - 1) * limit
         result = query.order('due_date', desc=False).range(offset, offset + limit - 1).execute()
         ars = _enrich_ar(result.data or [])

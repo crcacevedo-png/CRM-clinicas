@@ -29,6 +29,7 @@ import AnnouncementsPage from "./pages/admin/AnnouncementsPage";
 import AuditLogPage from "./pages/admin/AuditLogPage";
 import SystemHealthPage from "./pages/admin/SystemHealthPage";
 import AdminSupportPage from "./pages/admin/AdminSupportPage";
+import TrashPage from "./pages/admin/TrashPage";
 
 // Clinic Pages
 import ClinicLayout from "./layouts/ClinicLayout";
@@ -95,6 +96,7 @@ function App() {
             <Route path="auditoria" element={<AuditLogPage />} />
             <Route path="salud" element={<SystemHealthPage />} />
             <Route path="soporte" element={<AdminSupportPage />} />
+            <Route path="papelera" element={<TrashPage />} />
             <Route path="configuracion" element={<SettingsPage />} />
           </Route>
 
