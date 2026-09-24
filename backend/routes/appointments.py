@@ -696,3 +696,186 @@ async def admin_run_reminders_now(user=Depends(require_super_admin)):
     from services.reminder_scheduler import _send_due_reminders
     counters = await _send_due_reminders()
     return {"ok": True, "counters": counters}
+
+
+# ============== WHATSAPP APPOINTMENT REMINDERS ==============
+
+@router.get("/clinic/appointments/whatsapp-reminders")
+async def whatsapp_reminders_queue(
+    window_hours: int = 24,
+    include_sent: bool = False,
+    ctx=Depends(require_clinic_member),
+):
+    """Return upcoming appointments in the next `window_hours` hours (default 24)
+    ready to be reminded via WhatsApp Web. Each item includes a pre-built
+    wa.me deep-link with a pre-filled message; the frontend just opens it.
+
+    Filters:
+      - status = 'scheduled'
+      - patient has a phone number
+      - whatsapp_reminder_sent_at IS NULL (unless include_sent=True)
+    """
+    from datetime import datetime as dt, timedelta as _td
+    from urllib.parse import quote
+    from routes.whatsapp_share import _normalize_wa_phone
+
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        now = dt.now(timezone.utc)
+        window_end = now + _td(hours=max(1, min(window_hours, 168)))  # cap at 7 days
+
+        query = (
+            sdb.table('appointments')
+            .select('*')
+            .eq('clinic_id', clinic_id)
+            .eq('status', 'scheduled')
+            .gte('starts_at', now.isoformat())
+            .lte('starts_at', window_end.isoformat())
+        )
+        if not include_sent:
+            query = query.is_('whatsapp_reminder_sent_at', 'null')
+        apts = query.order('starts_at').execute().data or []
+
+        if not apts:
+            return {"appointments": [], "count": 0, "window_hours": window_hours}
+
+        # Fetch clinic + patients + doctors in bulk
+        clinic = sdb.table('clinics').select('name,country,timezone,phone').eq('id', clinic_id).maybe_single().execute()
+        clinic_data = getattr(clinic, 'data', {}) if clinic else {}
+        clinic_country = (clinic_data or {}).get('country') or ''
+        clinic_tz = (clinic_data or {}).get('timezone') or 'America/Guatemala'
+        clinic_name = (clinic_data or {}).get('name') or 'la clínica'
+
+        patient_ids = list({a['patient_id'] for a in apts if a.get('patient_id')})
+        doctor_ids = list({a['doctor_id'] for a in apts if a.get('doctor_id')})
+
+        patients_map = {}
+        if patient_ids:
+            ps = sdb.table('patients').select('id,first_name,last_name,phone').in_('id', patient_ids).execute()
+            for p in (ps.data or []):
+                patients_map[p['id']] = p
+
+        doctors_map = {}
+        if doctor_ids:
+            ds = sdb.table('clinic_members').select('id,first_name,last_name').in_('id', doctor_ids).execute()
+            for d in (ds.data or []):
+                doctors_map[d['id']] = f"{d.get('first_name','')} {d.get('last_name','')}".strip()
+
+        # Format each appointment in the clinic timezone
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(clinic_tz)
+        except Exception:
+            tz = timezone.utc
+
+        result = []
+        for a in apts:
+            p = patients_map.get(a.get('patient_id'))
+            if not p:
+                continue
+            wa_phone = _normalize_wa_phone(p.get('phone'), clinic_country)
+            if not wa_phone:
+                # skip patients without a usable phone
+                continue
+            try:
+                starts_dt = dt.fromisoformat(a['starts_at'].replace('Z', '+00:00')).astimezone(tz)
+            except Exception:
+                continue
+            date_label = starts_dt.strftime('%d/%m/%Y')
+            time_label = starts_dt.strftime('%H:%M')
+            doctor_name = doctors_map.get(a.get('doctor_id')) or ''
+            patient_first = p.get('first_name') or ''
+            reason = (a.get('reason') or '').strip()
+
+            message_lines = [
+                f"Hola {patient_first}, te saludamos de {clinic_name}.",
+                f"Te recordamos tu cita para *mañana {date_label}* a las *{time_label}*.",
+            ]
+            if doctor_name:
+                message_lines.append(f"Doctor(a): {doctor_name}.")
+            if reason:
+                message_lines.append(f"Motivo: {reason}.")
+            message_lines.append("")
+            message_lines.append("Si necesitas reprogramar, por favor responde este mensaje. ¡Te esperamos!")
+            message = "\n".join(message_lines)
+
+            wa_url = f"https://wa.me/{wa_phone}?text={quote(message)}"
+
+            result.append({
+                "id": a['id'],
+                "starts_at": a['starts_at'],
+                "date_label": date_label,
+                "time_label": time_label,
+                "patient_id": p['id'],
+                "patient_name": f"{p.get('first_name','')} {p.get('last_name','')}".strip(),
+                "patient_phone": p.get('phone'),
+                "wa_phone": wa_phone,
+                "doctor_name": doctor_name,
+                "reason": reason,
+                "message": message,
+                "wa_url": wa_url,
+                "already_sent": bool(a.get('whatsapp_reminder_sent_at')),
+                "whatsapp_reminder_sent_at": a.get('whatsapp_reminder_sent_at'),
+            })
+
+        # Also count skipped items (no phone) for user feedback
+        skipped_no_phone = 0
+        for a in apts:
+            p = patients_map.get(a.get('patient_id'))
+            if not p:
+                skipped_no_phone += 1
+                continue
+            if not _normalize_wa_phone(p.get('phone'), clinic_country):
+                skipped_no_phone += 1
+
+        return {
+            "appointments": result,
+            "count": len(result),
+            "skipped_no_phone": skipped_no_phone,
+            "window_hours": window_hours,
+        }
+    except Exception as e:
+        logger.error(f"WhatsApp reminders queue error: {e}")
+        raise HTTPException(status_code=500, detail="Error al obtener recordatorios de WhatsApp")
+
+
+@router.post("/clinic/appointments/{apt_id}/whatsapp-reminder-sent")
+async def mark_whatsapp_reminder_sent(apt_id: str, ctx=Depends(require_clinic_member)):
+    """Mark that the user has opened WhatsApp Web for this appointment.
+    Called from the UI right after opening the wa.me link in a new tab.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        existing = sdb.table('appointments').select('id').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Cita no encontrada")
+        sdb.table('appointments').update({
+            "whatsapp_reminder_sent_at": now_iso(),
+            "updated_at": now_iso(),
+        }).eq('id', apt_id).execute()
+        return {"ok": True, "appointment_id": apt_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Mark WA reminder sent error: {e}")
+        raise HTTPException(status_code=500, detail="Error al marcar recordatorio")
+
+
+@router.post("/clinic/appointments/{apt_id}/whatsapp-reminder-reset")
+async def reset_whatsapp_reminder(apt_id: str, ctx=Depends(require_clinic_member)):
+    """Undo the 'sent' mark so the appointment reappears in the pending queue."""
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        existing = sdb.table('appointments').select('id').eq('id', apt_id).eq('clinic_id', clinic_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Cita no encontrada")
+        sdb.table('appointments').update({
+            "whatsapp_reminder_sent_at": None,
+            "updated_at": now_iso(),
+        }).eq('id', apt_id).execute()
+        return {"ok": True, "appointment_id": apt_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reset WA reminder error: {e}")
+        raise HTTPException(status_code=500, detail="Error al reiniciar recordatorio")

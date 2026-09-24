@@ -105,6 +105,20 @@ GUIDE_SECTIONS = [
         ],
     },
     {
+        "title": "Recordatorios de cita por WhatsApp", "module": "agenda", "image": None,
+        "intro": "Envía recordatorios de cita a tus pacientes 24 horas antes usando WhatsApp Web — sin costos adicionales ni API de WhatsApp Business.",
+        "bullets": [
+            "En la Agenda, presiona el botón «Recordatorios WhatsApp» en la barra superior.",
+            "Se abre un panel con las citas de las próximas 24 horas (puedes ampliar a 48, 72 h o 7 días).",
+            "Cada tarjeta muestra el paciente, teléfono, hora, doctor y una vista previa del mensaje ya redactado con el nombre de la clínica, la fecha y la hora.",
+            "Al presionar «Enviar por WhatsApp» se abre WhatsApp Web en una pestaña nueva con el mensaje pre-llenado; solo debes pulsar el botón verde de enviar dentro de WhatsApp.",
+            "La cita queda marcada automáticamente como recordada y desaparece de la lista pendiente. Si necesitas reenviar, marca «Ver ya enviados» y pulsa «Reenviar».",
+            "Botón «Enviar todos»: abre una pestaña por cada cita pendiente para que envíes todos los recordatorios en fila. Debes tener permitidas las ventanas emergentes del sitio.",
+            "Requisito: el paciente debe tener número de teléfono guardado en su ficha. Los pacientes sin teléfono se muestran en un aviso para que actualices sus datos.",
+            "Debes tener WhatsApp Web abierto y con sesión iniciada en la misma computadora para que el mensaje se envíe correctamente.",
+        ],
+    },
+    {
         "title": "Inventario", "module": "inventory", "image": "inventory.png",
         "intro": "Control de productos, insumos y existencias.",
         "bullets": [

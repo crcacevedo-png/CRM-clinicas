@@ -8,7 +8,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { ChevronLeft, ChevronRight, Plus, Search, CalendarDays, Filter, Lock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Search, CalendarDays, Filter, Lock, MessageCircle } from 'lucide-react';
 import { API, STATUS_CONFIG, STATUS_OPTIONS, MONTH_NAMES } from './agenda/constants';
 import { getDoctorColor, getWeekDates, timeToMinutes, formatTime } from './agenda/utils';
 import WeekView from './agenda/WeekView';
@@ -17,6 +17,7 @@ import MonthView from './agenda/MonthView';
 import NewAppointmentModal from './agenda/NewAppointmentModal';
 import AppointmentDetailModal from './agenda/AppointmentDetailModal';
 import BlockAgendaModal from './agenda/BlockAgendaModal';
+import WhatsAppRemindersModal from './agenda/WhatsAppRemindersModal';
 
 export default function AgendaPage() {
   const { getAuthHeaders, clinicId, role } = useAuth();
@@ -37,6 +38,7 @@ export default function AgendaPage() {
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [blocks, setBlocks] = useState([]);
   const [showBlockModal, setShowBlockModal] = useState(false);
+  const [showWaReminders, setShowWaReminders] = useState(false);
 
   const [draggingApt, setDraggingApt] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
@@ -225,6 +227,15 @@ export default function AgendaPage() {
           <Button variant="outline" size="sm" onClick={() => navigate(1)} data-testid="next-btn"><ChevronRight className="w-4 h-4" /></Button>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+            onClick={() => setShowWaReminders(true)}
+            data-testid="wa-reminders-btn"
+          >
+            <MessageCircle className="w-4 h-4 mr-1" /> Recordatorios WhatsApp
+          </Button>
           {canManageBlocks && (
             <Button variant="outline" size="sm" onClick={() => setShowBlockModal(true)} data-testid="block-agenda-btn">
               <Lock className="w-4 h-4 mr-1" /> Bloquear
@@ -334,6 +345,11 @@ export default function AgendaPage() {
           onCreated={() => { setShowBlockModal(false); fetchAppointments(); }}
         />
       )}
+      <WhatsAppRemindersModal
+        open={showWaReminders}
+        onClose={() => setShowWaReminders(false)}
+        headers={headers}
+      />
     </div>
   );
 }

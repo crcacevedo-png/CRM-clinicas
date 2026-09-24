@@ -576,6 +576,18 @@ MIGRATIONS: list[tuple[str, str]] = [
             WHERE insurance_name IS NOT NULL;
         """,
     ),
+    (
+        "2026_09_24_whatsapp_reminders",
+        """
+        -- Track when a WhatsApp reminder was manually sent from the UI so it
+        -- disappears from the "pending" reminder queue.
+        ALTER TABLE public.appointments
+            ADD COLUMN IF NOT EXISTS whatsapp_reminder_sent_at TIMESTAMPTZ;
+        CREATE INDEX IF NOT EXISTS idx_apt_wa_reminder_pending
+            ON public.appointments (starts_at)
+            WHERE status = 'scheduled' AND whatsapp_reminder_sent_at IS NULL;
+        """,
+    ),
 ]
 
 
