@@ -475,15 +475,20 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                 if insurance_name and insurance_name.lower() not in _seen_insurance:
                     _seen_insurance.add(insurance_name.lower())
                     try:
-                        # Upsert on (clinic_id, lower(name)) — ignore duplicates
+                        # Upsert defensively — the unique index (clinic_id, lower(name))
+                        # will reject dupes under concurrent inserts; we swallow the error.
                         existing_prov = sdb.table('insurance_providers').select('id').eq('clinic_id', clinic_id).ilike('name', insurance_name).limit(1).execute()
                         if not (existing_prov.data or []):
-                            sdb.table('insurance_providers').insert({
-                                "id": str(uuid.uuid4()),
-                                "clinic_id": clinic_id,
-                                "name": insurance_name,
-                                "created_at": now,
-                            }).execute()
+                            try:
+                                sdb.table('insurance_providers').insert({
+                                    "id": str(uuid.uuid4()),
+                                    "clinic_id": clinic_id,
+                                    "name": insurance_name,
+                                    "created_at": now,
+                                }).execute()
+                            except Exception as _dup:
+                                # Likely unique-index race — safe to ignore
+                                logger.debug(f"insurance_providers dup race ignored: {_dup}")
                     except Exception as _e:
                         logger.warning(f"insurance_providers upsert failed: {_e}")
         except Exception as inner_e:

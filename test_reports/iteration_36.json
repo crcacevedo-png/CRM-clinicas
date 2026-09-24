@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 36 backend testing: Papelera (soft delete/restore/purge), Insurance payments in POS, AR filters (insurance + date range), and user guide PDF regression. Created new pytest suite with 21 tests — all passing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter36_trash_insurance.py",
+    "/app/test_reports/pytest/iter36.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "super_admin.py: restore_clinic restores members by matching deleted_at ±60s window — brittle if soft-delete of clinic and members are far apart or if backfill occurs. Consider tracking a `deleted_wave_id` (uuid) shared between clinic and its members for reliable restore.",
+    "super_admin.py: `_days_left_in_trash` computes elapsed via `(now - d).days` which truncates (e.g., 29.9d = 29 days elapsed → 1 day left). Consider using seconds/86400 or ceil for user-friendly display.",
+    "super_admin.py DELETE /admin/clinics/{id}: `confirm_name` is required but accepts any casing/whitespace via strip only — no unicode/accents normalization. Non-blocking, but worth noting for names with accents.",
+    "sales.py insurance_providers upsert: uses `select().ilike().limit(1)` then insert — race condition possible under concurrent sales with same new insurance name (may create dupes). A unique index on (clinic_id, lower(name)) with ON CONFLICT would be safer.",
+    "sales.py: file is 875+ lines. Consider splitting POS, cash sessions, and PDF generation into separate modules per your >700 lines guideline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter36_trash_insurance.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "N/A (backend-only)"},
+  "test_credentials": "Super admin & clinic admin credentials from review request worked as expected.",
+  "seed_data_creation": "Each test creates disposable clinics prefixed TEST_TRASH_<ts>_<uuid> and purges them in teardown. Insurance provider names prefixed TEST_INS_* are created in the shared clinic (c0321ed8-97da-47a1-b601-3b94bffabdd7) — cheap orphan rows only.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable test suite at /app/backend/tests/test_iter36_trash_insurance.py exercises full Papelera lifecycle, insurance POS (missing name 400, full/partial with AR, provider idempotency), AR filters, POS regression (cash/card/transfer), and user-guide PDF. Note the user-guide PDF route is `/api/clinic/user-guide/pdf` (not `/api/user-guide/pdf`)."
+}

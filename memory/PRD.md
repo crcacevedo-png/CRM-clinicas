@@ -10,6 +10,31 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **PAPELERA 30 DÍAS (Super Admin)** (24 Sept 2026):
+  - [x] Migración: `deleted_at` + `deleted_by` en `clinics` y `clinic_members`
+  - [x] `DELETE /api/admin/clinics/{id}?confirm_name=<>` ahora hace SOFT delete (marca deleted_at) e inactiva miembros
+  - [x] `DELETE /api/admin/users/{id}` ahora hace SOFT delete
+  - [x] Nueva página `/admin/papelera` con tabs Clínicas/Usuarios, contador de días restantes, botones Restaurar y Purgar ahora
+  - [x] Endpoints: `GET /admin/trash`, `POST /admin/trash/*/restore`, `DELETE /admin/trash/*/{id}` (purga inmediata)
+  - [x] Cron diario 04:00 UTC (`services/trash_purge.py`) purga rows con deleted_at > 30 días
+  - [x] Restaurar usuario bloqueado si su clínica sigue en papelera
+  - [x] Auditoría: `clinic_soft_deleted`, `clinic_restored`, `clinic_purged`, `member_soft_deleted`, `member_restored`, `member_purged`
+
+- [x] **PAGO CON SEGURO EN POS** (24 Sept 2026):
+  - [x] Migración: tabla `insurance_providers(id, clinic_id, name)` con UNIQUE (clinic_id, lower(name)); columnas `insurance_name` en `payments` y `accounts_receivable` + `insurance_amount` en AR
+  - [x] `insurance` agregado a `valid_methods` en sales.py; requiere `insurance_name` (400 si falta)
+  - [x] ChargeModal en POS: nuevo método "Seguro" con input de nombre + autocompletado desde proveedores guardados
+  - [x] Al crear venta con pago insurance: se auto-guarda el proveedor para reutilizarlo
+  - [x] Cuentas por cobrar: guarda `insurance_name` y `insurance_amount` cuando la venta parcial usa seguro
+  - [x] Endpoints: `GET/POST /api/clinic/insurance-providers`
+
+- [x] **FILTROS POR SEGURO Y FECHAS EN CxC** (24 Sept 2026):
+  - [x] `GET /api/clinic/accounts-receivable` acepta `insurance`, `date_from`, `date_to`
+  - [x] UI de AccountsReceivablePage con dropdown Seguro + dos inputs de fecha + botón limpiar
+  - [x] Nueva columna "Seguro" en tabla de AR
+
+- [x] **MANUAL DE USUARIO** (24 Sept 2026): sección Ventas/CxC actualizada con instrucciones detalladas de pago con seguro y filtros nuevos
+
 - [x] **ELIMINAR CLINICAS Y USUARIOS (Super Admin)** (24 Sept 2026):
   - [x] `DELETE /api/admin/clinics/{id}?confirm_name=<nombre>` - hard delete con purga en cascada (pacientes, citas, recetas, laboratorios, ventas, inventario, tickets, etc.) + eliminación de auth users de Supabase (solo si no pertenecen a otra clínica)
   - [x] `DELETE /api/admin/users/{member_id}` - hard delete de clinic_member + auth user (solo si es su única membresía). Bloquea auto-eliminación.
