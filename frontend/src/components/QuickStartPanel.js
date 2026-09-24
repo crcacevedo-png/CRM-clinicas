@@ -49,16 +49,21 @@ export default function QuickStartPanel({ features = [] }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        const res = await axios.get(`${API}/clinic/quick-start`, { headers });
-        if (!alive) return;
-        setCompleted(res.data?.completed || []);
-        setDismissed(!!res.data?.dismissed);
-      } catch {
-        if (alive) setDismissed(true); // fail closed — don't show a broken panel
-      } finally {
-        if (alive) setLoading(false);
+      let lastErr = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await axios.get(`${API}/clinic/quick-start`, { headers });
+          if (!alive) return;
+          setCompleted(res.data?.completed || []);
+          setDismissed(!!res.data?.dismissed);
+          setLoading(false);
+          return;
+        } catch (e) {
+          lastErr = e;
+          await new Promise(r => setTimeout(r, 500));
+        }
       }
+      if (alive && lastErr) { setDismissed(true); setLoading(false); } // fail closed after retry
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
