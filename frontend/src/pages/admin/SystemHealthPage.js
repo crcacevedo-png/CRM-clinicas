@@ -49,20 +49,42 @@ export default function SystemHealthPage() {
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [archives, setArchives] = useState([]);
+  const [cap, setCap] = useState(null);
+  const [bench, setBench] = useState(null);
+  const [benching, setBenching] = useState(false);
+  const [benchConc, setBenchConc] = useState(20);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [health, arch] = await Promise.all([
+      const [health, arch, capacity] = await Promise.all([
         axios.get(`${API}/admin/system/health`, { headers }),
         axios.get(`${API}/admin/maintenance/archives`, { headers }).catch(() => ({ data: { archives: [] } })),
+        axios.get(`${API}/admin/system/capacity`, { headers }).catch(() => ({ data: null })),
       ]);
       setData(health.data);
       setArchives(arch.data.archives || []);
+      setCap(capacity.data);
     } catch (err) {
       toast.error('Error al cargar métricas: ' + (err.response?.data?.detail || err.message));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runBenchmark = async () => {
+    setBenching(true);
+    setBench(null);
+    try {
+      const res = await axios.post(`${API}/admin/system/capacity/benchmark?concurrency=${benchConc}`, {}, { headers, timeout: 60000 });
+      setBench(res.data);
+      const c = await axios.get(`${API}/admin/system/capacity`, { headers }).catch(() => null);
+      if (c) setCap(c.data);
+      toast.success('Prueba de capacidad completada');
+    } catch (err) {
+      toast.error('Error en la prueba: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setBenching(false);
     }
   };
 
@@ -115,6 +137,63 @@ export default function SystemHealthPage() {
           </Button>
         </div>
       </div>
+
+      {/* ===== LIVE CAPACITY ===== */}
+      <Card data-testid="capacity-card">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-teal-600" />Capacidad en vivo
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {cap ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <StatCard title="CPU" value={`${cap.cpu?.percent ?? '-'}%`} sub={`${cap.cpu?.count ?? '?'} vCPU · carga ${cap.cpu?.load_avg?.[0] ?? '-'}`} icon={Cpu} tone={(cap.cpu?.percent ?? 0) < 70 ? 'good' : 'warn'} testid="cap-cpu" />
+                <StatCard title="Memoria" value={`${cap.memory?.percent ?? '-'}%`} sub={`${fmt(cap.memory?.used_mb)} / ${fmt(cap.memory?.total_mb)} MB`} icon={HardDrive} tone={(cap.memory?.percent ?? 0) < 80 ? 'good' : 'warn'} testid="cap-mem" />
+                <StatCard title="Redis" value={cap.redis?.enabled ? `${cap.redis?.ping_ms} ms` : 'Off'} sub={cap.redis?.enabled ? 'Caché compartida activa' : (cap.redis?.note || 'en memoria')} icon={Activity} tone={cap.redis?.enabled ? 'good' : 'warn'} testid="cap-redis" />
+                <StatCard title="Latencia BD" value={`${cap.db_api?.ping_ms ?? '-'} ms`} sub="PostgREST (Supabase)" icon={Database} tone={(cap.db_api?.ping_ms ?? 0) < 150 ? 'good' : 'warn'} testid="cap-db" />
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <StatCard title="Threadpool" value={`${cap.threadpool?.in_use ?? 0}/${cap.threadpool?.capacity ?? '-'}`} sub="Hilos en uso / capacidad" icon={Activity} tone="default" testid="cap-threadpool" />
+                <StatCard title="Workers" value={String(cap.config?.workers_env ?? '?')} sub="Procesos del backend" icon={Cpu} tone="default" testid="cap-workers" />
+                <StatCard title="Conexiones Supabase" value={fmt(cap.config?.supabase_max_connections)} sub="Máx. pool httpx" icon={Database} tone="default" testid="cap-supaconn" />
+                <StatCard title="Proceso" value={`${cap.process?.rss_mb ?? '-'} MB`} sub={`PID ${cap.process?.pid ?? '-'} · ${cap.process?.threads ?? '-'} hilos`} icon={HardDrive} tone="default" testid="cap-proc" />
+              </div>
+            </>
+          ) : (
+            <div className="text-sm text-slate-500">Sin datos de capacidad.</div>
+          )}
+
+          {/* Benchmark */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium text-slate-700">Prueba de capacidad (carga interna):</span>
+              <select
+                value={benchConc}
+                onChange={(e) => setBenchConc(Number(e.target.value))}
+                className="text-sm border border-slate-300 rounded-md px-2 py-1 bg-white"
+                data-testid="bench-concurrency-select"
+              >
+                {[10, 20, 40, 60].map(v => <option key={v} value={v}>{v} simultáneas</option>)}
+              </select>
+              <Button size="sm" onClick={runBenchmark} disabled={benching} className="bg-teal-600 hover:bg-teal-700" data-testid="run-benchmark-btn">
+                <Play className="w-4 h-4 mr-1" />{benching ? 'Ejecutando…' : 'Ejecutar prueba'}
+              </Button>
+            </div>
+            {bench && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="bench-results">
+                <StatCard title="Throughput" value={`${bench.throughput_ops_s}/s`} sub={`${bench.total_ops} ops · ${bench.wall_s}s`} tone="good" testid="bench-thrpt" />
+                <StatCard title="Latencia p50" value={`${bench.latency_ms?.p50} ms`} sub={`p95 ${bench.latency_ms?.p95} ms`} tone="default" testid="bench-p50" />
+                <StatCard title="Errores" value={fmt(bench.errors)} sub={`${bench.ok}/${bench.total_ops} OK`} tone={bench.errors ? 'bad' : 'good'} testid="bench-errors" />
+                <StatCard title="Usuarios estimados" value={fmt(bench.estimated_active_users)} sub="activos en pico (aprox.)" tone="default" testid="bench-users" />
+                <StatCard title="Concurrencia" value={fmt(bench.concurrency)} sub="peticiones en paralelo" tone="default" testid="bench-conc" />
+              </div>
+            )}
+            {bench && <p className="text-xs text-slate-400">{bench.estimate_note}</p>}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Signal cards row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

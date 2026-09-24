@@ -388,3 +388,156 @@ async def list_audit_archives(user=Depends(require_super_admin)):
             "signed_url": url,
         })
     return {"archives": out, "count": len(out)}
+
+
+# ============== RUNTIME CAPACITY / SELF-BENCHMARK ==============
+import os as _os
+import time as _time
+import concurrent.futures as _futures
+
+_PROC_START = _time.time()
+
+
+def _cgroup_memory():
+    """Return (used_bytes, limit_bytes) from cgroup v2/v1 if available."""
+    try:
+        with open("/sys/fs/cgroup/memory.max") as f:
+            raw = f.read().strip()
+        limit = None if raw == "max" else int(raw)
+        with open("/sys/fs/cgroup/memory.current") as f:
+            used = int(f.read().strip())
+        return used, limit
+    except Exception:
+        try:
+            with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+                limit = int(f.read().strip())
+            with open("/sys/fs/cgroup/memory/memory.usage_in_bytes") as f:
+                used = int(f.read().strip())
+            return used, (None if limit > 10 ** 15 else limit)
+        except Exception:
+            return None, None
+
+
+def _capacity_snapshot() -> dict:
+    out = {}
+    # CPU / memory
+    try:
+        import psutil
+        out["cpu"] = {
+            "count": psutil.cpu_count(),
+            "percent": psutil.cpu_percent(interval=0.15),
+            "load_avg": [round(x, 2) for x in _os.getloadavg()] if hasattr(_os, "getloadavg") else None,
+        }
+        vm = psutil.virtual_memory()
+        used, limit = _cgroup_memory()
+        mem_total = limit or vm.total
+        mem_used = used if used is not None else vm.used
+        out["memory"] = {
+            "total_mb": round(mem_total / 1024 / 1024),
+            "used_mb": round(mem_used / 1024 / 1024),
+            "percent": round(mem_used / mem_total * 100, 1) if mem_total else None,
+        }
+        p = psutil.Process()
+        out["process"] = {
+            "pid": p.pid,
+            "rss_mb": round(p.memory_info().rss / 1024 / 1024, 1),
+            "threads": p.num_threads(),
+            "uptime_s": round(_time.time() - _PROC_START),
+        }
+    except Exception as e:
+        out["resources_error"] = str(e)
+    # Config
+    out["config"] = {
+        "workers_env": _os.environ.get("WEB_CONCURRENCY") or _os.environ.get("GUNICORN_WORKERS") or "unknown (preview=1)",
+        "threadpool_tokens": int(_os.environ.get("THREADPOOL_TOKENS", "128")),
+        "supabase_max_connections": int(_os.environ.get("SUPABASE_MAX_CONNECTIONS", "200")),
+    }
+    # Redis
+    try:
+        from services.cache import _get_redis
+        r = _get_redis()
+        if r is not None:
+            t0 = _time.perf_counter()
+            r.ping()
+            out["redis"] = {"enabled": True, "ping_ms": round((_time.perf_counter() - t0) * 1000, 1)}
+        else:
+            out["redis"] = {"enabled": False, "note": "REDIS_URL no configurada — usando caché en memoria"}
+    except Exception as e:
+        out["redis"] = {"enabled": False, "error": str(e)}
+    # DB API (PostgREST) latency
+    try:
+        t0 = _time.perf_counter()
+        sdb.table("clinics").select("id").limit(1).execute()
+        out["db_api"] = {"ping_ms": round((_time.perf_counter() - t0) * 1000, 1)}
+    except Exception as e:
+        out["db_api"] = {"error": str(e)}
+    return out
+
+
+def _one_light_query():
+    t0 = _time.perf_counter()
+    try:
+        sdb.table("clinics").select("id").limit(1).execute()
+        return (_time.perf_counter() - t0) * 1000, True
+    except Exception:
+        return (_time.perf_counter() - t0) * 1000, False
+
+
+def _run_benchmark(concurrency: int, total_ops: int) -> dict:
+    lat = []
+    ok = 0
+    wall0 = _time.perf_counter()
+    with _futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
+        for ms, success in ex.map(lambda _i: _one_light_query(), range(total_ops)):
+            lat.append(ms)
+            ok += 1 if success else 0
+    wall = _time.perf_counter() - wall0
+    lat.sort()
+    n = len(lat)
+    def pct(p):
+        return round(lat[min(n - 1, int(n * p))], 1) if n else None
+    thrpt = round(total_ops / wall, 1) if wall > 0 else None
+    # Rough capacity estimate: assume an active user issues ~0.25 requests/sec at peak.
+    est_users = int(thrpt / 0.25) if thrpt else None
+    return {
+        "concurrency": concurrency,
+        "total_ops": total_ops,
+        "ok": ok,
+        "errors": total_ops - ok,
+        "wall_s": round(wall, 2),
+        "throughput_ops_s": thrpt,
+        "latency_ms": {"p50": pct(0.50), "p95": pct(0.95), "max": pct(1.0)},
+        "estimated_active_users": est_users,
+        "estimate_note": "Estimación aprox. asumiendo ~0.25 req/s por usuario activo en pico. Con más workers en producción escala casi lineal.",
+    }
+
+
+@router.get("/admin/system/capacity")
+async def system_capacity(user=Depends(require_super_admin)):
+    """Live runtime capacity snapshot (CPU, memoria, proceso, Redis, latencia BD)."""
+    from starlette.concurrency import run_in_threadpool
+    snap = await run_in_threadpool(_capacity_snapshot)
+    # Threadpool utilization (must read on the event loop)
+    try:
+        import anyio.to_thread
+        lim = anyio.to_thread.current_default_thread_limiter()
+        snap["threadpool"] = {
+            "capacity": lim.total_tokens,
+            "in_use": lim.borrowed_tokens,
+        }
+    except Exception as e:
+        snap["threadpool"] = {"error": str(e)}
+    snap["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return snap
+
+
+@router.post("/admin/system/capacity/benchmark")
+async def system_capacity_benchmark(concurrency: int = 20, user=Depends(require_super_admin)):
+    """Run a controlled internal load test (parallel lightweight DB queries) and
+    report throughput/latency. `concurrency` is capped at 60 for safety."""
+    from starlette.concurrency import run_in_threadpool
+    concurrency = max(1, min(int(concurrency), 60))
+    total_ops = concurrency * 3  # a few rounds for a stable measurement
+    result = await run_in_threadpool(_run_benchmark, concurrency, total_ops)
+    result["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return result
