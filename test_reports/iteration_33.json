@@ -1,0 +1,32 @@
+{
+  "summary": "Frontend-only testing of Soporte module enhancements: image attachments (create ticket + reply, user & admin views) and support-open-badge in Super Admin sidebar. All 5 requested flows verified end-to-end against public URL with real PNGs uploaded to Supabase Storage. All features work as specified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "unrelated (sales.py, super_admin.py, core.py)", "issue": "Console showed multiple 500 responses during Super Admin dashboard load: 'AttributeError: NoneType object has no attribute data' at `if not result.data:` in /app/backend/routes/sales.py:113, /app/backend/routes/super_admin.py:202, /app/backend/core.py:519/527. NOT related to Soporte feature under test, but visible when navigating /admin dashboard."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dialog Nuevo mensaje", "issues": ["Console warning: Missing Description or aria-describedby on DialogContent (a11y)"]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Optional) Investigate 500 errors on Super Admin dashboard endpoints (sales/super_admin/core) — pre-existing, not part of this feature.",
+    "(Optional a11y) Add DialogDescription/aria-describedby to Nuevo mensaje dialog."
+  ],
+  "critical_code_review_comments": [
+    "SupportPage.js: reply's `AttachButton` reuses testid 'reply-attach-btn' — OK, and preview testid 'attach-preview-0' is shared between new-ticket and reply preview components (both use AttachPreview). Not a bug but could cause ambiguity in tests when a reply preview exists at the same time as new-ticket dialog.",
+    "AdminSupportPage.js: admin attachments block iterates `m.attachments` with a shared `admin-attachment-${i}` testid across all messages — if multiple admin messages have attachments, testids collide. Consider prefixing with message id."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100%"},
+  "seed_data_creation": "Created 1 test ticket via clinic admin: id=cc6a413e-bf3c-44c7-a92c-7bc6aa207e1b subject prefixed 'TEST_ADJUNTO ...' with 2 image attachments (create + reply). Admin replied to it (status now 'answered').",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Verified: (1) ticket-attach-btn-input file upload + attach-preview-0 render + remove-attach-0 present; (2) POST /support/tickets with attachments succeeds; (3) attachment-0 anchor rendered in user conversation with Supabase signed URL (patient-files bucket); (4) reply-attach-btn-input + send-reply-btn create new user message with attachment (2 attachments visible after reply); (5) Super Admin at /admin/soporte sees admin-attachment-0 thumbnails on user messages; (6) support-open-badge visible in Admin sidebar with value '2' (screenshot confirmed). Badge is fetched on mount + every 60s from /admin/support/summary.",
+  "rca of the issue": "N/A — no bugs found in requested feature scope."
+}
