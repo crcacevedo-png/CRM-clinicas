@@ -1,0 +1,30 @@
+{
+  "summary": "Backend-only testing for iter39 Insurance Receivables + Statement PDF. All 18 pytest cases pass against public URL. Covered: list endpoint shape, providers sorted DESC by pending, aging_days/aging_bucket enrichment, insurance filter (case-insensitive), aging bucket filters (0-30 / 31-60 / 61-90 / 90+ with %2B encoding), invalid aging silently ignored, status pending/paid/all semantics, empty-provider zero result, auth required (401/403), seeded sale creation (cash 200 + insurance 400) via sale-level insurance_name/insurance_amount, statement-pdf returns signed https URL + totals, downloaded PDF starts with %PDF magic bytes, nonexistent insurer returns 200 with zero totals (valid empty PDF), empty insurance name returns 4xx, payment via /accounts-receivable/{id}/payment reduces balance (400->300) and status becomes partial, paid_in_period reflects >=100 in subsequent PDF, regression /api/clinic/accounts-receivable still 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/clinic/insurance-receivables?aging=90+", "issue": "Query param '+' is URL-decoded to space by FastAPI; callers must send '%2B'. Not a bug per se (standard HTTP), but the frontend must URL-encode the aging value. The spec says invalid buckets are silently ignored, which masks this if the FE sends raw '+'. Recommend FE encodeURIComponent on aging param."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter39_insurance_receivables.py",
+    "/app/test_reports/pytest/iter39_results.xml"
+  ],
+  "action_items": [
+    "Verify frontend InsurersTab uses encodeURIComponent for aging bucket (especially '90+') when building the query string, otherwise the backend will silently return all accounts."
+  ],
+  "critical_code_review_comments": [
+    "routes/accounts_receivable.py exceeds 650 lines; consider splitting insurance-receivables + statement-pdf into a dedicated module (insurance_receivables.py).",
+    "statement-pdf imports reportlab inside the function on every call; acceptable but could be hoisted to module level to reduce latency.",
+    "statement-pdf does not validate date_from/date_to format; invalid ISO strings reach Supabase .gte/.lte filters and may 500. Consider explicit YYYY-MM-DD validation.",
+    "insurance_name path parameter is not stripped before the empty-name HTTPException check inside statement-pdf — a path containing only spaces may not reach that branch due to FastAPI routing (acceptable since 404 is returned)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter39_insurance_receivables.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A"},
+  "test_credentials": "prueba3@gmail.com / Test123456! (clinic_id c0321ed8-97da-47a1-b601-3b94bffabdd7, branch 79c47aab-3d03-49a0-bcec-b931766aa48e)",
+  "seed_data_creation": "Each test session creates one sale TEST_PDF_<ts> for patient Maria Garcia (dffcbc90-...) with items=Q600, cash=Q200, insurance_amount=400. A subsequent transfer payment of Q100 is registered on its AR.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable backend test file: /app/backend/tests/test_iter39_insurance_receivables.py. 18/18 pass. Note: for 90+ aging filter, must URL-encode '+' as %2B (requests.params handles it automatically). Sale endpoint no longer accepts payment_method='insurance'; must use top-level insurance_name & insurance_amount keys."
+}

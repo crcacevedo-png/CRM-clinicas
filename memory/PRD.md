@@ -10,6 +10,14 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **VISTA POR COBRAR A ASEGURADORAS + ESTADOS DE CUENTA PDF** (5 Oct 2026):
+  - [x] `GET /api/clinic/insurance-receivables` — endpoint dedicado con filtros `insurance`, `aging` (0-30/31-60/61-90/90+), `status` (pending/paid/all). Devuelve providers (ordenados DESC por pending) + accounts enriched con aging_days/aging_bucket + totals
+  - [x] `GET /api/clinic/insurance-receivables/{insurance_name}/statement-pdf?date_from=&date_to=` — genera PDF landscape con reportlab, cabecera con clínica, 3 cards (Cargado / Pagado en periodo / Pendiente), tabla detallada por AR, totales. Sube a Supabase Storage, devuelve URL firmada por 1h
+  - [x] Nueva pestaña **Aseguradoras** en Cuentas por Cobrar con: 4 KPI cards, filtros (aseguradora + antigüedad + estado), tabla resumen por proveedor con botones "Ver cuentas" y "PDF", tabla detallada de ARs con badges de antigüedad por color (verde/amber/orange/red) y botón "Registrar pago" por fila
+  - [x] Reutiliza el `RegisterPaymentDialog` existente — mismo botón sirve para pagos del paciente y del seguro
+  - [x] Diálogo "Generar estado de cuenta" con selección de aseguradora + rango de fechas; abre PDF en nueva pestaña
+  - [x] Tests: 18/18 pasando (`/app/backend/tests/test_iter39_insurance_receivables.py`)
+
 - [x] **REDISEÑO PAGO CON SEGURO (Fase 1 — MVP)** (5 Oct 2026):
   - [x] 'insurance' eliminado de `valid_methods` en POST /api/clinic/sales — ahora devuelve 400 con mensaje específico
   - [x] POST /api/clinic/sales acepta campos a nivel venta: `insurance_name` + `insurance_amount` (no en payments)

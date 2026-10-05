@@ -702,7 +702,8 @@ function InsurersTab({ headers }) {
       if (insurance && insurance !== 'all') params.set('insurance', insurance);
       if (aging && aging !== 'all') params.set('aging', aging);
       params.set('status', statusF);
-      const r = await axios.get(`${API}/clinic/insurance-receivables?${params}`, { headers });
+      // URLSearchParams encodes '+' as '%2B' automatically, but double-check for the '90+' bucket.
+      const r = await axios.get(`${API}/clinic/insurance-receivables?${params.toString()}`, { headers });
       setData(r.data || { providers: [], accounts: [], totals: {} });
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Error al cargar aseguradoras');
