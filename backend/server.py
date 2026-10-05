@@ -107,6 +107,16 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Migrations runner failed (will retry next startup): {e}")
 
+    # One-shot retroactive insurance payments migration (idempotent — a second
+    # run finds no legacy payment_method='insurance' rows and does nothing).
+    try:
+        from services.insurance_migration import migrate_insurance_payments
+        _ins_counters = migrate_insurance_payments(None)
+        if _ins_counters.get('sales_touched'):
+            logger.info(f"Insurance payments retroactive migration: {_ins_counters}")
+    except Exception as e:
+        logger.warning(f"Insurance payments retroactive migration failed: {e}")
+
     # Start background scheduler for appointment reminders (non-blocking)
     try:
         from services.reminder_scheduler import start_scheduler

@@ -630,38 +630,44 @@ async def insurance_report(
     try:
         d_from, d_to = _period_dates(period, date_from, date_to)
 
-        # 1) Insurance payments in period (collected)
-        pays = (
-            sdb.table('payments')
-            .select('insurance_name,amount,paid_at')
-            .eq('clinic_id', clinic_id)
-            .eq('payment_method', 'insurance')
-            .not_.is_('insurance_name', 'null')
-            .gte('paid_at', d_from)
-            .lte('paid_at', f"{d_to}T23:59:59Z")
-            .execute()
-            .data or []
-        )
-        # 2) Accounts receivable with insurance_name (pending balance snapshot; no date filter — pending is a live snapshot)
+        # 1) Accounts receivable with insurance_name (both pending and historical for AR→provider lookup)
         ars = (
             sdb.table('accounts_receivable')
-            .select('insurance_name,insurance_amount,balance,paid_amount,original_amount,created_at,status')
+            .select('id,insurance_name,insurance_amount,balance,paid_amount,original_amount,created_at,status,sale_id')
             .eq('clinic_id', clinic_id)
             .not_.is_('insurance_name', 'null')
             .execute()
             .data or []
         )
+        ar_ids = [a['id'] for a in ars]
+        ar_to_insurer = {a['id']: (a.get('insurance_name') or '').strip() for a in ars}
+
+        # 2) Payments APPLIED to insurance ARs within [d_from..d_to] = real "collected from insurer".
+        #    Insurance is no longer a direct payment_method; the only way insurer money enters is
+        #    through accounts_receivable payments on an AR that has insurance_name set.
+        ar_pays = []
+        if ar_ids:
+            ar_pays = (
+                sdb.table('payments')
+                .select('account_receivable_id,amount,paid_at')
+                .eq('clinic_id', clinic_id)
+                .in_('account_receivable_id', ar_ids)
+                .gte('paid_at', d_from)
+                .lte('paid_at', f"{d_to}T23:59:59Z")
+                .execute()
+                .data or []
+            )
 
         # 3) Aggregate by provider
         by_provider = {}  # key: name.lower() -> {name, collected, pending, sales_count, ar_count}
-        for p in pays:
-            name = (p.get('insurance_name') or '').strip()
+        for p in ar_pays:
+            name = ar_to_insurer.get(p.get('account_receivable_id')) or ''
             if not name:
                 continue
             k = name.lower()
             prov = by_provider.setdefault(k, {"name": name, "collected": 0.0, "pending": 0.0, "sales_count": 0, "ar_count": 0})
             prov["collected"] += float(p.get('amount') or 0)
-            prov["sales_count"] += 1
+            prov["sales_count"] += 1  # count of individual insurer payments
 
         for a in ars:
             name = (a.get('insurance_name') or '').strip()
@@ -682,14 +688,13 @@ async def insurance_report(
             summary.append(v)
         summary.sort(key=lambda x: -x["total_billed"])
 
-        # 4) Monthly breakdown within [d_from..d_to]
-        #    Bucket: YYYY-MM. Metrics per month per provider: billed_via_insurance (paid amount for that month).
+        # 4) Monthly breakdown within [d_from..d_to] — same source: AR payments
         monthly = {}  # month -> { provider_name -> billed }
-        for p in pays:
-            paid_at = (p.get('paid_at') or '')[:7]  # YYYY-MM
+        for p in ar_pays:
+            paid_at = (p.get('paid_at') or '')[:7]
             if not paid_at:
                 continue
-            name = (p.get('insurance_name') or '').strip()
+            name = ar_to_insurer.get(p.get('account_receivable_id')) or ''
             if not name:
                 continue
             monthly.setdefault(paid_at, {}).setdefault(name, 0.0)

@@ -977,3 +977,27 @@ async def admin_run_migrations(user=Depends(require_super_admin)):
     from services.migrations import run_pending_migrations
     return run_pending_migrations()
 
+
+@router.post("/admin/migrations/insurance-payments-migration")
+async def admin_run_insurance_payment_migration(request: Request, clinic_id: str = "", user=Depends(require_super_admin)):
+    """Idempotent one-shot migration: convert legacy payment_method='insurance'
+    rows into AR charges to the insurer. Optional `?clinic_id=` scopes it to
+    one clinic; omit to migrate all clinics. Safe to re-run.
+    """
+    from services.insurance_migration import migrate_insurance_payments
+    cid = clinic_id or None
+    counters = migrate_insurance_payments(cid)
+    try:
+        from services.audit import log_audit, actor_from_super_admin
+        await log_audit(
+            action="insurance_payments_migration",
+            entity="payments",
+            clinic_id=cid,
+            **actor_from_super_admin(user),
+            meta=counters,
+            request=request,
+        )
+    except Exception:
+        pass
+    return {"ok": True, "counters": counters}
+

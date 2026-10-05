@@ -328,15 +328,28 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             raise
         except Exception as _e:
             logger.warning(f"Could not validate cash session branch: {_e}")
-    valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "insurance", "other"}
+    valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "other"}
     for p in payments:
         m = p.get("payment_method")
         if m and m not in valid_methods:
             raise HTTPException(status_code=400, detail=f"Método de pago inválido: {m}")
-        # Insurance payments must carry an insurance name
+        # 'insurance' is no longer a valid payment method — it is captured as a separate
+        # top-level field (`insurance_name` + `insurance_amount`) and recorded as an AR to the insurer.
         if m == "insurance":
-            if not (p.get("insurance_name") or "").strip():
-                raise HTTPException(status_code=400, detail="Los pagos con seguro requieren el nombre del seguro médico.")
+            raise HTTPException(
+                status_code=400,
+                detail="El seguro ya no es un método de pago. Usa los campos insurance_name e insurance_amount en la venta."
+            )
+    # Insurance charge (goes to AR, NOT to caja/payments)
+    insurance_name_sale = (data.get("insurance_name") or "").strip() or None
+    try:
+        insurance_amount_sale = round(float(data.get("insurance_amount") or 0), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Monto del seguro inválido")
+    if insurance_amount_sale < 0:
+        raise HTTPException(status_code=400, detail="El monto del seguro no puede ser negativo")
+    if insurance_amount_sale > 0 and not insurance_name_sale:
+        raise HTTPException(status_code=400, detail="Indica el nombre de la aseguradora.")
     # Validate item numeric ranges (no negative/invalid values)
     for it in items:
         try:
@@ -379,20 +392,32 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             subtotal -= discount_amount
         total = round(subtotal + tax_total, 2)
         amount_paid = round(sum(float(p.get("amount") or 0) for p in payments), 2)
-        amount_due = max(0.0, round(total - amount_paid, 2))
-        if amount_paid <= 0 and total > 0:
+
+        # Validate insurance charge does not exceed total
+        if insurance_amount_sale > total + 0.01:
+            raise HTTPException(status_code=400, detail="El cargo al seguro no puede ser mayor al total de la venta.")
+
+        # Insurance charge is NOT cash in caja — it goes directly to AR.
+        # The patient portion left over (after insurance) is `patient_portion`.
+        patient_portion = round(total - insurance_amount_sale, 2)
+        # Patient debt that remains after today's payments (if any)
+        patient_due = max(0.0, round(patient_portion - amount_paid, 2))
+        # Overpayment is handled as change for cash (same as before)
+        # Combined amount_due = patient debt + insurance to be collected from insurer
+        amount_due = round(patient_due + insurance_amount_sale, 2)
+
+        if amount_paid <= 0 and insurance_amount_sale <= 0 and total > 0:
             payment_status = 'pending'
-        elif amount_paid >= total:
+        elif amount_due <= 0.01:
             payment_status = 'paid'
         else:
             payment_status = 'partial'
 
-        # If the sale has a pending balance (partial or unpaid), require a registered patient
-        # because accounts_receivable.patient_id is NOT NULL and the AR record must be created.
-        if amount_due > 0 and not data.get("patient_id"):
+        # If there will be any AR (patient debt OR insurance charge), require a registered patient
+        if (patient_due > 0 or insurance_amount_sale > 0) and not data.get("patient_id"):
             raise HTTPException(
                 status_code=400,
-                detail="Para registrar pagos parciales o crédito, selecciona un paciente registrado en el carrito (no basta con el nombre del cliente)."
+                detail="Para registrar pagos parciales, cargos a seguro o crédito, selecciona un paciente registrado en el carrito (no basta con el nombre del cliente)."
             )
 
         sale_id = str(uuid.uuid4())
@@ -456,41 +481,36 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                         "performed_by": member["id"], "created_at": now,
                     }).execute()
 
-            # Insert payments (and upsert insurance provider names for autocomplete)
-            _seen_insurance = set()
+            # Insert payments (patient cash/card/transfer etc. — insurance never goes here)
             for p in payments:
                 amt = round(float(p.get("amount") or 0), 2)
                 if amt <= 0:
                     continue
                 pm = p.get("payment_method", "cash")
-                insurance_name = (p.get("insurance_name") or "").strip() if pm == "insurance" else None
                 sdb.table('payments').insert({
                     "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
                     "payment_method": pm,
                     "amount": amt, "reference": p.get("reference"),
                     "notes": p.get("notes"), "received_by": member["id"],
-                    "insurance_name": insurance_name,
                     "paid_at": now, "created_at": now,
                 }).execute()
-                if insurance_name and insurance_name.lower() not in _seen_insurance:
-                    _seen_insurance.add(insurance_name.lower())
-                    try:
-                        # Upsert defensively — the unique index (clinic_id, lower(name))
-                        # will reject dupes under concurrent inserts; we swallow the error.
-                        existing_prov = sdb.table('insurance_providers').select('id').eq('clinic_id', clinic_id).ilike('name', insurance_name).limit(1).execute()
-                        if not (existing_prov.data or []):
-                            try:
-                                sdb.table('insurance_providers').insert({
-                                    "id": str(uuid.uuid4()),
-                                    "clinic_id": clinic_id,
-                                    "name": insurance_name,
-                                    "created_at": now,
-                                }).execute()
-                            except Exception as _dup:
-                                # Likely unique-index race — safe to ignore
-                                logger.debug(f"insurance_providers dup race ignored: {_dup}")
-                    except Exception as _e:
-                        logger.warning(f"insurance_providers upsert failed: {_e}")
+
+            # Upsert insurance provider name for autocomplete (if any)
+            if insurance_name_sale:
+                try:
+                    existing_prov = sdb.table('insurance_providers').select('id').eq('clinic_id', clinic_id).ilike('name', insurance_name_sale).limit(1).execute()
+                    if not (existing_prov.data or []):
+                        try:
+                            sdb.table('insurance_providers').insert({
+                                "id": str(uuid.uuid4()),
+                                "clinic_id": clinic_id,
+                                "name": insurance_name_sale,
+                                "created_at": now,
+                            }).execute()
+                        except Exception as _dup:
+                            logger.debug(f"insurance_providers dup race ignored: {_dup}")
+                except Exception as _e:
+                    logger.warning(f"insurance_providers upsert failed: {_e}")
         except Exception as inner_e:
             # Rollback: delete payments, inventory movements (ref this sale), sale_items, sale
             logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}", exc_info=True)
@@ -504,19 +524,23 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             except Exception: pass
             raise HTTPException(status_code=500, detail="Error al registrar la venta")
 
-        # If amount_due > 0 → also create accounts_receivable record (best-effort; ignore if table missing)
+        # If there is pending balance (patient debt + insurance) → create an AR record.
+        # The AR holds the whole pending balance (patient_due + insurance_amount) under the patient,
+        # with insurance_name/insurance_amount showing the portion owed by the insurer.
         if amount_due > 0:
             try:
                 from datetime import datetime as dt, timedelta
                 due_default = (dt.now(timezone.utc) + timedelta(days=30)).date().isoformat()
                 installments = int(data.get("ar_installments") or 0)
-                # Extract insurance info from payments (if any payment used insurance)
-                _ins_payments = [p for p in payments if p.get("payment_method") == "insurance" and (p.get("insurance_name") or "").strip()]
-                _insurance_name = None
-                _insurance_amount = None
-                if _ins_payments:
-                    _insurance_name = _ins_payments[0].get("insurance_name").strip()
-                    _insurance_amount = round(sum(float(p.get("amount") or 0) for p in _ins_payments), 2)
+                # Build descriptive notes when the pending balance is split between patient and insurer
+                ar_notes_parts = []
+                if insurance_amount_sale > 0:
+                    ar_notes_parts.append(
+                        f"Cargo a {insurance_name_sale}: Q{insurance_amount_sale:.2f}"
+                    )
+                if patient_due > 0:
+                    ar_notes_parts.append(f"Saldo del paciente: Q{patient_due:.2f}")
+                ar_notes = " · ".join(ar_notes_parts) if ar_notes_parts else None
                 sdb.table('accounts_receivable').insert({
                     "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
                     "patient_id": data.get("patient_id"),
@@ -524,8 +548,9 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                     "due_date": data.get("ar_due_date") or due_default,
                     "status": "pending",
                     "has_payment_plan": installments > 1, "installments": installments,
-                    "insurance_name": _insurance_name,
-                    "insurance_amount": _insurance_amount,
+                    "insurance_name": insurance_name_sale,
+                    "insurance_amount": insurance_amount_sale if insurance_amount_sale > 0 else None,
+                    "notes": ar_notes,
                     "created_at": now, "updated_at": now,
                 }).execute()
             except Exception as _e:
