@@ -10,6 +10,19 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **REDISEÑO PAGO CON SEGURO (Fase 1 — MVP)** (5 Oct 2026):
+  - [x] 'insurance' eliminado de `valid_methods` en POST /api/clinic/sales — ahora devuelve 400 con mensaje específico
+  - [x] POST /api/clinic/sales acepta campos a nivel venta: `insurance_name` + `insurance_amount` (no en payments)
+  - [x] Validaciones: nombre requerido si hay monto; monto no negativo; monto ≤ total
+  - [x] El cargo al seguro NO entra a caja: va al AR con `balance = patient_due + insurance_amount`, con `notes` descriptivos (ej: "Cargo a Mapfre: Q400.00 · Saldo del paciente: Q100.00")
+  - [x] Un solo AR por venta (nunca dos) — el saldo del paciente va dentro del mismo registro con desglose en notes
+  - [x] Insurance providers auto-upsert desde el campo a nivel sale (sigue funcionando el autocompletado)
+  - [x] **Reporte Aseguradoras** rediseñado: `collected` sólo cuenta pagos aplicados a ARs con `insurance_name` (ya no cuenta promesas al momento de la venta). El `pending` sigue leyendo balance actual de ARs con seguro
+  - [x] **Migración retroactiva** (`services/insurance_migration.py`): idempotente, convierte payments legacy con method='insurance' en ARs al seguro; elimina esos pagos de caja; recalcula amount_paid/due/status en la venta. Corre automáticamente en startup. Endpoint super-admin: `POST /admin/migrations/insurance-payments-migration?clinic_id=` para re-ejecución manual
+  - [x] UI ChargeModal rediseñado: panel azul «¿Parte va a un seguro?» colapsable arriba de los métodos, autocompletado de aseguradoras, resumen 3 columnas (Pagado hoy / Cargo al seguro / Saldo pendiente), bloqueo de confirmar si no cuadra el total
+  - [x] Manual de usuario actualizado: secciones Ventas y Cuentas por cobrar explican el nuevo flujo + cómo registrar el pago del seguro cuando llega
+  - [x] Tests: 18/18 pasando después del fix de orden de validación
+
 - [x] **RECORDATORIOS DE CITA POR WHATSAPP** (24 Sept 2026):
   - [x] Migración: columna `whatsapp_reminder_sent_at` en `appointments`
   - [x] `GET /api/clinic/appointments/whatsapp-reminders?window_hours=24` — lista citas próximas (1–168h) con mensaje pre-formateado y wa.me URL con teléfono normalizado por país

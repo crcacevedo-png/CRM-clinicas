@@ -331,15 +331,14 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
     valid_methods = {"cash", "credit_card", "debit_card", "transfer", "credit", "check", "other"}
     for p in payments:
         m = p.get("payment_method")
-        if m and m not in valid_methods:
-            raise HTTPException(status_code=400, detail=f"Método de pago inválido: {m}")
-        # 'insurance' is no longer a valid payment method — it is captured as a separate
-        # top-level field (`insurance_name` + `insurance_amount`) and recorded as an AR to the insurer.
+        # 'insurance' is no longer a valid payment method — show the specific message first.
         if m == "insurance":
             raise HTTPException(
                 status_code=400,
                 detail="El seguro ya no es un método de pago. Usa los campos insurance_name e insurance_amount en la venta."
             )
+        if m and m not in valid_methods:
+            raise HTTPException(status_code=400, detail=f"Método de pago inválido: {m}")
     # Insurance charge (goes to AR, NOT to caja/payments)
     insurance_name_sale = (data.get("insurance_name") or "").strip() or None
     try:

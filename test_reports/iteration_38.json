@@ -1,0 +1,35 @@
+{
+  "summary": "Backend regression suite for the Insurance-as-AR redesign. Created /app/backend/tests/test_insurance_redesign.py with 18 pytest cases covering all 14 requirements from the review. 17/18 PASSED (94%). Validation (insurance not accepted as payment_method, missing insurance_name, amount > total, negative amount), new flow (Q600 item + Q200 cash + Q400 insurance creates sale with amount_paid=200/amount_due=400/status=partial, exactly ONE cash payment, ONE AR with balance=400 and descriptive notes, insurance_providers auto-upsert), mixed patient+insurance (AR balance=500, notes mention both Q400 insurance and Q100 patient), POS regression (full cash and partial without insurance), insurance report pending→collected after AR payment, migration first-run returns counters, migration idempotent (sales_touched=0 on second call), migration does not touch cash payments, and user guide PDF regression — all PASSED. ONE failure: when a payment with payment_method='insurance' is submitted, the server returns 400 but with the generic message 'Método de pago inválido: insurance' instead of the designed friendly message 'El seguro ya no es un método de pago…' because the generic 'valid_methods' check in sales.py runs BEFORE the explicit 'if m == insurance' branch, making the friendly message dead code.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/clinic/sales",
+        "issue": "Dead code: the explicit 400 'El seguro ya no es un método de pago. Usa los campos insurance_name e insurance_amount en la venta.' never fires because the generic validation 'if m not in valid_methods' (sales.py:334) raises first with 'Método de pago inválido: insurance'. Still returns 400, but the user-facing message is not the designed one. Fix: either (a) move the 'if m == \"insurance\"' check BEFORE the valid_methods check, or (b) remove the dead block.",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_insurance_redesign.py",
+    "/app/test_reports/pytest/insurance_redesign.xml"
+  ],
+  "action_items": [
+    "In /app/backend/routes/sales.py around line 331–342, reorder validation: check `m == 'insurance'` BEFORE the generic `m not in valid_methods` so the specific user-friendly error message is returned."
+  ],
+  "critical_code_review_comments": [
+    "sales.py has grown to 908 lines and mixes POS, cash-sessions, sales CRUD, PDF generation, and services CRUD. Split into submodules (sales_pos.py, cash_sessions.py, sale_pdf.py).",
+    "The AR creation block (line 530+) does not run inside the same try/except that rolls back payments/items on failure. If `accounts_receivable.insert` fails after payments are inserted, the sale is left with inconsistent state (payments recorded but no AR, even though 500 is returned). Consider wrapping AR creation inside the same rollback try or using a DB transaction.",
+    "Insurance report uses two separate `payments` queries with no index hint on `account_receivable_id`; verify an index exists for `payments(account_receivable_id)` to keep this report fast as data grows.",
+    "In reports.py line 668 `prov['sales_count'] += 1` increments per payment row — misleading column name (it is really 'payments_count' not sales count)."
+  ],
+  "updated_files": ["/app/backend/tests/test_insurance_redesign.py"],
+  "success_rate": {"backend": "94% (17/18)", "frontend": "N/A"},
+  "test_credentials": "Super Admin info@cortexiagt.com / Armagedon1980$; Clinic Admin prueba3@gmail.com / Test123456! (clinic c0321ed8-97da-47a1-b601-3b94bffabdd7, branch 79c47aab-3d03-49a0-bcec-b931766aa48e)",
+  "seed_data_creation": "Multiple TEST_INS_<timestamp> insurance names, patient sales (Q600+Q200cash+Q400ins, Q500 full cash, Q500/Q300 partial, Q250 cash-only), and 3 ARs created against existing patients in the clinic. One TEST_INS_RPT AR was paid off via /accounts-receivable/{id}/payment (Q400 transfer). Using an existing patient from the clinic — no new patient was created unless /patients/search was empty.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_insurance_redesign.py is the authoritative regression suite for this redesign. Uses session-scoped fixtures to login once and reuse the open cash session. The suite dynamically picks an existing patient and the current open cash session in MAIN; if neither exists it opens a new session using the first cash register of MAIN. All insurance providers used are prefixed TEST_INS_<timestamp> to avoid collisions between runs. The one failing test documents a real (minor) bug: specific 'seguro ya no es método de pago' message never fires because generic validation runs first — see action_items.",
+  "rca of the issue": "In routes/sales.py:331-342, the loop over payments first calls `if m and m not in valid_methods: raise 400 'Método de pago inválido'`. Since 'insurance' was removed from valid_methods, every insurance-method payment hits this branch and never reaches the subsequent `if m == 'insurance': raise 400 'El seguro ya no es un método de pago…'` on line 338. Fix is a 3-line reorder so the specific message takes precedence."
+}

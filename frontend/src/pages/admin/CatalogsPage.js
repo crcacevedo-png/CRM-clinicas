@@ -872,7 +872,7 @@ M54.5 | Lumbago no especificado | Musculoesqueléticas | 1`;
         onOpenChange={(v) => { if (!v) setCsvCatalog(null); }}
         catalog={csvCatalog}
         headers={getAuthHeaders()}
-        onSuccess={() => fetchCatalogs()}
+        onSuccess={() => fetchData()}
       />
     </div>
   );
