@@ -16,7 +16,8 @@ import { Separator } from '../../components/ui/separator';
 import { toast } from 'sonner';
 import {
   Receipt, Search, AlertCircle, Clock, Users as UsersIcon, DollarSign,
-  CalendarDays, FileText, Wallet, Layers, ChevronLeft, ChevronRight, CreditCard, Plus
+  CalendarDays, FileText, Wallet, Layers, ChevronLeft, ChevronRight, CreditCard, Plus,
+  ShieldCheck, FileDown, Loader2
 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -37,10 +38,12 @@ export default function AccountsReceivablePage() {
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="bg-slate-100 mb-4">
             <TabsTrigger value="accounts" data-testid="ar-tab-accounts"><Receipt className="w-3.5 h-3.5 mr-1" />Cuentas</TabsTrigger>
+            <TabsTrigger value="insurers" data-testid="ar-tab-insurers"><ShieldCheck className="w-3.5 h-3.5 mr-1" />Aseguradoras</TabsTrigger>
             <TabsTrigger value="installments" data-testid="ar-tab-installments"><CalendarDays className="w-3.5 h-3.5 mr-1" />Cuotas</TabsTrigger>
             <TabsTrigger value="aging" data-testid="ar-tab-aging"><Layers className="w-3.5 h-3.5 mr-1" />Antigüedad</TabsTrigger>
           </TabsList>
           <TabsContent value="accounts"><AccountsTab headers={headers} /></TabsContent>
+          <TabsContent value="insurers"><InsurersTab headers={headers} /></TabsContent>
           <TabsContent value="installments"><InstallmentsTab headers={headers} /></TabsContent>
           <TabsContent value="aging"><AgingTab headers={headers} /></TabsContent>
         </Tabs>
@@ -673,6 +676,292 @@ function AgingTab({ headers }) {
           </div>
         </CardContent>
       </Card>
+    </>
+  );
+}
+
+
+/* ============ INSURERS TAB (dedicated AR view) ============ */
+function InsurersTab({ headers }) {
+  const [data, setData] = useState({ providers: [], accounts: [], totals: { pending: 0, insurance_pending: 0, count: 0 } });
+  const [insurance, setInsurance] = useState('all');
+  const [aging, setAging] = useState('all');
+  const [statusF, setStatusF] = useState('pending');
+  const [loading, setLoading] = useState(true);
+  const [payAr, setPayAr] = useState(null);
+  const [stmtOpen, setStmtOpen] = useState(false);
+  const [stmtName, setStmtName] = useState('');
+  const [stmtFrom, setStmtFrom] = useState('');
+  const [stmtTo, setStmtTo] = useState('');
+  const [stmtBusy, setStmtBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (insurance && insurance !== 'all') params.set('insurance', insurance);
+      if (aging && aging !== 'all') params.set('aging', aging);
+      params.set('status', statusF);
+      const r = await axios.get(`${API}/clinic/insurance-receivables?${params}`, { headers });
+      setData(r.data || { providers: [], accounts: [], totals: {} });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Error al cargar aseguradoras');
+    } finally { setLoading(false); }
+  }, [insurance, aging, statusF, headers]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openStatement = (name) => {
+    const today = new Date();
+    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+    setStmtName(name || (insurance !== 'all' ? insurance : ''));
+    setStmtFrom(first.toISOString().slice(0, 10));
+    setStmtTo(today.toISOString().slice(0, 10));
+    setStmtOpen(true);
+  };
+
+  const generateStatement = async () => {
+    if (!stmtName.trim()) { toast.error('Selecciona una aseguradora'); return; }
+    setStmtBusy(true);
+    try {
+      const params = new URLSearchParams({ date_from: stmtFrom, date_to: stmtTo });
+      const r = await axios.get(`${API}/clinic/insurance-receivables/${encodeURIComponent(stmtName)}/statement-pdf?${params}`, { headers });
+      if (r.data?.url) {
+        window.open(r.data.url, '_blank', 'noopener');
+        toast.success('Estado de cuenta generado');
+      } else {
+        toast.error('No se recibió URL del PDF');
+      }
+      setStmtOpen(false);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Error al generar PDF');
+    } finally { setStmtBusy(false); }
+  };
+
+  const bucketClass = (b) => ({
+    '0-30': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    '31-60': 'bg-amber-50 text-amber-700 border-amber-200',
+    '61-90': 'bg-orange-50 text-orange-700 border-orange-200',
+    '90+': 'bg-red-50 text-red-700 border-red-200',
+  }[b] || 'bg-slate-50 text-slate-700 border-slate-200');
+
+  return (
+    <>
+      {/* Totals */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <SummaryCard label="Aseguradoras con saldo" value={data.providers.length} icon={ShieldCheck} color="blue" />
+        <SummaryCard label="Cuentas por cobrar" value={data.totals.count} icon={Receipt} color="slate" />
+        <SummaryCard label="Pendiente aseguradoras" value={`Q${(data.totals.insurance_pending || 0).toFixed(2)}`} icon={DollarSign} color="red" sub="Monto a cargo del seguro" />
+        <SummaryCard label="Pendiente total" value={`Q${(data.totals.pending || 0).toFixed(2)}`} icon={AlertCircle} color="amber" sub="Incluye saldo del paciente" />
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 mb-4 items-end">
+        <div>
+          <Label className="text-xs">Aseguradora</Label>
+          <Select value={insurance} onValueChange={setInsurance}>
+            <SelectTrigger className="w-56 text-sm" data-testid="ins-filter-provider"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas</SelectItem>
+              {data.providers.map(p => (
+                <SelectItem key={p.name} value={p.name}>{p.name} (Q{p.pending.toFixed(2)})</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label className="text-xs">Antigüedad</Label>
+          <Select value={aging} onValueChange={setAging}>
+            <SelectTrigger className="w-40 text-sm" data-testid="ins-filter-aging"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas</SelectItem>
+              <SelectItem value="0-30">0 - 30 días</SelectItem>
+              <SelectItem value="31-60">31 - 60 días</SelectItem>
+              <SelectItem value="61-90">61 - 90 días</SelectItem>
+              <SelectItem value="90+">+ de 90 días</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label className="text-xs">Estado</Label>
+          <Select value={statusF} onValueChange={setStatusF}>
+            <SelectTrigger className="w-40 text-sm" data-testid="ins-filter-status"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pending">Pendientes</SelectItem>
+              <SelectItem value="paid">Pagadas</SelectItem>
+              <SelectItem value="all">Todas</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex-1" />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => openStatement(insurance !== 'all' ? insurance : '')}
+          disabled={data.providers.length === 0}
+          data-testid="ins-statement-btn"
+        >
+          <FileDown className="w-3.5 h-3.5 mr-1" /> Generar estado de cuenta
+        </Button>
+      </div>
+
+      {/* Per-provider aggregates */}
+      {data.providers.length > 0 && (
+        <Card className="mb-4">
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-blue-600" /> Resumen por aseguradora</CardTitle></CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader><TableRow className="bg-slate-50/80">
+                <TableHead className="text-xs font-semibold">Aseguradora</TableHead>
+                <TableHead className="text-xs font-semibold text-center"># Cuentas</TableHead>
+                <TableHead className="text-xs font-semibold text-right">Pendiente seguro</TableHead>
+                <TableHead className="text-xs font-semibold text-right">Pendiente total</TableHead>
+                <TableHead className="text-xs font-semibold text-center">Más antigua</TableHead>
+                <TableHead className="text-xs font-semibold text-right"></TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {data.providers.map(p => (
+                  <TableRow key={p.name} data-testid={`ins-prov-row-${p.name}`}>
+                    <TableCell className="text-sm font-medium">
+                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{p.name}</Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-xs">{p.count}</TableCell>
+                    <TableCell className="text-right text-sm text-blue-700 font-medium">Q{p.insurance_pending.toFixed(2)}</TableCell>
+                    <TableCell className="text-right text-sm font-bold">Q{p.pending.toFixed(2)}</TableCell>
+                    <TableCell className="text-center text-xs">
+                      <span className={`inline-flex items-center gap-1 ${p.oldest_days > 90 ? 'text-red-600' : p.oldest_days > 60 ? 'text-orange-600' : p.oldest_days > 30 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                        <Clock className="w-3 h-3" />{p.oldest_days}d
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setInsurance(p.name)} data-testid={`ins-prov-filter-${p.name}`}>Ver cuentas</Button>
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openStatement(p.name)} data-testid={`ins-prov-pdf-${p.name}`}>
+                          <FileDown className="w-3 h-3 mr-1" /> PDF
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* AR Table */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Cuentas por cobrar — Aseguradoras</CardTitle></CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-blue-600 animate-spin" /></div>
+          ) : (
+            <Table>
+              <TableHeader><TableRow className="bg-slate-50/80">
+                <TableHead className="text-xs font-semibold">Fecha</TableHead>
+                <TableHead className="text-xs font-semibold">No. Venta</TableHead>
+                <TableHead className="text-xs font-semibold">Paciente</TableHead>
+                <TableHead className="text-xs font-semibold">Aseguradora</TableHead>
+                <TableHead className="text-xs font-semibold text-right">Cargo seguro</TableHead>
+                <TableHead className="text-xs font-semibold text-right">Saldo total</TableHead>
+                <TableHead className="text-xs font-semibold text-center">Antigüedad</TableHead>
+                <TableHead className="text-xs font-semibold text-center">Estado</TableHead>
+                <TableHead className="text-xs font-semibold text-right"></TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {data.accounts.map(a => (
+                  <TableRow key={a.id} data-testid={`ins-ar-row-${a.id}`}>
+                    <TableCell className="text-xs text-slate-500">{(a.created_at || '').substring(0, 10)}</TableCell>
+                    <TableCell className="text-xs font-mono">{a.sale_number || '—'}</TableCell>
+                    <TableCell className="text-sm font-medium">{a.patient_name}</TableCell>
+                    <TableCell className="text-xs">
+                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">{a.insurance_name}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-blue-700 font-medium">Q{(+a.insurance_amount || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-right text-sm font-bold">Q{(a.balance || 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className={`text-[10px] ${bucketClass(a.aging_bucket)}`}>{a.aging_days}d · {a.aging_bucket}</Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="outline" className={`text-xs ${a.status === 'paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{STATUS_LABEL[a.status] || a.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {a.status !== 'paid' && (
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                          onClick={() => setPayAr(a)}
+                          data-testid={`ins-ar-pay-${a.id}`}
+                        >
+                          <DollarSign className="w-3 h-3 mr-1" /> Registrar pago
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {data.accounts.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-10 text-slate-400">
+                      <ShieldCheck className="w-10 h-10 mx-auto mb-2 opacity-30" strokeWidth={1} />
+                      No hay cuentas por cobrar a aseguradoras con los filtros actuales.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Register payment — reuse existing dialog */}
+      <RegisterPaymentDialog
+        open={!!payAr}
+        onClose={() => setPayAr(null)}
+        ar={payAr}
+        headers={headers}
+        onDone={() => { setPayAr(null); load(); }}
+      />
+
+      {/* Statement dialog */}
+      <Dialog open={stmtOpen} onOpenChange={setStmtOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-700">
+              <FileDown className="w-5 h-5" /> Estado de cuenta por aseguradora
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Aseguradora</Label>
+              <Select value={stmtName} onValueChange={setStmtName}>
+                <SelectTrigger className="mt-1 text-sm" data-testid="stmt-provider-select"><SelectValue placeholder="Selecciona una aseguradora" /></SelectTrigger>
+                <SelectContent>
+                  {data.providers.map(p => (
+                    <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Desde</Label>
+                <Input type="date" className="mt-1 text-sm h-8" value={stmtFrom} onChange={e => setStmtFrom(e.target.value)} data-testid="stmt-date-from" />
+              </div>
+              <div>
+                <Label className="text-xs">Hasta</Label>
+                <Input type="date" className="mt-1 text-sm h-8" value={stmtTo} onChange={e => setStmtTo(e.target.value)} data-testid="stmt-date-to" />
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500">El PDF incluye todas las cuentas por cobrar creadas en el período para esa aseguradora, con antigüedad, pagos recibidos y saldo pendiente.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStmtOpen(false)} disabled={stmtBusy}>Cancelar</Button>
+            <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={generateStatement} disabled={stmtBusy || !stmtName.trim()} data-testid="stmt-generate-btn">
+              {stmtBusy ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Generando...</> : <><FileDown className="w-4 h-4 mr-1" /> Generar PDF</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

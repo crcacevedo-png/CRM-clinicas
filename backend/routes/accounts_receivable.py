@@ -364,3 +364,291 @@ async def create_payment_plan(ar_id: str, data: dict, ctx=Depends(require_clinic
         raise HTTPException(status_code=500, detail="Error")
 
 
+
+
+# ============== INSURANCE RECEIVABLES (dedicated view) ==============
+
+def _aging_bucket(days_old: int) -> str:
+    if days_old <= 30:
+        return "0-30"
+    if days_old <= 60:
+        return "31-60"
+    if days_old <= 90:
+        return "61-90"
+    return "90+"
+
+
+@router.get("/clinic/insurance-receivables")
+async def insurance_receivables(
+    insurance: str = "", aging: str = "", status: str = "pending",
+    ctx=Depends(require_clinic_member),
+):
+    """List accounts receivable owed by insurers.
+
+    Filters:
+      - `insurance` (optional, case-insensitive): single provider name.
+      - `aging` (optional): bucket "0-30" | "31-60" | "61-90" | "90+".
+      - `status` (optional): "pending" (default — hides fully paid), "paid", "all".
+
+    Response:
+      {
+        "providers": [{ name, pending, insurance_pending, count, oldest_days }],
+        "accounts": [ ...enriched AR rows with aging_days + aging_bucket + insurance_* ],
+        "totals": { pending, insurance_pending, count }
+      }
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        from datetime import datetime as dt
+        today = dt.now(timezone.utc).date()
+        query = (
+            sdb.table('accounts_receivable').select('*')
+            .eq('clinic_id', clinic_id)
+            .not_.is_('insurance_name', 'null')
+        )
+        if status == 'pending':
+            query = query.neq('status', 'paid')
+        elif status == 'paid':
+            query = query.eq('status', 'paid')
+        # 'all' → no status filter
+        if insurance:
+            query = query.ilike('insurance_name', insurance)
+        rows = query.order('created_at', desc=False).execute().data or []
+
+        # Enrich with patient/sale info and aging bucket
+        rows = _enrich_ar(rows)
+        for ar in rows:
+            try:
+                created = dt.fromisoformat((ar.get('created_at') or '').replace('Z', '+00:00')).date()
+                age = (today - created).days
+            except Exception:
+                age = 0
+            ar['aging_days'] = max(0, age)
+            ar['aging_bucket'] = _aging_bucket(ar['aging_days'])
+
+        if aging in ("0-30", "31-60", "61-90", "90+"):
+            rows = [r for r in rows if r['aging_bucket'] == aging]
+
+        # Build per-provider aggregates
+        prov_map: dict = {}
+        for r in rows:
+            name = (r.get('insurance_name') or '').strip()
+            if not name:
+                continue
+            key = name.lower()
+            p = prov_map.setdefault(key, {
+                "name": name,
+                "pending": 0.0,          # total balance owed (patient + insurer portion)
+                "insurance_pending": 0.0,  # insurer-only portion
+                "count": 0,
+                "oldest_days": 0,
+            })
+            p["pending"] += float(r.get('balance') or 0)
+            p["insurance_pending"] += float(r.get('insurance_amount') or 0)
+            p["count"] += 1
+            if r['aging_days'] > p["oldest_days"]:
+                p["oldest_days"] = r['aging_days']
+
+        providers = sorted(
+            [{"name": v["name"], "pending": round(v["pending"], 2),
+              "insurance_pending": round(v["insurance_pending"], 2),
+              "count": v["count"], "oldest_days": v["oldest_days"]} for v in prov_map.values()],
+            key=lambda x: -x["pending"],
+        )
+
+        totals = {
+            "pending": round(sum(float(r.get('balance') or 0) for r in rows), 2),
+            "insurance_pending": round(sum(float(r.get('insurance_amount') or 0) for r in rows), 2),
+            "count": len(rows),
+        }
+        return {"providers": providers, "accounts": rows, "totals": totals}
+    except Exception as e:
+        logger.error(f"Insurance receivables error: {e}")
+        raise HTTPException(status_code=500, detail="Error al listar cuentas de aseguradoras")
+
+
+@router.get("/clinic/insurance-receivables/{insurance_name}/statement-pdf")
+async def insurance_statement_pdf(
+    insurance_name: str,
+    date_from: str = "", date_to: str = "",
+    ctx=Depends(require_clinic_member),
+):
+    """Generate a downloadable Account Statement PDF for a given insurer
+    across the selected period. Includes all AR rows for that insurer created
+    in [date_from..date_to], with aging, payments received in the window, and
+    pending balance totals.
+
+    Returns { url } to a signed Supabase Storage URL.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        from datetime import datetime as dt
+        if not insurance_name.strip():
+            raise HTTPException(status_code=400, detail="Aseguradora requerida")
+
+        # Default to current month if no range provided
+        today = dt.now(timezone.utc).date()
+        if not date_from:
+            date_from = today.replace(day=1).isoformat()
+        if not date_to:
+            date_to = today.isoformat()
+
+        # Fetch clinic info for header
+        clinic = sdb.table('clinics').select('name,address,phone,country').eq('id', clinic_id).maybe_single().execute()
+        clinic_data = getattr(clinic, 'data', {}) if clinic else {}
+
+        # Fetch ARs for this insurer in the period
+        rows = (
+            sdb.table('accounts_receivable').select('*')
+            .eq('clinic_id', clinic_id)
+            .ilike('insurance_name', insurance_name)
+            .gte('created_at', date_from)
+            .lte('created_at', f"{date_to}T23:59:59Z")
+            .order('created_at', desc=False)
+            .execute()
+            .data or []
+        )
+        rows = _enrich_ar(rows)
+
+        # Payments received on these ARs within the window (for "pagado en el periodo")
+        ar_ids = [r['id'] for r in rows]
+        pays_in_window = []
+        if ar_ids:
+            pays_in_window = (
+                sdb.table('payments').select('account_receivable_id,amount,paid_at,payment_method,reference')
+                .eq('clinic_id', clinic_id)
+                .in_('account_receivable_id', ar_ids)
+                .gte('paid_at', date_from)
+                .lte('paid_at', f"{date_to}T23:59:59Z")
+                .execute()
+                .data or []
+            )
+
+        # Build aggregates per AR for the window
+        paid_in_window_by_ar: dict = {}
+        for p in pays_in_window:
+            k = p['account_receivable_id']
+            paid_in_window_by_ar[k] = paid_in_window_by_ar.get(k, 0.0) + float(p.get('amount') or 0)
+
+        # Totals
+        total_charged = round(sum(float(r.get('insurance_amount') or 0) for r in rows), 2)
+        total_paid_window = round(sum(paid_in_window_by_ar.values()), 2)
+        total_pending = round(sum(float(r.get('balance') or 0) for r in rows if r.get('status') != 'paid'), 2)
+
+        # Build PDF with reportlab
+        from reportlab.lib.pagesizes import letter, landscape
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.units import mm
+        from io import BytesIO
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=15*mm, rightMargin=15*mm, topMargin=12*mm, bottomMargin=12*mm)
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('t', parent=styles['Heading1'], fontSize=16, textColor=colors.HexColor('#0D9488'))
+        sub_style = ParagraphStyle('s', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor('#334155'))
+        label_style = ParagraphStyle('l', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#64748B'))
+
+        story = []
+        story.append(Paragraph(f"Estado de cuenta — {insurance_name.strip()}", title_style))
+        story.append(Paragraph(
+            f"{(clinic_data or {}).get('name','')} · {(clinic_data or {}).get('address','') or ''}",
+            sub_style))
+        story.append(Paragraph(f"Período: <b>{date_from}</b> al <b>{date_to}</b>", sub_style))
+        story.append(Spacer(1, 6))
+
+        # Summary cards (as a 3-col table)
+        sum_data = [[
+            Paragraph("Cargado al seguro", label_style),
+            Paragraph("Pagado en el período", label_style),
+            Paragraph("Saldo pendiente", label_style),
+        ], [
+            Paragraph(f"<b>Q{total_charged:.2f}</b>", styles['Heading3']),
+            Paragraph(f"<b>Q{total_paid_window:.2f}</b>", styles['Heading3']),
+            Paragraph(f"<b>Q{total_pending:.2f}</b>", styles['Heading3']),
+        ]]
+        sum_table = Table(sum_data, colWidths=[70*mm, 70*mm, 70*mm])
+        sum_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#F1F5F9')),
+            ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#CBD5E1')),
+            ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#E2E8F0')),
+            ('PADDING', (0, 0), (-1, -1), 6),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ]))
+        story.append(sum_table)
+        story.append(Spacer(1, 10))
+
+        # Detail table
+        story.append(Paragraph("Detalle de cuentas por cobrar", styles['Heading3']))
+        detail_rows = [["Fecha", "No. Venta", "Paciente", "Cargado al seguro (Q)", "Pagado en periodo (Q)", "Saldo (Q)", "Antigüedad", "Estado"]]
+        for r in rows:
+            try:
+                d = dt.fromisoformat(r['created_at'].replace('Z', '+00:00')).date()
+                date_label = d.isoformat()
+                aging_days = (today - d).days
+            except Exception:
+                date_label = (r.get('created_at') or '')[:10]
+                aging_days = 0
+            detail_rows.append([
+                date_label,
+                r.get('sale_number') or '—',
+                r.get('patient_name') or '—',
+                f"{float(r.get('insurance_amount') or 0):.2f}",
+                f"{paid_in_window_by_ar.get(r['id'], 0):.2f}",
+                f"{float(r.get('balance') or 0):.2f}",
+                f"{aging_days}d",
+                "Pagada" if r.get('status') == 'paid' else "Pendiente",
+            ])
+        if len(detail_rows) == 1:
+            detail_rows.append(["—", "—", "Sin movimientos en el período", "—", "—", "—", "—", "—"])
+        d_table = Table(detail_rows, colWidths=[22*mm, 22*mm, 55*mm, 30*mm, 32*mm, 25*mm, 20*mm, 22*mm], repeatRows=1)
+        d_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0D9488')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#CBD5E1')),
+            ('ALIGN', (3, 1), (6, -1), 'RIGHT'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8FAFC')]),
+            ('PADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(d_table)
+        story.append(Spacer(1, 10))
+
+        # Totals footer
+        story.append(Paragraph(
+            f"<b>Total pendiente de pago a la clínica por {insurance_name.strip()}: Q{total_pending:.2f}</b>",
+            ParagraphStyle('tot', parent=styles['Normal'], fontSize=11, textColor=colors.HexColor('#B91C1C'))
+        ))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"Generado el {dt.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} — por favor confirme recepción.",
+            label_style))
+
+        doc.build(story)
+        pdf_bytes = buf.getvalue()
+        buf.close()
+
+        # Upload to Supabase Storage with signed URL
+        slug = ''.join(c if c.isalnum() else '_' for c in insurance_name.strip().lower())[:40]
+        path = f"{clinic_id}/insurance_statements/{slug}_{date_from}_{date_to}_{int(dt.now(timezone.utc).timestamp())}.pdf"
+        supabase_admin.storage.from_('patient-files').upload(path, pdf_bytes, {"content-type": "application/pdf", "upsert": "true"})
+        signed = supabase_admin.storage.from_('patient-files').create_signed_url(path, 3600)
+        return {
+            "url": signed.get('signedURL') or signed.get('signedUrl', ''),
+            "insurance_name": insurance_name.strip(),
+            "date_from": date_from,
+            "date_to": date_to,
+            "totals": {
+                "charged": total_charged,
+                "paid_in_period": total_paid_window,
+                "pending": total_pending,
+                "count": len(rows),
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Insurance statement PDF error: {e}")
+        raise HTTPException(status_code=500, detail="Error al generar estado de cuenta")
