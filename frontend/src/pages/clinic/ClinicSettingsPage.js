@@ -150,7 +150,7 @@ export default function ClinicSettingsPage() {
               toast.success(`Suscripción activa: ${sub.data.plan_name}`);
               return;
             }
-          } catch (_) {}
+          } catch (e) { console.warn('No se pudo verificar el estado del pago:', e); }
           if (tries < 5) setTimeout(() => poll(tries + 1), 1200);
         };
         poll();
@@ -195,7 +195,7 @@ export default function ClinicSettingsPage() {
           setSelectedCalendar(gcalRes.data.calendar_id || 'primary');
           fetchCalendars();
         }
-      } catch {} finally { setLoading(false); }
+      } catch (e) { console.error('Error al cargar la configuración de la clínica:', e); } finally { setLoading(false); }
     };
     load();
     fetchMembers();
@@ -205,7 +205,7 @@ export default function ClinicSettingsPage() {
     try {
       const res = await axios.get(`${API}/clinic/members`, { headers });
       setMembers(res.data || []);
-    } catch {}
+    } catch (e) { console.error('Error al cargar miembros:', e); }
   };
 
   const fetchCalendars = async () => {
@@ -213,7 +213,7 @@ export default function ClinicSettingsPage() {
     try {
       const res = await axios.get(`${API}/google-calendar/calendars`, { headers });
       setCalendars(res.data || []);
-    } catch {} finally { setLoadingCalendars(false); }
+    } catch (e) { console.error('Error al cargar calendarios:', e); } finally { setLoadingCalendars(false); }
   };
 
   const saveClinic = async () => {

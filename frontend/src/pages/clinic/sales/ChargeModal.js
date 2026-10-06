@@ -18,7 +18,7 @@ import { API } from './constants';
  *   - A clear summary line: Pagado hoy / Cargo al seguro / Saldo pendiente.
  */
 export default function ChargeModal({ open, onClose, total, onConfirm, hasPatient, patientName }) {
-  const [payments, setPayments] = useState([{ payment_method: 'cash', amount: 0, reference: '' }]);
+  const [payments, setPayments] = useState([{ _id: crypto.randomUUID(), payment_method: 'cash', amount: 0, reference: '' }]);
   const [submitting, setSubmitting] = useState(false);
   const [arDueDate, setArDueDate] = useState('');
   const [arInstallments, setArInstallments] = useState(1);
@@ -30,7 +30,7 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
 
   useEffect(() => {
     if (open) {
-      setPayments([{ payment_method: 'cash', amount: total, reference: '' }]);
+      setPayments([{ _id: crypto.randomUUID(), payment_method: 'cash', amount: total, reference: '' }]);
       const d = new Date(); d.setDate(d.getDate() + 30);
       setArDueDate(d.toISOString().slice(0, 10));
       setArInstallments(1);
@@ -61,7 +61,7 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
 
   const round2 = (n) => Math.round(n * 100) / 100;
 
-  const addPay = () => setPayments(p => [...p, { payment_method: 'credit_card', amount: 0, reference: '' }]);
+  const addPay = () => setPayments(p => [...p, { _id: crypto.randomUUID(), payment_method: 'credit_card', amount: 0, reference: '' }]);
   const removePay = (i) => setPayments(p => p.filter((_, idx) => idx !== i));
   const updPay = (i, field, value) => setPayments(p => p.map((x, idx) => idx === i ? { ...x, [field]: value } : x));
 
@@ -182,7 +182,7 @@ export default function ChargeModal({ open, onClose, total, onConfirm, hasPatien
             <p className="text-xs font-semibold text-emerald-800 mb-1.5 uppercase tracking-wide">Pago del paciente</p>
           </div>
           {payments.map((p, i) => (
-            <div key={i} className="flex items-end gap-2 p-2 border rounded">
+            <div key={p._id} className="flex items-end gap-2 p-2 border rounded">
               <div className="flex-1">
                 <Label className="text-xs">Método</Label>
                 <Select value={p.payment_method} onValueChange={v => updPay(i, 'payment_method', v)}>

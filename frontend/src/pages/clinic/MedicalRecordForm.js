@@ -206,7 +206,7 @@ function ICD10Search({ selected, onSelect, onRemove, headers }) {
       {selected.length > 0 && (
         <div className="space-y-1.5 mt-3">
           {selected.map((d, i) => (
-            <div key={i} className={`flex items-center gap-2 p-2 rounded-md border ${d.type === 'primary' ? 'bg-teal-50 border-teal-200' : 'bg-slate-50 border-slate-200'}`}>
+            <div key={d.code || d.description} className={`flex items-center gap-2 p-2 rounded-md border ${d.type === 'primary' ? 'bg-teal-50 border-teal-200' : 'bg-slate-50 border-slate-200'}`}>
               {d.code ? (
                 <Badge variant="outline" className={`text-xs font-mono shrink-0 ${d.type === 'primary' ? 'bg-teal-100 text-teal-700' : ''}`}>
                   {d.code}
@@ -315,7 +315,7 @@ export default function MedicalRecordForm() {
           try {
             const aRes = await axios.get(`${API}/clinic/appointments/${appointmentId}`, { headers });
             if (aRes.data?.reason) setChiefComplaint(aRes.data.reason);
-          } catch {}
+          } catch (e) { console.warn('No se pudo precargar el motivo de la cita:', e); }
         }
       } catch (err) {
         toast.error('Error al cargar datos');

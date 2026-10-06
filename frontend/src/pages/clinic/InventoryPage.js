@@ -296,7 +296,7 @@ function StockTab({ headers, branches, activeBranch }) {
           axios.get(`${API}/clinic/inventory/alerts`, {headers}),
         ]);
         setStocks(sRes.data||[]);setAlerts(aRes.data||{low_stock:[],expiring:[]});
-      } catch {} finally { setLoading(false); }
+      } catch (e) { console.error('Error al cargar inventario:', e); } finally { setLoading(false); }
     };
     load();
   }, [branchFilter, headers]);
@@ -415,7 +415,7 @@ function PurchasesTab({ headers, branches, activeBranch }) {
           axios.get(`${API}/clinic/inventory/suppliers`, {headers}),
         ]);
         setOrders(oRes.data.orders||[]); setSuppliers(sRes.data||[]);
-      } catch {} finally { setLoading(false); }
+      } catch (e) { console.error('Error al cargar órdenes de compra:', e); } finally { setLoading(false); }
     };
     load();
   }, [headers]);
@@ -430,7 +430,7 @@ function PurchasesTab({ headers, branches, activeBranch }) {
     try {
       const res = await axios.get(`${API}/clinic/inventory/products/search?q=${encodeURIComponent(q)}`, {headers});
       setProductSearch(res.data||[]);
-    } catch {}
+    } catch (e) { console.error('Error al buscar productos:', e); }
   };
 
   const selectProduct = (p, idx) => {
@@ -584,7 +584,7 @@ function MovementsTab({ headers, branches, activeBranch }) {
         if (branchFilter!=='all') params.set('branch_id', branchFilter);
         const res = await axios.get(`${API}/clinic/inventory/movements?${params}`, {headers});
         setMovements(res.data.movements||[]); setTotal(res.data.total||0); setPages(res.data.pages||1);
-      } catch {} finally { setLoading(false); }
+      } catch (e) { console.error('Error al cargar movimientos de inventario:', e); } finally { setLoading(false); }
     };
     load();
   }, [page, typeFilter, branchFilter, headers]);
@@ -645,7 +645,7 @@ function SuppliersTab({ headers }) {
 
   const fetch = useCallback(async () => {
     try { const res = await axios.get(`${API}/clinic/inventory/suppliers`, {headers}); setSuppliers(res.data||[]); }
-    catch {} finally { setLoading(false); }
+    catch (e) { console.error('Error al cargar proveedores:', e); } finally { setLoading(false); }
   }, [headers]);
 
   useEffect(() => { fetch(); }, [fetch]);

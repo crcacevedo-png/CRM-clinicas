@@ -26,6 +26,7 @@ const ROUTES = [
 const emptyItem = () => ({
   medication_name: '', presentation: '', dosage: '',
   frequency: '', route: 'oral', duration: '', instructions: '',
+  _key: crypto.randomUUID(),
   _searchResults: [], _showSearch: false, _searchQuery: '',
 });
 
@@ -37,7 +38,7 @@ function MedSearch({ item, index, onUpdate, headers }) {
     try {
       const res = await axios.get(`${API}/clinic/medications/search?q=${encodeURIComponent(q)}`, { headers });
       onUpdate(index, { _searchResults: res.data || [], _showSearch: true });
-    } catch {}
+    } catch (e) { console.error('Error buscando medicamentos:', e); }
   }, [headers, index, onUpdate]);
 
   const handleInput = (val) => {
@@ -205,7 +206,7 @@ export default function ConsultationPrescriptionSection({ patientId, headers, en
           </Button>
         </div>
         {items.map((item, idx) => (
-          <div key={idx} className="p-3 border border-slate-200 rounded-lg bg-slate-50/50 space-y-2" data-testid={`presc-med-row-${idx}`}>
+          <div key={item._key} className="p-3 border border-slate-200 rounded-lg bg-slate-50/50 space-y-2" data-testid={`presc-med-row-${idx}`}>
             <div className="flex items-start gap-2">
               <Badge className="bg-teal-600 text-white mt-1 shrink-0">{idx + 1}</Badge>
               <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2">

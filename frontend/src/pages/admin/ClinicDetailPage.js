@@ -108,14 +108,14 @@ export default function ClinicDetailPage() {
       const res = await axios.get(`${API}/admin/clinics/${id}/features`, { headers: getAuthHeaders() });
       setClinicFeatures(res.data.features || []);
       setClinicPlan(res.data.plan || '');
-    } catch {}
+    } catch (e) { console.error('Error al cargar features de la clínica:', e); }
   };
 
   const fetchAllPlans = async () => {
     try {
       const res = await axios.get(`${API}/admin/plans`, { headers: getAuthHeaders() });
       setAllPlans(res.data || []);
-    } catch {}
+    } catch (e) { console.error('Error al cargar planes:', e); }
   };
 
   const handleChangePlan = async (planCode) => {
