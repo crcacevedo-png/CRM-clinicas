@@ -193,6 +193,19 @@ GUIDE_SECTIONS = [
         ],
     },
     {
+        "title": "Suscripción y pagos", "module": "billing_admin", "image": None,
+        "intro": "Gestión del plan y método de pago de tu clínica. Solo visible para administradores.",
+        "bullets": [
+            "Dónde encontrarlo: Configuración › Suscripción. Ahí ves tu plan actual, el ciclo (mensual/anual), el próximo cobro y el estado de la suscripción.",
+            "Cambiar método de pago: entra al Portal de Pagos (botón en Suscripción). Es una ventana segura de Stripe donde puedes actualizar la tarjeta, descargar facturas pasadas o cancelar la suscripción.",
+            "Banner rojo «Pago vencido»: aparece en la parte superior cuando un cobro mensual falla. Muestra los días restantes antes de que la clínica sea bloqueada y, si Stripe tiene un reintento automático programado, también muestra la fecha del próximo intento.",
+            "Qué hacer con el banner: presiona «Actualizar método de pago» para abrir el Portal y corregir la tarjeta. Stripe reintentará el cobro automáticamente en los próximos días; no es necesario pagar manualmente.",
+            "Pantalla «Pago vencido»: si el período de gracia termina sin pago, la clínica queda bloqueada y todos los usuarios ven una pantalla con un único botón: «Actualizar método de pago». Una vez pagada la factura (desde el Portal), el acceso se restablece automáticamente en segundos.",
+            "Clínica de cortesía: si tu clínica fue marcada como cortesía por el equipo de soporte, no entra al flujo de cobros y nunca verás el banner ni la pantalla de bloqueo.",
+            "Factura por fallo: cuando un cobro falla, el administrador recibe un correo con el motivo del rechazo (tarjeta rechazada, fondos insuficientes, etc.) y la fecha del próximo reintento.",
+        ],
+    },
+    {
         "title": "Recomendaciones y soporte", "module": None, "image": None,
         "intro": "Buenas prácticas para aprovechar el sistema.",
         "bullets": [
