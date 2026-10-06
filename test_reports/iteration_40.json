@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only testing of Stripe billing integration (Flow B / BYOK). Created /app/backend/tests/test_stripe_billing.py with 12 tests covering subscription, plans, checkout error paths, portal, status, webhook signature, super-admin sync/overview/transactions, and RBAC. 11/12 passed. 1 failure: POST /api/webhook/stripe returns 500 instead of 400 when STRIPE_WEBHOOK_SECRET is not configured, because the dev-only JSON fallback crashes on malformed events.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/webhook/stripe",
+        "issue": "Returns 500 Internal Server Error instead of 400 'Firma inválida' when STRIPE_WEBHOOK_SECRET is not set. Code falls into the dev-only JSON fallback (billing.py:404-406) which parses an arbitrary body and then crashes at line 412 with KeyError: 'data'. This is both a bug (wrong status code) and a security risk — unverified webhooks must be rejected in production. Reproduction: `curl -X POST $BACKEND/api/webhook/stripe -H 'stripe-signature: bogus' -d '{\"type\":\"x\"}'`.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_stripe_billing.py",
+    "/app/test_reports/pytest/stripe_billing.xml"
+  ],
+  "action_items": [
+    "Remove the dev-only fallback branch in /app/backend/routes/billing.py stripe_webhook() (lines 401-406). If STRIPE_WEBHOOK_SECRET is not configured, respond with 400/503 immediately instead of trusting the body. This fixes the 500 and closes the signature-bypass risk.",
+    "Add STRIPE_WEBHOOK_SECRET to backend/.env (via Manage → Secrets) once the operator wires Stripe webhooks."
+  ],
+  "critical_code_review_comments": [
+    "billing.py:401-406 — Dev fallback parses unsigned webhook payloads; this must be removed or gated behind an explicit DEBUG flag. Any crafted request without stripe-signature currently bypasses auth and reaches the event dispatcher.",
+    "billing.py:412 — Direct index into event['data']['object'] has no defensive check; even a signed-but-malformed event could 500. Wrap in try/except or use .get() chains.",
+    "billing.py:135 — Looping stripe.Product.list().auto_paging_iter() per plan is O(N*M) Stripe API calls. Build the product map once outside the plan loop.",
+    "billing.py:388 — Status 500 for Stripe portal errors leaks the Stripe error message prefix to clients; consider standardizing error payloads."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_stripe_billing.py (created)"
+  ],
+  "success_rate": {"backend": "91.7% (11/12)", "frontend": "n/a"},
+  "test_credentials": "Super Admin: info@cortexiagt.com / Armagedon1980$ · Clinic Admin: prueba3@gmail.com / Test123456!",
+  "seed_data_creation": "None — tests are read-only against existing fixtures. One billing_transactions row would be created if checkout succeeded, but with placeholder STRIPE_API_KEY checkout returns 400 before any insert.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All Stripe billing endpoints verified for structure/RBAC/error handling with placeholder STRIPE_API_KEY=sk_test_emergent (Stripe returns 'Invalid API Key' as expected). Only outstanding failure is webhook returning 500 instead of 400 when STRIPE_WEBHOOK_SECRET is unset. Once E1 removes the dev fallback in billing.py:401-406, rerun `pytest /app/backend/tests/test_stripe_billing.py::TestWebhook`. The sync-catalog test validates error-path behavior; when a real sk_live_* key is provisioned the test will need relaxation (counters.errors may be empty).",
+  "rca of the issue": "Webhook endpoint has a dev-only branch: `if STRIPE_WEBHOOK_SECRET: construct_event else: json.loads(payload)`. With no secret in env, the fallback parses {\"type\":\"x\"} successfully, assigns `event` to a dict without a 'data' key, then line 412 (`event['data']['object']`) raises KeyError. FastAPI converts the uncaught exception to 500. Fix: remove the fallback and always require a signature, returning 400 'Firma inválida' (or 503 'Stripe no está configurado') when STRIPE_WEBHOOK_SECRET is missing."
+}

@@ -392,24 +392,31 @@ async def billing_portal(payload: dict, ctx=Depends(require_clinic_member)):
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
-    """Stripe → us. Keeps our DB in sync with subscription lifecycle events."""
+    """Stripe → us. Keeps our DB in sync with subscription lifecycle events.
+
+    Requires STRIPE_WEBHOOK_SECRET to be configured. Any unsigned/invalid
+    request is rejected with 400 — unsigned payloads are NEVER trusted.
+    """
     if not STRIPE_ENABLED:
         raise HTTPException(status_code=503, detail="Stripe no está configurado")
+    if not STRIPE_WEBHOOK_SECRET:
+        # Hard reject when the secret is missing — never trust unsigned bodies.
+        logger.warning("stripe webhook rejected: STRIPE_WEBHOOK_SECRET not configured")
+        raise HTTPException(status_code=400, detail="Firma inválida")
     payload = await request.body()
     sig = request.headers.get('stripe-signature', '')
     try:
-        if STRIPE_WEBHOOK_SECRET:
-            event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-        else:
-            # Dev-only fallback: trust the body (never do this in prod)
-            import json as _json
-            event = _json.loads(payload)
+        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
         logger.warning(f"stripe webhook sig verify failed: {e}")
         raise HTTPException(status_code=400, detail="Firma inválida")
 
     etype = event.get('type') if isinstance(event, dict) else event['type']
-    obj = (event['data']['object'] if isinstance(event, dict) else event.data.object)
+    try:
+        obj = event['data']['object'] if isinstance(event, dict) else event.data.object
+    except (KeyError, AttributeError, TypeError):
+        logger.warning(f"stripe webhook malformed event: {etype}")
+        return {"status": "ignored"}
     try:
         if etype == 'checkout.session.completed':
             _apply_checkout_completion(obj)

@@ -10,6 +10,16 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **INTEGRACIÓN STRIPE SAAS** (6 Oct 2026):
+  - [x] Flow B (BYOK) — `STRIPE_API_KEY` leído del env, operador agrega su key real en Manage → Secrets (Guatemala no soporta sandbox Stripe nativo)
+  - [x] Migración: columnas `stripe_customer_id`, `stripe_subscription_id`, `stripe_subscription_status`, `billing_cycle` en `clinics`; tabla `billing_transactions`; `stripe_price_monthly/yearly/product_id` en `plans`
+  - [x] Backend: `POST /api/admin/billing/sync-stripe-catalog` crea Products+Prices idempotente; `POST /api/billing/checkout` crea Checkout session en modo subscription (mensual/anual) con metadata; `GET /api/billing/status/{session_id}` polling con fallback a Stripe; `POST /api/billing/portal` abre Customer Portal; `POST /api/webhook/stripe` maneja checkout.session.completed, customer.subscription.updated/created/deleted, invoice.payment_failed; `GET /api/plans` para la UI
+  - [x] Super Admin Cobros: 5 KPIs (MRR real / ARR / Con suscripción / Clínicas activas / Total), banner Stripe conectado, 3 pestañas (Clínicas con status Stripe por fila + ciclo / Planes con badge Sincronizado / Transacciones), botón "Sincronizar planes con Stripe"
+  - [x] Clínica Settings → Plan: selector de plan + ciclo (mensual/anual), botón "Activar/Cambiar plan" → redirige a Stripe Checkout, botón "Administrar facturación" → Stripe Customer Portal, banner con status real de la suscripción + próximo cobro
+  - [x] Callback `?billing=success&session_id=` con polling automático de status para refrescar UI
+  - [x] Seguridad: webhook rechaza requests sin `STRIPE_WEBHOOK_SECRET` configurado (400); nunca confía en payloads sin firma; event dispatcher con try/except defensivo
+  - [x] Tests: 12/12 pasando después del fix de webhook (`/app/backend/tests/test_stripe_billing.py`)
+
 - [x] **VISTA POR COBRAR A ASEGURADORAS + ESTADOS DE CUENTA PDF** (5 Oct 2026):
   - [x] `GET /api/clinic/insurance-receivables` — endpoint dedicado con filtros `insurance`, `aging` (0-30/31-60/61-90/90+), `status` (pending/paid/all). Devuelve providers (ordenados DESC por pending) + accounts enriched con aging_days/aging_bucket + totals
   - [x] `GET /api/clinic/insurance-receivables/{insurance_name}/statement-pdf?date_from=&date_to=` — genera PDF landscape con reportlab, cabecera con clínica, 3 cards (Cargado / Pagado en periodo / Pendiente), tabla detallada por AR, totales. Sube a Supabase Storage, devuelve URL firmada por 1h
