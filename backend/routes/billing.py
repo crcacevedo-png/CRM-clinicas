@@ -130,18 +130,31 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
             stats["skipped"] += 1
             continue
         try:
-            # Find or create product by metadata.plan_code
+            # Find or create product by metadata.plan_code. Be defensive — some
+            # Stripe accounts return products with metadata=None (vs empty dict),
+            # and dict-like .get on the StripeObject can misbehave on edge cases.
             product = None
             for p in stripe.Product.list(active=True, limit=100).auto_paging_iter():
-                if p.metadata.get('plan_code') == code:
+                try:
+                    meta = p.metadata or {}
+                    meta_code = meta.get('plan_code') if hasattr(meta, 'get') else (meta['plan_code'] if 'plan_code' in meta else None)
+                except Exception:
+                    meta_code = None
+                if meta_code == code:
                     product = p
                     break
             if not product:
-                product = stripe.Product.create(
-                    name=f"ClinicWise · {plan.get('name') or code}",
-                    tax_code=tax_code,
-                    metadata={"managed_by": "clinicwise", "plan_code": code},
-                )
+                create_kwargs = {
+                    "name": f"ClinicWise · {plan.get('name') or code}",
+                    "metadata": {"managed_by": "clinicwise", "plan_code": code},
+                }
+                # tax_code requires Stripe Tax to be enabled on the account.
+                # If disabled it raises — retry without tax_code.
+                try:
+                    product = stripe.Product.create(tax_code=tax_code, **create_kwargs)
+                except Exception as tax_err:
+                    logger.warning(f"Product.create with tax_code failed for {code}, retrying without: {tax_err}")
+                    product = stripe.Product.create(**create_kwargs)
                 stats["products"] += 1
             else:
                 stats["products"] += 1  # count reused as well
@@ -170,8 +183,10 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
                 "stripe_price_yearly": yearly_id,
             }).eq('code', code).execute()
         except Exception as e:
-            logger.error(f"sync_stripe_catalog plan={code} failed: {e}")
-            stats["errors"].append(f"{code}: {str(e)[:150]}")
+            # Verbose error with type name so operators can diagnose live-mode issues
+            err_detail = f"{type(e).__name__}: {str(e)[:180]}" if str(e) else type(e).__name__
+            logger.error(f"sync_stripe_catalog plan={code} failed: {err_detail}", exc_info=True)
+            stats["errors"].append(f"{code}: {err_detail}")
 
     return {"ok": True, "configured": True, "counters": stats}
 
@@ -181,7 +196,11 @@ def _ensure_price(product_id: str, lookup_key: str, amount_cents: int, interval:
     existing = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
     if existing:
         p = existing[0]
-        if p.unit_amount == amount_cents and p.currency == 'usd' and p.recurring and p.recurring.interval == interval:
+        # Defensive: recurring may be absent/None for one-off prices created
+        # outside of this sync. Treat any mismatch as "deactivate and recreate".
+        recurring = getattr(p, 'recurring', None) or {}
+        rec_interval = recurring.get('interval') if hasattr(recurring, 'get') else None
+        if p.unit_amount == amount_cents and p.currency == 'usd' and rec_interval == interval:
             stats["prices_reused"] += 1
             return p.id
         # Price mismatch — deactivate the old one and create a new one with the same lookup_key.

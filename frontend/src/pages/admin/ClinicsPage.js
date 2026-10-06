@@ -30,7 +30,8 @@ import {
   Users,
   MoreVertical,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Gift
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -101,6 +102,25 @@ export default function ClinicsPage() {
   useEffect(() => {
     fetchClinics();
   }, [search, filterCountry, filterPlan, filterStatus]);
+
+  const toggleCourtesy = async (clinic) => {
+    const next = !clinic.is_courtesy;
+    const msg = next
+      ? `¿Marcar "${clinic.name}" como clínica de cortesía?\n\nEsto exime a la clínica del cobro mensual y limpia cualquier bloqueo por pago vencido.`
+      : `¿Remover el estado de cortesía de "${clinic.name}"?\n\nLa clínica volverá al flujo normal de cobros Stripe.`;
+    if (!window.confirm(msg)) return;
+    try {
+      await axios.post(
+        `${API}/admin/clinics/${clinic.id}/courtesy`,
+        { enabled: next },
+        { headers: getAuthHeaders() },
+      );
+      toast.success(next ? 'Clínica marcada como cortesía' : 'Cortesía removida');
+      fetchClinics();
+    } catch (err) {
+      toast.error('Error: ' + (err.response?.data?.detail || err.message));
+    }
+  };
 
   const fetchClinics = async () => {
     try {
@@ -307,7 +327,19 @@ export default function ClinicsPage() {
                     onClick={() => navigate(`/admin/clinicas/${clinic.id}`)}
                     data-testid={`clinic-row-${clinic.id}`}
                   >
-                    <td className="font-medium text-zinc-900">{clinic.name}</td>
+                    <td className="font-medium text-zinc-900">
+                      {clinic.name}
+                      {clinic.is_courtesy && (
+                        <span
+                          className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
+                          data-testid={`courtesy-badge-${clinic.id}`}
+                          title="Clínica de cortesía — exenta de cobros"
+                        >
+                          <Gift className="w-3 h-3" strokeWidth={2} />
+                          CORTESÍA
+                        </span>
+                      )}
+                    </td>
                     <td className="text-zinc-500 font-mono text-xs">{clinic.slug}</td>
                     <td>{getCountryLabel(clinic.country)}</td>
                     <td>{clinic.city || '-'}</td>
@@ -328,6 +360,14 @@ export default function ClinicsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => toggleCourtesy(clinic)}
+                            className={clinic.is_courtesy ? 'text-slate-700' : 'text-amber-700 focus:text-amber-700 focus:bg-amber-50'}
+                            data-testid={`toggle-courtesy-${clinic.id}`}
+                          >
+                            <Gift className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                            {clinic.is_courtesy ? 'Remover cortesía' : 'Marcar como cortesía'}
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => {
                               setDeleteTarget(clinic);
