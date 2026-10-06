@@ -10,6 +10,19 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **SMART RETRIES (REINTENTOS INTELIGENTES DE STRIPE)** (6 Oct 2026):
+  - [x] Nueva tabla `payment_attempts` con migración `2026_10_06_payment_attempts`: logs de cada intento Stripe (failed/succeeded/action_required) con `attempt_count`, `failure_code`, `failure_message`, `next_attempt_at`, `amount_due`.
+  - [x] Webhook `invoice.payment_failed` refactorizado: en vez de gracia fija de 3 días, usa el `next_payment_attempt` de Stripe (+24h buffer) para extender la ventana — la gracia nunca se encoge si una llamada posterior trae una fecha anterior. Si Stripe agotó reintentos (`next_payment_attempt=None`), fallback a 3 días.
+  - [x] Webhook `invoice.payment_succeeded` también loguea el intento exitoso en el historial para un audit completo.
+  - [x] Email mejorado al clinic_admin: incluye número de intento y fecha del próximo reintento programado por Stripe ("Stripe lo intentará de nuevo el 09-oct"), o aviso de "sin reintentos automáticos" cuando se agotaron.
+  - [x] `GET /api/billing/payment-status` enriquecido: ahora devuelve `last_attempt_count`, `last_failure_message`, `next_retry_at` (del intento más reciente, sólo si está en estado `failed`).
+  - [x] `GET /api/billing/payment-attempts` (clinic member): historial propio de intentos — accesible aún estando bloqueado.
+  - [x] `GET /api/admin/billing/retry-dashboard` (super admin): clínicas actualmente en dunning con `monthly_price`, `last_attempt_count`, `last_failure_message`, `next_retry_at`, `payment_grace_until`. Resumen: `clinics_in_retry`, `clinics_blocked`, `mrr_at_risk`.
+  - [x] `GET /api/admin/billing/payment-attempts` (super admin): lista filtrable por `clinic_id` y `status` con nombre de clínica enriquecido.
+  - [x] Frontend — `PaymentOverdueBanner` muestra "Stripe reintentará el {fecha} · intento #{N}" si hay info; si no, muestra el motivo del rechazo.
+  - [x] Frontend — Nueva pestaña "En reintento" en Super Admin → Cobros con 3 KPIs (En reintento / Bloqueadas / MRR en riesgo) y tabla detallada (clínica, estado, MRR, # intento, motivo, próximo reintento, gracia hasta). Badges contadores en el tab trigger.
+  - [x] Tests: 10/10 pasando (`/app/backend/tests/test_smart_retries.py`): payment_attempts table, failure logging, courtesy skipped-but-logged, grace never shrinks, success clears + logs, enriched status endpoint, admin dashboard + list.
+
 - [x] **SAAS BILLING EDGE CASES — FASE 1** (6 Oct 2026):
   - [x] Backend consolidado: fusionadas rutas PUT duplicadas en `super_admin.py`. `PUT /api/admin/clinics/{id}` ahora dispara Stripe proration (`subscription.modify` con `create_prorations`) al cambiar plan en clínicas con suscripción activa y sin cortesía. `PUT /api/admin/users/{id}` actualiza email en Supabase Auth (fuente de verdad), con comparación idempotente vía auth map y manejo correcto de la columna inexistente.
   - [x] Frontend — Banner rojo "Pago vencido" (`/components/PaymentOverdueBanner.js`) renderizado globalmente en `ClinicLayout` cuando la suscripción está `past_due/unpaid/incomplete` y aún dentro de la ventana de gracia. Muestra días restantes y CTA al Stripe Customer Portal (sólo admins).

@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import {
   CreditCard, DollarSign, Building2, TrendingUp, RefreshCw, CheckCircle2,
-  AlertTriangle, Zap, Receipt, ExternalLink, Loader2,
+  AlertTriangle, Zap, Receipt, ExternalLink, Loader2, Repeat,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -60,18 +60,21 @@ export default function CobrosPage() {
   const headers = useMemo(() => getAuthHeaders(), [getAuthHeaders]);
   const [data, setData] = useState(null);
   const [txs, setTxs] = useState([]);
+  const [retryData, setRetryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [overview, transactions] = await Promise.all([
+      const [overview, transactions, retries] = await Promise.all([
         axios.get(`${API}/admin/billing/overview`, { headers }),
         axios.get(`${API}/admin/billing/transactions?limit=20`, { headers }),
+        axios.get(`${API}/admin/billing/retry-dashboard`, { headers }),
       ]);
       setData(overview.data);
       setTxs(transactions.data?.transactions || []);
+      setRetryData(retries.data);
     } catch (err) {
       toast.error('Error al cargar cobros: ' + (err.response?.data?.detail || err.message));
     } finally { setLoading(false); }
@@ -178,6 +181,19 @@ export default function CobrosPage() {
       <Tabs defaultValue="clinics">
         <TabsList>
           <TabsTrigger value="clinics" data-testid="cobros-tab-clinics"><Building2 className="w-3.5 h-3.5 mr-1" />Clínicas</TabsTrigger>
+          <TabsTrigger value="retries" data-testid="cobros-tab-retries">
+            <Repeat className="w-3.5 h-3.5 mr-1" />En reintento
+            {retryData?.summary?.clinics_in_retry > 0 && (
+              <Badge className="ml-1.5 bg-amber-500 text-white text-[10px] h-4 px-1.5">
+                {retryData.summary.clinics_in_retry}
+              </Badge>
+            )}
+            {retryData?.summary?.clinics_blocked > 0 && (
+              <Badge className="ml-1 bg-rose-600 text-white text-[10px] h-4 px-1.5">
+                {retryData.summary.clinics_blocked} bloq.
+              </Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="plans" data-testid="cobros-tab-plans"><Receipt className="w-3.5 h-3.5 mr-1" />Planes</TabsTrigger>
           <TabsTrigger value="transactions" data-testid="cobros-tab-tx"><CreditCard className="w-3.5 h-3.5 mr-1" />Transacciones</TabsTrigger>
         </TabsList>
@@ -219,6 +235,100 @@ export default function CobrosPage() {
                   ))}
                   {(data.clinics || []).length === 0 && (
                     <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-400 py-8">No hay clínicas</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="retries">
+          <Card className="border border-slate-200">
+            <CardContent className="pt-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3" data-testid="retry-kpi-in-retry">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-amber-700 uppercase tracking-wide">
+                    <Repeat className="w-3.5 h-3.5" />En reintento
+                  </div>
+                  <div className="text-2xl font-bold text-amber-900 mt-1">
+                    {retryData?.summary?.clinics_in_retry ?? 0}
+                  </div>
+                  <div className="text-[11px] text-amber-700/80">Stripe reintentará automáticamente</div>
+                </div>
+                <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-3" data-testid="retry-kpi-blocked">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-rose-700 uppercase tracking-wide">
+                    <AlertTriangle className="w-3.5 h-3.5" />Bloqueadas
+                  </div>
+                  <div className="text-2xl font-bold text-rose-900 mt-1">
+                    {retryData?.summary?.clinics_blocked ?? 0}
+                  </div>
+                  <div className="text-[11px] text-rose-700/80">Gracia expirada — acceso suspendido</div>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3" data-testid="retry-kpi-mrr-risk">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                    <DollarSign className="w-3.5 h-3.5" />MRR en riesgo
+                  </div>
+                  <div className="text-2xl font-bold text-slate-900 mt-1">
+                    {money(retryData?.summary?.mrr_at_risk || 0)}
+                  </div>
+                  <div className="text-[11px] text-slate-500">Ingreso mensual bajo reintento</div>
+                </div>
+              </div>
+
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Clínica</TableHead>
+                    <TableHead className="text-xs">Estado</TableHead>
+                    <TableHead className="text-xs text-right">MRR</TableHead>
+                    <TableHead className="text-xs text-center">Intento</TableHead>
+                    <TableHead className="text-xs">Motivo</TableHead>
+                    <TableHead className="text-xs">Próximo reintento</TableHead>
+                    <TableHead className="text-xs">Gracia hasta</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(retryData?.clinics || []).map((c) => (
+                    <TableRow key={c.clinic_id} data-testid={`retry-row-${c.clinic_id}`}>
+                      <TableCell className="text-sm font-medium">{c.clinic_name}</TableCell>
+                      <TableCell>
+                        {c.is_payment_blocked ? (
+                          <Badge className="bg-rose-100 text-rose-700 text-[10px]">Bloqueada</Badge>
+                        ) : (
+                          <Badge className={`text-[10px] ${STATUS_CLASS[c.stripe_status] || 'bg-slate-100 text-slate-600'}`}>
+                            {STATUS_LABEL[c.stripe_status] || c.stripe_status}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-right font-mono">{money(c.monthly_price)}</TableCell>
+                      <TableCell className="text-center text-xs font-semibold">
+                        {c.last_attempt_count ? `#${c.last_attempt_count}` : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs text-slate-600 max-w-[200px] truncate" title={c.last_failure_message || ''}>
+                        {c.last_failure_message || <span className="text-slate-400">—</span>}
+                      </TableCell>
+                      <TableCell className="text-xs text-slate-600">
+                        {c.next_retry_at ? (
+                          <>
+                            <Zap className="w-3 h-3 inline mr-1 text-amber-500" />
+                            {new Date(c.next_retry_at).toLocaleString('es-GT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </>
+                        ) : (
+                          <span className="text-slate-400">Agotados</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-slate-600">
+                        {c.payment_grace_until ? new Date(c.payment_grace_until).toLocaleDateString('es-GT') : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(retryData?.clinics || []).length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-sm text-slate-400 py-10">
+                        <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-400" strokeWidth={1.5} />
+                        No hay clínicas en reintento. Todas las suscripciones están al día.
+                      </TableCell>
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>

@@ -207,18 +207,55 @@ async def payment_status(ctx=Depends(require_clinic_member)):
     IMPORTANT: this endpoint is under /billing/ so the payment-block gate in
     core.py lets it through even when the clinic is blocked — otherwise the
     frontend couldn't fetch the state to show the block screen.
+
+    Enriched with Smart Retry info: `last_attempt_count`, `last_failure_message`,
+    `next_retry_at` from the most recent entry in `payment_attempts`.
     """
     clinic_id = ctx["member"]["clinic_id"]
     c = sdb.table('clinics').select(
         'is_payment_blocked,payment_grace_until,is_courtesy,stripe_subscription_status,payment_blocked_at,name'
     ).eq('id', clinic_id).single().execute().data
+
+    # Pull the most recent attempt for banner enrichment
+    last_attempt = None
+    try:
+        res = sdb.table('payment_attempts').select(
+            'status,attempt_count,failure_message,failure_code,next_attempt_at,attempted_at,amount_due,currency'
+        ).eq('clinic_id', clinic_id).order('attempted_at', desc=True).limit(1).execute()
+        rows = res.data or []
+        if rows:
+            last_attempt = rows[0]
+    except Exception:
+        pass
+
     return {
         "is_payment_blocked": bool(c.get('is_payment_blocked')),
         "payment_grace_until": c.get('payment_grace_until'),
         "is_courtesy": bool(c.get('is_courtesy')),
         "stripe_subscription_status": c.get('stripe_subscription_status'),
         "clinic_name": c.get('name'),
+        "last_attempt_count": (last_attempt or {}).get('attempt_count') if last_attempt and last_attempt.get('status') == 'failed' else None,
+        "last_failure_message": (last_attempt or {}).get('failure_message') if last_attempt and last_attempt.get('status') == 'failed' else None,
+        "next_retry_at": (last_attempt or {}).get('next_attempt_at') if last_attempt and last_attempt.get('status') == 'failed' else None,
     }
+
+
+@router.get("/billing/payment-attempts")
+async def my_payment_attempts(ctx=Depends(require_clinic_member), limit: int = 20):
+    """Return the clinic's recent Stripe payment attempts (failed + succeeded).
+
+    Under /billing/ so blocked clinics can still inspect their retry history.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    try:
+        res = sdb.table('payment_attempts').select(
+            'id,status,attempt_count,failure_code,failure_message,amount_due,currency,'
+            'next_attempt_at,attempted_at,stripe_invoice_id'
+        ).eq('clinic_id', clinic_id).order('attempted_at', desc=True).limit(max(1, min(limit, 100))).execute()
+        return {"attempts": res.data or []}
+    except Exception as e:
+        logger.warning(f"my_payment_attempts failed: {e}")
+        return {"attempts": []}
 
 
 @router.get("/billing/subscription")
@@ -549,6 +586,52 @@ def _apply_subscription_cancellation(sub_obj):
         logger.warning(f"apply sub cancel failed: {e}")
 
 
+def _log_payment_attempt(clinic_id: str, invoice_obj, status: str) -> dict | None:
+    """Record a Stripe payment attempt in `payment_attempts`.
+
+    Returns the inserted row or None on failure. `status` is one of
+    'failed' | 'succeeded' | 'action_required'. Reads attempt_count,
+    next_payment_attempt, last_payment_error from the Stripe invoice object
+    (dict or Stripe object) and persists them for audit + dunning UI.
+    """
+    def g(k, default=None):
+        return invoice_obj.get(k, default) if isinstance(invoice_obj, dict) else getattr(invoice_obj, k, default)
+
+    try:
+        last_err = g('last_payment_error') or {}
+        if not isinstance(last_err, dict):
+            last_err = {
+                'code': getattr(last_err, 'code', None),
+                'message': getattr(last_err, 'message', None),
+            }
+        next_at_ts = g('next_payment_attempt')
+        next_at_iso = (
+            datetime.fromtimestamp(next_at_ts, tz=timezone.utc).isoformat()
+            if next_at_ts else None
+        )
+        amount_due = g('amount_due')
+        row = {
+            "id": str(uuid.uuid4()),
+            "clinic_id": clinic_id,
+            "stripe_invoice_id": g('id'),
+            "stripe_subscription_id": g('subscription'),
+            "stripe_charge_id": g('charge'),
+            "attempt_count": g('attempt_count') or 0,
+            "status": status,
+            "failure_code": last_err.get('code') if isinstance(last_err, dict) else None,
+            "failure_message": last_err.get('message') if isinstance(last_err, dict) else None,
+            "amount_due": (amount_due / 100.0) if isinstance(amount_due, (int, float)) else None,
+            "currency": (g('currency') or '').upper() or None,
+            "next_attempt_at": next_at_iso,
+            "attempted_at": now_iso(),
+        }
+        sdb.table('payment_attempts').insert(row).execute()
+        return row
+    except Exception as e:
+        logger.warning(f"log_payment_attempt failed: {e}")
+        return None
+
+
 def _apply_payment_failure(invoice_obj):
     def g(k, default=None):
         return invoice_obj.get(k, default) if isinstance(invoice_obj, dict) else getattr(invoice_obj, k, default)
@@ -556,29 +639,62 @@ def _apply_payment_failure(invoice_obj):
     if not sub_id:
         return
     try:
-        rows = sdb.table('clinics').select('id,is_courtesy').eq('stripe_subscription_id', sub_id).execute().data or []
+        rows = sdb.table('clinics').select('id,is_courtesy,payment_grace_until').eq('stripe_subscription_id', sub_id).execute().data or []
         for r in rows:
+            # Log the attempt even for courtesy clinics (audit trail)
+            attempt = _log_payment_attempt(r['id'], invoice_obj, 'failed')
             if r.get('is_courtesy'):
                 continue  # courtesy clinics never enter the blocking flow
-            grace_until = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+
+            # Smart Retries: let Stripe's dunning schedule drive the grace
+            # window. Add a 24h buffer after the last expected retry so the
+            # clinic has time to react even if the final attempt fires right
+            # at the window edge. If Stripe exhausted retries (no next_attempt),
+            # fall back to a short 3-day grace before the daily cron blocks.
+            next_at_ts = g('next_payment_attempt')
+            if next_at_ts:
+                grace_dt = datetime.fromtimestamp(next_at_ts, tz=timezone.utc) + timedelta(days=1)
+            else:
+                grace_dt = datetime.now(timezone.utc) + timedelta(days=3)
+            # Never shrink an existing grace window — keep whichever is later
+            current = r.get('payment_grace_until')
+            if current:
+                try:
+                    cur_dt = datetime.fromisoformat(current.replace('Z', '+00:00'))
+                    if cur_dt > grace_dt:
+                        grace_dt = cur_dt
+                except Exception:
+                    pass
+            grace_until = grace_dt.isoformat()
+
             sdb.table('clinics').update({
                 "stripe_subscription_status": "past_due",
                 "payment_grace_until": grace_until,
                 "updated_at": now_iso(),
             }).eq('id', r['id']).execute()
-            _send_payment_failed_emails(r['id'], grace_until)
+
+            attempt_count = (attempt or {}).get('attempt_count') or 0
+            _send_payment_failed_emails(
+                r['id'],
+                grace_until,
+                attempt_count=attempt_count,
+                next_attempt_at=(attempt or {}).get('next_attempt_at'),
+            )
     except Exception as e:
         logger.warning(f"apply payment failure failed: {e}")
 
 
 def _apply_payment_success(invoice_obj):
-    """Clear block + grace on successful payment."""
+    """Clear block + grace on successful payment and log a success attempt."""
     def g(k, default=None):
         return invoice_obj.get(k, default) if isinstance(invoice_obj, dict) else getattr(invoice_obj, k, default)
     sub_id = g('subscription')
     if not sub_id:
         return
     try:
+        rows = sdb.table('clinics').select('id').eq('stripe_subscription_id', sub_id).execute().data or []
+        for r in rows:
+            _log_payment_attempt(r['id'], invoice_obj, 'succeeded')
         sdb.table('clinics').update({
             "stripe_subscription_status": "active",
             "payment_grace_until": None,
@@ -591,13 +707,20 @@ def _apply_payment_success(invoice_obj):
         logger.warning(f"apply payment success failed: {e}")
 
 
-def _send_payment_failed_emails(clinic_id: str, grace_until: str):
-    """Email all active clinic_admins about the failed payment."""
+def _send_payment_failed_emails(clinic_id: str, grace_until: str, attempt_count: int = 0, next_attempt_at: str | None = None):
+    """Email all active clinic_admins about the failed payment with Smart Retry context."""
     try:
         from services.email_service import send_email
         admins = sdb.table('clinic_members').select('email,first_name').eq('clinic_id', clinic_id).eq('role', 'clinic_admin').eq('is_active', True).is_('deleted_at', 'null').execute().data or []
         clinic = sdb.table('clinics').select('name').eq('id', clinic_id).maybe_single().execute()
         clinic_name = (clinic.data or {}).get('name', 'tu clínica') if clinic else 'tu clínica'
+
+        attempt_line = (
+            f"<p>Este fue el intento #{attempt_count}. "
+            + (f"Stripe lo intentará de nuevo automáticamente el <strong>{next_attempt_at[:10]}</strong>." if next_attempt_at else "No quedan reintentos automáticos — es necesario actualizar la tarjeta cuanto antes.")
+            + "</p>"
+        ) if attempt_count else ""
+
         for a in admins:
             if not a.get('email'):
                 continue
@@ -605,7 +728,15 @@ def _send_payment_failed_emails(clinic_id: str, grace_until: str):
                 send_email(
                     to=a['email'],
                     subject=f"⚠ Pago vencido en {clinic_name}",
-                    html=f"<p>Hola {a.get('first_name','')},</p><p>El cobro mensual de tu clínica <strong>{clinic_name}</strong> no pudo completarse. Tienes hasta el <strong>{grace_until[:10]}</strong> para actualizar tu método de pago, de lo contrario tu cuenta será bloqueada.</p><p>Entra al sistema y presiona <strong>Pagar ahora</strong> en el banner rojo para abrir el portal de Stripe.</p>",
+                    html=(
+                        f"<p>Hola {a.get('first_name','')},</p>"
+                        f"<p>El cobro mensual de tu clínica <strong>{clinic_name}</strong> no pudo completarse. "
+                        f"Tienes hasta el <strong>{grace_until[:10]}</strong> para actualizar tu método de pago, "
+                        f"de lo contrario tu cuenta será bloqueada.</p>"
+                        f"{attempt_line}"
+                        f"<p>Entra al sistema y presiona <strong>Actualizar método de pago</strong> en el banner rojo "
+                        f"para abrir el portal de Stripe.</p>"
+                    ),
                 )
             except Exception:
                 pass
@@ -731,4 +862,117 @@ async def billing_transactions(limit: int = 50, user=Depends(require_super_admin
         return {"transactions": rows}
     except Exception as e:
         logger.error(f"billing_transactions error: {e}")
+        raise HTTPException(status_code=500, detail="Error")
+
+
+@router.get("/admin/billing/retry-dashboard")
+async def retry_dashboard(user=Depends(require_super_admin)):
+    """Smart Retries dashboard — clinics currently in dunning + MRR at risk.
+
+    Powers the "En reintento" tab in Cobros. For each clinic with a payment
+    attempt currently in `failed` status (and no successful attempt afterwards),
+    returns: last failure, retry attempt_count, Stripe's next_payment_attempt,
+    grace deadline, estimated MRR at risk.
+    """
+    plans = _plans_map()
+    # Candidate clinics: past_due / unpaid / incomplete, not courtesy
+    try:
+        clinics = sdb.table('clinics').select(
+            'id,name,plan,billing_cycle,is_courtesy,is_payment_blocked,'
+            'payment_grace_until,payment_blocked_at,stripe_subscription_status,'
+            'stripe_subscription_id'
+        ).in_('stripe_subscription_status', ['past_due', 'unpaid', 'incomplete']) \
+         .is_('deleted_at', 'null') \
+         .eq('is_courtesy', False) \
+         .execute().data or []
+    except Exception as e:
+        logger.warning(f"retry_dashboard clinics query failed: {e}")
+        clinics = []
+
+    rows = []
+    mrr_at_risk = 0.0
+    for c in clinics:
+        # Most recent attempt for this clinic
+        last_attempt = None
+        try:
+            la = sdb.table('payment_attempts').select(
+                'status,attempt_count,failure_code,failure_message,amount_due,currency,'
+                'next_attempt_at,attempted_at,stripe_invoice_id'
+            ).eq('clinic_id', c['id']).order('attempted_at', desc=True).limit(1).execute()
+            lrows = la.data or []
+            if lrows:
+                last_attempt = lrows[0]
+        except Exception:
+            pass
+
+        p = plans.get(c.get('plan'), {})
+        price_monthly = float(p.get('price_monthly') or 0)
+        price_yearly = float(p.get('price_yearly') or 0)
+        cycle = c.get('billing_cycle') or 'monthly'
+        monthly_eq = price_yearly / 12 if cycle == 'yearly' and price_yearly else price_monthly
+        mrr_at_risk += monthly_eq
+
+        rows.append({
+            "clinic_id": c.get('id'),
+            "clinic_name": c.get('name'),
+            "plan_code": c.get('plan'),
+            "plan_name": p.get('name') or c.get('plan'),
+            "monthly_price": round(monthly_eq, 2),
+            "stripe_status": c.get('stripe_subscription_status'),
+            "is_payment_blocked": bool(c.get('is_payment_blocked')),
+            "payment_grace_until": c.get('payment_grace_until'),
+            "payment_blocked_at": c.get('payment_blocked_at'),
+            "last_attempt_count": (last_attempt or {}).get('attempt_count') or 0,
+            "last_failure_code": (last_attempt or {}).get('failure_code'),
+            "last_failure_message": (last_attempt or {}).get('failure_message'),
+            "last_amount_due": (last_attempt or {}).get('amount_due'),
+            "last_currency": (last_attempt or {}).get('currency'),
+            "next_retry_at": (last_attempt or {}).get('next_attempt_at'),
+            "last_attempted_at": (last_attempt or {}).get('attempted_at'),
+        })
+
+    # Sort: blocked first, then by grace deadline (soonest first)
+    def _sort_key(r):
+        if r['is_payment_blocked']:
+            return (0, r.get('payment_blocked_at') or '')
+        return (1, r.get('payment_grace_until') or 'z')
+
+    rows.sort(key=_sort_key)
+
+    return {
+        "summary": {
+            "clinics_in_retry": len([r for r in rows if not r['is_payment_blocked']]),
+            "clinics_blocked": len([r for r in rows if r['is_payment_blocked']]),
+            "mrr_at_risk": round(mrr_at_risk, 2),
+        },
+        "clinics": rows,
+    }
+
+
+@router.get("/admin/billing/payment-attempts")
+async def admin_payment_attempts(
+    clinic_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    user=Depends(require_super_admin),
+):
+    """Super-admin view of recent payment attempts (for audit + CS)."""
+    try:
+        q = sdb.table('payment_attempts').select('*')
+        if clinic_id:
+            q = q.eq('clinic_id', clinic_id)
+        if status:
+            q = q.eq('status', status)
+        res = q.order('attempted_at', desc=True).limit(max(1, min(limit, 500))).execute()
+        rows = res.data or []
+        clinic_ids = list({r.get('clinic_id') for r in rows if r.get('clinic_id')})
+        name_map = {}
+        if clinic_ids:
+            cs = sdb.table('clinics').select('id,name').in_('id', clinic_ids).execute().data or []
+            name_map = {c['id']: c['name'] for c in cs}
+        for r in rows:
+            r['clinic_name'] = name_map.get(r.get('clinic_id'), '—')
+        return {"attempts": rows}
+    except Exception as e:
+        logger.error(f"admin_payment_attempts error: {e}")
         raise HTTPException(status_code=500, detail="Error")

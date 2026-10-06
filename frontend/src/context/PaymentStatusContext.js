@@ -24,6 +24,9 @@ export const PaymentStatusProvider = ({ children }) => {
     paymentGraceUntil: null,
     stripeSubscriptionStatus: null,
     clinicName: '',
+    lastAttemptCount: null,
+    lastFailureMessage: null,
+    nextRetryAt: null,
     loading: true,
   });
 
@@ -40,12 +43,13 @@ export const PaymentStatusProvider = ({ children }) => {
         paymentGraceUntil: res.data?.payment_grace_until || null,
         stripeSubscriptionStatus: res.data?.stripe_subscription_status || null,
         clinicName: res.data?.clinic_name || '',
+        lastAttemptCount: res.data?.last_attempt_count ?? null,
+        lastFailureMessage: res.data?.last_failure_message || null,
+        nextRetryAt: res.data?.next_retry_at || null,
         loading: false,
       });
     } catch (e) {
-      // 402 means blocked — but we need the body; axios puts it on e.response.data
       if (e?.response?.status === 402) {
-        // Fallback: trigger blocked state so the UI renders the block screen
         setState(s => ({ ...s, isPaymentBlocked: true, loading: false }));
       } else {
         setState(s => ({ ...s, loading: false }));

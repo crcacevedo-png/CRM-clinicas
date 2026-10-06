@@ -641,6 +641,35 @@ MIGRATIONS: list[tuple[str, str]] = [
             ON public.clinics (payment_grace_until) WHERE payment_grace_until IS NOT NULL;
         """,
     ),
+    (
+        "2026_10_06_payment_attempts",
+        """
+        -- Smart Retries: log every Stripe payment attempt (failed + success).
+        -- Powers the "En reintento" tab in Cobros and the enriched grace flow.
+        CREATE TABLE IF NOT EXISTS public.payment_attempts (
+            id UUID PRIMARY KEY,
+            clinic_id UUID NOT NULL,
+            stripe_invoice_id TEXT,
+            stripe_subscription_id TEXT,
+            stripe_charge_id TEXT,
+            attempt_count INTEGER,
+            status TEXT NOT NULL,              -- 'failed' | 'succeeded' | 'action_required'
+            failure_code TEXT,
+            failure_message TEXT,
+            amount_due NUMERIC,
+            currency TEXT,
+            next_attempt_at TIMESTAMPTZ,       -- Stripe's next scheduled retry (NULL = exhausted)
+            attempted_at TIMESTAMPTZ DEFAULT NOW(),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_payment_attempts_clinic
+            ON public.payment_attempts (clinic_id, attempted_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_payment_attempts_status
+            ON public.payment_attempts (status, attempted_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_payment_attempts_invoice
+            ON public.payment_attempts (stripe_invoice_id);
+        """,
+    ),
 ]
 
 
