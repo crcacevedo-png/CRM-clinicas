@@ -48,7 +48,7 @@ def _not_configured_resp():
 
 
 def _lookup_key(plan_code: str, cycle: str) -> str:
-    return f"clinicwise_{plan_code}_{cycle}"
+    return f"cortexia_{plan_code}_{cycle}"
 
 
 def _price_id_for(plan_code: str, cycle: str) -> Optional[str]:
@@ -108,8 +108,8 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
 
     For each plan row with price_monthly > 0, we create:
       - A Product (identified by metadata.plan_code = <code>)
-      - A monthly recurring Price with lookup_key `clinicwise_<code>_monthly`
-      - A yearly recurring Price with lookup_key `clinicwise_<code>_yearly` (if price_yearly > 0)
+      - A monthly recurring Price with lookup_key `cortexia_<code>_monthly`
+      - A yearly recurring Price with lookup_key `cortexia_<code>_yearly` (if price_yearly > 0)
     Then we persist product_id/price_ids back into `plans`.
     """
     if not STRIPE_ENABLED:
@@ -167,8 +167,8 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
 
             if not product:
                 create_kwargs = {
-                    "name": f"ClinicWise · {plan.get('name') or code}",
-                    "metadata": {"managed_by": "clinicwise", "plan_code": code},
+                    "name": f"Cortexia Medical {plan.get('name') or code}",
+                    "metadata": {"managed_by": "cortexia_medical", "plan_code": code},
                 }
                 # tax_code requires Stripe Tax to be enabled on the account.
                 # If disabled it raises — retry without tax_code.
@@ -189,7 +189,7 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
                             existing_meta = {k: m[k] for k in m} if hasattr(m, 'keys') else {}
                         except Exception:
                             existing_meta = {}
-                        existing_meta.update({"plan_code": code, "managed_by": "clinicwise"})
+                        existing_meta.update({"plan_code": code, "managed_by": "cortexia_medical"})
                         stripe.Product.modify(product.id, metadata=existing_meta)
                         logger.info(f"sync_stripe_catalog: linked existing Stripe product {product.id} to plan '{code}' by {match_by}")
                     except Exception as link_err:

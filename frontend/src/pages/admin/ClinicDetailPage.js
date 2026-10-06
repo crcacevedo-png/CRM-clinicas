@@ -32,7 +32,9 @@ import {
   Copy,
   Check,
   Edit2,
-  Save
+  Save,
+  Gift,
+  CreditCard
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -170,6 +172,26 @@ export default function ClinicDetailPage() {
     }
   };
 
+  const handleToggleCourtesy = async () => {
+    const next = !clinic.is_courtesy;
+    const msg = next
+      ? `¿Marcar "${clinic.name}" como clínica de cortesía?\n\nQueda exenta del cobro mensual Stripe y se limpia cualquier bloqueo por pago vencido.`
+      : `¿Remover el estado de cortesía de "${clinic.name}"?\n\nVolverá al flujo normal de cobros Stripe.`;
+    if (!window.confirm(msg)) return;
+    try {
+      await axios.post(
+        `${API}/admin/clinics/${id}/courtesy`,
+        { enabled: next },
+        { headers: getAuthHeaders() },
+      );
+      toast.success(next ? 'Clínica marcada como cortesía' : 'Cortesía removida');
+      // Refetch to pick up cleared payment-block flags
+      fetchClinicDetail();
+    } catch (error) {
+      toast.error('Error: ' + (error.response?.data?.detail || error.message));
+    }
+  };
+
   const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
     let password = '';
@@ -242,7 +264,19 @@ export default function ClinicDetailPage() {
           <ArrowLeft className="w-5 h-5" strokeWidth={1.5} />
         </Button>
         <div className="flex-1">
-          <h1 className="text-3xl font-semibold text-zinc-950 tracking-tight">{clinic.name}</h1>
+          <h1 className="text-3xl font-semibold text-zinc-950 tracking-tight flex items-center gap-3">
+            {clinic.name}
+            {clinic.is_courtesy && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800"
+                data-testid="courtesy-badge-header"
+                title="Clínica de cortesía — exenta de cobros"
+              >
+                <Gift className="w-3.5 h-3.5" strokeWidth={2} />
+                CORTESÍA
+              </span>
+            )}
+          </h1>
           <p className="text-sm text-zinc-500 mt-1">Detalle de la clínica</p>
         </div>
         <div className="flex items-center gap-4">
@@ -376,6 +410,30 @@ export default function ClinicDetailPage() {
                 <Label className="text-xs text-zinc-500">Zona horaria</Label>
                 <p className="text-sm text-zinc-900 mt-1">{clinic.timezone || '-'}</p>
               </div>
+            </div>
+          </div>
+
+          {/* Billing */}
+          <div className="bg-white border border-zinc-200 p-6">
+            <div className="flex items-center gap-2 mb-4 pb-2 border-b border-zinc-200">
+              <CreditCard className="w-5 h-5 text-violet-600" strokeWidth={1.5} />
+              <h3 className="font-medium text-zinc-900">Facturación</h3>
+            </div>
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex-1">
+                <Label className="text-sm font-medium text-zinc-900 flex items-center gap-2">
+                  <Gift className="w-4 h-4 text-amber-600" strokeWidth={1.5} />
+                  Clínica de cortesía
+                </Label>
+                <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                  Exenta de cobro Stripe. No entra al flujo de pago vencido ni se le crea subscripción.
+                </p>
+              </div>
+              <Switch
+                checked={!!clinic.is_courtesy}
+                onCheckedChange={handleToggleCourtesy}
+                data-testid="toggle-courtesy"
+              />
             </div>
           </div>
 
