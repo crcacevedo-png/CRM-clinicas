@@ -588,6 +588,45 @@ MIGRATIONS: list[tuple[str, str]] = [
             WHERE status = 'scheduled' AND whatsapp_reminder_sent_at IS NULL;
         """,
     ),
+    (
+        "2026_10_05_stripe_billing",
+        """
+        -- SaaS subscription billing (Stripe) — per-clinic customer + sub tracking
+        ALTER TABLE public.clinics
+            ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT,
+            ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT,
+            ADD COLUMN IF NOT EXISTS stripe_subscription_status TEXT,
+            ADD COLUMN IF NOT EXISTS billing_cycle TEXT;
+        CREATE INDEX IF NOT EXISTS idx_clinics_stripe_customer ON public.clinics (stripe_customer_id)
+            WHERE stripe_customer_id IS NOT NULL;
+
+        -- Transaction log for Stripe Checkout + webhook events (idempotency + reporting)
+        CREATE TABLE IF NOT EXISTS public.billing_transactions (
+            id UUID PRIMARY KEY,
+            clinic_id UUID,
+            session_id TEXT UNIQUE,
+            subscription_id TEXT,
+            customer_id TEXT,
+            plan_code TEXT,
+            billing_cycle TEXT,
+            amount_total NUMERIC,
+            currency TEXT,
+            status TEXT NOT NULL DEFAULT 'initiated',
+            payment_status TEXT,
+            metadata JSONB,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_billing_tx_clinic ON public.billing_transactions (clinic_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_billing_tx_sub ON public.billing_transactions (subscription_id);
+
+        -- Stripe plan sync — map our plan_code to stripe price IDs (lookup_key based)
+        ALTER TABLE public.plans
+            ADD COLUMN IF NOT EXISTS stripe_price_monthly TEXT,
+            ADD COLUMN IF NOT EXISTS stripe_price_yearly TEXT,
+            ADD COLUMN IF NOT EXISTS stripe_product_id TEXT;
+        """,
+    ),
 ]
 
 

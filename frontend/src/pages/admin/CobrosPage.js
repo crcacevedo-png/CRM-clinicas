@@ -1,24 +1,52 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
-import { CreditCard, DollarSign, Building2, TrendingUp, Plug, RefreshCw } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import {
+  CreditCard, DollarSign, Building2, TrendingUp, RefreshCw, CheckCircle2,
+  AlertTriangle, Zap, Receipt, ExternalLink, Loader2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const money = (n, cur = 'USD') => `${cur === 'GTQ' ? 'Q' : '$'}${(n ?? 0).toLocaleString('es-GT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (n, cur = 'USD') =>
+  `${cur === 'GTQ' ? 'Q' : '$'}${(n ?? 0).toLocaleString('es-GT', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  })}`;
 
-function KpiCard({ title, value, sub, icon: Icon, testid }) {
+const STATUS_LABEL = {
+  active: 'Activa', trialing: 'Prueba', canceled: 'Cancelada',
+  past_due: 'Pago vencido', unpaid: 'Impago', incomplete: 'Incompleta',
+  incomplete_expired: 'Expirada',
+};
+const STATUS_CLASS = {
+  active: 'bg-emerald-100 text-emerald-700',
+  trialing: 'bg-blue-100 text-blue-700',
+  canceled: 'bg-slate-100 text-slate-600',
+  past_due: 'bg-amber-100 text-amber-700',
+  unpaid: 'bg-rose-100 text-rose-700',
+  incomplete: 'bg-amber-100 text-amber-700',
+  incomplete_expired: 'bg-rose-100 text-rose-700',
+};
+
+function KpiCard({ title, value, sub, icon: Icon, testid, color = 'teal' }) {
+  const colors = {
+    teal: 'text-teal-500',
+    emerald: 'text-emerald-500',
+    blue: 'text-blue-500',
+    amber: 'text-amber-500',
+  };
   return (
     <Card className="border border-slate-200" data-testid={testid}>
       <CardContent className="p-5">
         <div className="flex items-center justify-between">
           <span className="text-xs uppercase tracking-wide text-slate-400">{title}</span>
-          {Icon && <Icon className="w-4 h-4 text-teal-500" />}
+          {Icon && <Icon className={`w-4 h-4 ${colors[color]}`} />}
         </div>
         <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
         {sub && <div className="text-xs text-slate-400 mt-1">{sub}</div>}
@@ -29,134 +57,246 @@ function KpiCard({ title, value, sub, icon: Icon, testid }) {
 
 export default function CobrosPage() {
   const { getAuthHeaders } = useAuth();
-  const headers = getAuthHeaders();
+  const headers = useMemo(() => getAuthHeaders(), [getAuthHeaders]);
   const [data, setData] = useState(null);
+  const [txs, setTxs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API}/admin/billing/overview`, { headers });
-      setData(res.data);
+      const [overview, transactions] = await Promise.all([
+        axios.get(`${API}/admin/billing/overview`, { headers }),
+        axios.get(`${API}/admin/billing/transactions?limit=20`, { headers }),
+      ]);
+      setData(overview.data);
+      setTxs(transactions.data?.transactions || []);
     } catch (err) {
       toast.error('Error al cargar cobros: ' + (err.response?.data?.detail || err.message));
-    } finally {
-      setLoading(false);
-    }
-  };
+    } finally { setLoading(false); }
+  }, [headers]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const connectStripe = async () => {
+  const syncCatalog = async () => {
+    setSyncing(true);
     try {
-      const res = await axios.post(`${API}/admin/billing/stripe/connect`, {}, { headers });
-      toast.info(res.data?.message || 'Integración pendiente');
+      const r = await axios.post(`${API}/admin/billing/sync-stripe-catalog`, {}, { headers });
+      const c = r.data?.counters;
+      if (c?.errors?.length) {
+        toast.error(`Sincronización con errores: ${c.errors[0]}`);
+      } else {
+        toast.success(`Sincronizado: ${c?.prices_created || 0} precios creados, ${c?.prices_reused || 0} reutilizados`);
+      }
+      load();
     } catch (err) {
-      toast.error(err.response?.data?.detail || err.message);
-    }
+      toast.error(err.response?.data?.detail || 'Error al sincronizar');
+    } finally { setSyncing(false); }
   };
 
-  if (loading) return <div className="p-6 lg:p-8 flex justify-center items-center h-96"><div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" /></div>;
+  if (loading) {
+    return <div className="p-6 lg:p-8 flex justify-center items-center h-96">
+      <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+    </div>;
+  }
   if (!data) return <div className="p-6 text-sm text-slate-500">Sin datos</div>;
 
   const s = data.summary || {};
+  const stripeConfigured = data.stripe_configured;
+  const anyPlanSynced = (data.by_plan || []).some(p => p.synced);
 
   return (
     <div className="p-6 lg:p-8 space-y-6" data-testid="cobros-page">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 mb-1 flex items-center gap-2">
-            <CreditCard className="w-6 h-6 text-teal-600" /> Cobros
+            <CreditCard className="w-6 h-6 text-teal-600" /> Cobros SaaS
           </h1>
-          <p className="text-sm text-slate-500">Suscripciones y facturación SaaS de las clínicas</p>
+          <p className="text-sm text-slate-500">Suscripciones mensuales de clínicas vía Stripe</p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} data-testid="cobros-refresh-btn">
-          <RefreshCw className="w-4 h-4 mr-1" /> Actualizar
-        </Button>
+        <div className="flex gap-2">
+          {stripeConfigured && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={syncCatalog}
+              disabled={syncing}
+              data-testid="sync-catalog-btn"
+            >
+              {syncing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+              {anyPlanSynced ? 'Resincronizar planes' : 'Sincronizar planes con Stripe'}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={load} data-testid="cobros-refresh-btn">
+            <RefreshCw className="w-4 h-4 mr-1" /> Actualizar
+          </Button>
+        </div>
       </div>
 
       {/* Stripe connection banner */}
-      <Card className={`border ${data.stripe_configured ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`} data-testid="stripe-status-card">
-        <CardContent className="p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Plug className={`w-5 h-5 ${data.stripe_configured ? 'text-emerald-600' : 'text-amber-600'}`} />
-            <div>
+      <Card className={`border ${stripeConfigured ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'}`} data-testid="stripe-status-card">
+        <CardContent className="p-4">
+          <div className="flex items-start gap-3">
+            {stripeConfigured ? <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              : <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />}
+            <div className="flex-1">
               <p className="text-sm font-medium text-slate-800">
-                {data.stripe_configured ? 'Stripe conectado' : 'Stripe no configurado'}
+                {stripeConfigured ? 'Stripe conectado' : 'Stripe no configurado'}
               </p>
-              <p className="text-xs text-slate-500">
-                {data.stripe_configured
-                  ? 'Los cobros automáticos están activos.'
-                  : 'La ruta de cobros está lista. Conecta la API de Stripe para automatizar el cobro mensual.'}
-              </p>
+              {stripeConfigured ? (
+                <>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Los cobros automáticos están activos. {!anyPlanSynced && 'Antes de activar cobros, presiona Sincronizar planes para crear los productos en Stripe.'}
+                  </p>
+                  {anyPlanSynced && (
+                    <p className="text-xs text-emerald-700 mt-1">
+                      ✓ Catálogo sincronizado — las clínicas ya pueden suscribirse desde Configuración → Plan.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="text-xs text-slate-600 mt-1 space-y-1">
+                  <p>Agrega tu clave secreta de Stripe en <strong>Manage → Secrets → STRIPE_API_KEY</strong> para activar los cobros SaaS.</p>
+                  <p className="text-amber-700">⚠ Guatemala no soporta cuentas Stripe nativas — usa una cuenta de otro país (US, MX, PA, ES, etc.).</p>
+                </div>
+              )}
             </div>
           </div>
-          {!data.stripe_configured && (
-            <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={connectStripe} data-testid="connect-stripe-btn">
-              Conectar Stripe
-            </Button>
-          )}
         </CardContent>
       </Card>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard title="MRR estimado" value={money(s.mrr)} sub="Ingreso recurrente mensual" icon={DollarSign} testid="kpi-mrr" />
-        <KpiCard title="ARR estimado" value={money(s.arr)} sub="Ingreso recurrente anual" icon={TrendingUp} testid="kpi-arr" />
-        <KpiCard title="Clínicas activas" value={s.active_clinics ?? 0} sub={`de ${s.total_clinics ?? 0} totales`} icon={Building2} testid="kpi-active" />
-        <KpiCard title="Total clínicas" value={s.total_clinics ?? 0} sub="en la plataforma" icon={Building2} testid="kpi-total" />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <KpiCard title="MRR real" value={money(s.mrr)} sub="Suscripciones activas" icon={DollarSign} color="emerald" testid="kpi-mrr" />
+        <KpiCard title="ARR estimado" value={money(s.arr)} sub="MRR × 12" icon={TrendingUp} color="blue" testid="kpi-arr" />
+        <KpiCard title="Con suscripción" value={s.with_subscription ?? 0} sub="pagando por Stripe" icon={CheckCircle2} color="emerald" testid="kpi-with-sub" />
+        <KpiCard title="Clínicas activas" value={s.active_clinics ?? 0} sub={`de ${s.total_clinics ?? 0} totales`} icon={Building2} color="teal" testid="kpi-active" />
+        <KpiCard title="Total clínicas" value={s.total_clinics ?? 0} sub="en la plataforma" icon={Building2} color="teal" testid="kpi-total" />
       </div>
 
-      {/* By plan */}
-      <Card className="border border-slate-200">
-        <CardHeader className="pb-2"><CardTitle className="text-base">Ingresos por plan</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <Tabs defaultValue="clinics">
+        <TabsList>
+          <TabsTrigger value="clinics" data-testid="cobros-tab-clinics"><Building2 className="w-3.5 h-3.5 mr-1" />Clínicas</TabsTrigger>
+          <TabsTrigger value="plans" data-testid="cobros-tab-plans"><Receipt className="w-3.5 h-3.5 mr-1" />Planes</TabsTrigger>
+          <TabsTrigger value="transactions" data-testid="cobros-tab-tx"><CreditCard className="w-3.5 h-3.5 mr-1" />Transacciones</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="clinics">
+          <Card className="border border-slate-200">
+            <CardContent className="pt-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Clínica</TableHead>
+                    <TableHead className="text-xs">Plan</TableHead>
+                    <TableHead className="text-xs">Ciclo</TableHead>
+                    <TableHead className="text-xs text-right">Precio/mes</TableHead>
+                    <TableHead className="text-xs text-center">Stripe</TableHead>
+                    <TableHead className="text-xs">Expira</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(data.clinics || []).map((c) => (
+                    <TableRow key={c.clinic_id} data-testid={`cobro-row-${c.clinic_id}`}>
+                      <TableCell className="text-sm font-medium">{c.name}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-xs">{c.plan_name || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs text-slate-500">{c.billing_cycle === 'yearly' ? 'Anual' : 'Mensual'}</TableCell>
+                      <TableCell className="text-sm text-right font-mono">{money(c.price_monthly, c.currency)}</TableCell>
+                      <TableCell className="text-center">
+                        {c.stripe_subscription_status ? (
+                          <Badge className={`text-[10px] ${STATUS_CLASS[c.stripe_subscription_status] || 'bg-slate-100 text-slate-600'}`}>
+                            {STATUS_LABEL[c.stripe_subscription_status] || c.stripe_subscription_status}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-slate-400">Sin suscripción</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-slate-500">
+                        {c.expires_at ? new Date(c.expires_at).toLocaleDateString('es-GT') : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(data.clinics || []).length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-400 py-8">No hay clínicas</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="plans">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {(data.by_plan || []).map((p) => (
-              <div key={p.plan_code || 'none'} className="p-4 rounded-lg border border-slate-100 bg-slate-50" data-testid={`plan-agg-${p.plan_code}`}>
-                <Badge className="bg-teal-600 text-white text-xs mb-2">{p.plan_name || 'Sin plan'}</Badge>
-                <p className="text-lg font-bold text-slate-800">{money(p.mrr)}<span className="text-xs font-normal text-slate-400"> /mes</span></p>
-                <p className="text-xs text-slate-500">{p.count} clínica{p.count !== 1 ? 's' : ''}</p>
-              </div>
+              <Card key={p.plan_code || 'none'} className="border border-slate-200" data-testid={`plan-agg-${p.plan_code}`}>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <Badge className="bg-teal-600 text-white text-xs">{p.plan_name || 'Sin plan'}</Badge>
+                    {p.synced ? (
+                      <Badge className="bg-emerald-50 text-emerald-700 text-[10px]"><CheckCircle2 className="w-3 h-3 mr-0.5" />Sincronizado</Badge>
+                    ) : (
+                      <Badge className="bg-amber-50 text-amber-700 text-[10px]">Sin sync</Badge>
+                    )}
+                  </div>
+                  <p className="text-xl font-bold text-slate-800">{money(p.mrr)}<span className="text-xs font-normal text-slate-400"> /mes</span></p>
+                  <p className="text-xs text-slate-500 mt-1">{p.count} clínica{p.count !== 1 ? 's' : ''}</p>
+                </CardContent>
+              </Card>
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </TabsContent>
 
-      {/* Clinics table */}
-      <Card className="border border-slate-200">
-        <CardHeader className="pb-2"><CardTitle className="text-base">Clínicas y suscripciones</CardTitle></CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="text-xs">Clínica</TableHead>
-                <TableHead className="text-xs">Plan</TableHead>
-                <TableHead className="text-xs text-right">Precio/mes</TableHead>
-                <TableHead className="text-xs text-center">Estado</TableHead>
-                <TableHead className="text-xs">Expira</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(data.clinics || []).map((c) => (
-                <TableRow key={c.clinic_id} data-testid={`cobro-row-${c.clinic_id}`}>
-                  <TableCell className="text-sm font-medium">{c.name}</TableCell>
-                  <TableCell><Badge variant="outline" className="text-xs">{c.plan_name || '—'}</Badge></TableCell>
-                  <TableCell className="text-sm text-right font-mono">{money(c.price_monthly, c.currency)}</TableCell>
-                  <TableCell className="text-center">
-                    {c.status === 'active'
-                      ? <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">Activa</Badge>
-                      : <Badge className="bg-rose-100 text-rose-700 text-[10px]">Suspendida</Badge>}
-                  </TableCell>
-                  <TableCell className="text-xs text-slate-500">
-                    {c.expires_at ? new Date(c.expires_at).toLocaleDateString('es-GT') : '—'}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+        <TabsContent value="transactions">
+          <Card className="border border-slate-200">
+            <CardContent className="pt-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Fecha</TableHead>
+                    <TableHead className="text-xs">Clínica</TableHead>
+                    <TableHead className="text-xs">Plan</TableHead>
+                    <TableHead className="text-xs">Ciclo</TableHead>
+                    <TableHead className="text-xs text-center">Estado</TableHead>
+                    <TableHead className="text-xs font-mono">Session ID</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {txs.map((t) => (
+                    <TableRow key={t.id} data-testid={`tx-row-${t.session_id}`}>
+                      <TableCell className="text-xs">{new Date(t.created_at).toLocaleString('es-GT')}</TableCell>
+                      <TableCell className="text-sm">{t.clinic_name}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-xs">{t.plan_code || '—'}</Badge></TableCell>
+                      <TableCell className="text-xs text-slate-500">{t.billing_cycle === 'yearly' ? 'Anual' : 'Mensual'}</TableCell>
+                      <TableCell className="text-center">
+                        {t.payment_status === 'paid' ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">Pagado</Badge>
+                        ) : t.payment_status === 'pending' ? (
+                          <Badge className="bg-amber-100 text-amber-700 text-[10px]">Pendiente</Badge>
+                        ) : (
+                          <Badge className="bg-slate-100 text-slate-600 text-[10px]">{t.payment_status || t.status}</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-[10px] font-mono text-slate-400 truncate max-w-[160px]">{t.session_id?.substring(0, 24)}...</TableCell>
+                    </TableRow>
+                  ))}
+                  {txs.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center text-sm text-slate-400 py-8">
+                      <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-30" strokeWidth={1} />
+                      Aún no hay transacciones Stripe. Cuando una clínica se suscriba, aparecerán aquí.
+                    </TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <p className="text-xs text-slate-400 text-center">
+        <ExternalLink className="w-3 h-3 inline mr-1" />
+        Para probar en vivo, agrega tu clave Stripe real en Manage → Secrets, luego presiona "Sincronizar planes".
+      </p>
     </div>
   );
 }

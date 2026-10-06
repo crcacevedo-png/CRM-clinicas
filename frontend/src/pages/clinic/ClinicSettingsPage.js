@@ -88,11 +88,19 @@ export default function ClinicSettingsPage() {
   // Billing / subscription
   const [subscription, setSubscription] = useState(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [checkoutPlan, setCheckoutPlan] = useState('');
+  const [checkoutCycle, setCheckoutCycle] = useState('monthly');
+  const [plansList, setPlansList] = useState([]);
 
-  const startCheckout = async () => {
+  const startCheckout = async (planCode, cycle = 'monthly') => {
     setCheckoutLoading(true);
     try {
-      const res = await axios.post(`${API}/billing/checkout`, { billing_cycle: 'monthly' }, { headers });
+      const res = await axios.post(
+        `${API}/billing/checkout`,
+        { plan_code: planCode, billing_cycle: cycle, origin_url: window.location.origin },
+        { headers },
+      );
       if (res.data?.checkout_url) {
         window.location.href = res.data.checkout_url;
       } else {
@@ -100,9 +108,25 @@ export default function ClinicSettingsPage() {
       }
     } catch (err) {
       toast.error(err.response?.data?.detail || err.message);
-    } finally {
-      setCheckoutLoading(false);
-    }
+    } finally { setCheckoutLoading(false); }
+  };
+
+  const openBillingPortal = async () => {
+    setPortalLoading(true);
+    try {
+      const res = await axios.post(
+        `${API}/billing/portal`,
+        { origin_url: window.location.origin },
+        { headers },
+      );
+      if (res.data?.portal_url) {
+        window.location.href = res.data.portal_url;
+      } else {
+        toast.info(res.data?.message || 'Portal no disponible');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message);
+    } finally { setPortalLoading(false); }
   };
 
   useEffect(() => {
@@ -110,9 +134,35 @@ export default function ClinicSettingsPage() {
     const error = searchParams.get('gcal_error');
     if (success === 'true') toast.success('Google Calendar conectado exitosamente');
     if (error) toast.error(`Error al conectar: ${error}`);
+    const billing = searchParams.get('billing');
+    const sessionId = searchParams.get('session_id');
+    if (billing === 'success') {
+      setActiveTab('billing');
+      toast.success('¡Plan activado! Puede tomar unos segundos en reflejarse.');
+      if (sessionId) {
+        // Poll status briefly then refresh subscription
+        const poll = async (tries = 0) => {
+          try {
+            const r = await axios.get(`${API}/billing/status/${sessionId}`);
+            if (r.data?.payment_status === 'paid') {
+              const sub = await axios.get(`${API}/billing/subscription`, { headers });
+              setSubscription(sub.data);
+              toast.success(`Suscripción activa: ${sub.data.plan_name}`);
+              return;
+            }
+          } catch (_) {}
+          if (tries < 5) setTimeout(() => poll(tries + 1), 1200);
+        };
+        poll();
+      }
+    } else if (billing === 'cancel') {
+      setActiveTab('billing');
+      toast.info('Cambio de plan cancelado.');
+    }
     const tab = searchParams.get('tab');
     const VALID_TABS = ['clinic', 'members', 'prescriptions', 'billing', 'integrations', 'roles', 'data', 'audit', 'guide'];
     if (tab && VALID_TABS.includes(tab)) setActiveTab(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   useEffect(() => {
@@ -124,6 +174,7 @@ export default function ClinicSettingsPage() {
           axios.get(`${API}/clinic/config`, { headers }).catch(() => ({ data: {} })),
         ]);
         axios.get(`${API}/billing/subscription`, { headers }).then(r => setSubscription(r.data)).catch(() => {});
+        axios.get(`${API}/plans`, { headers }).then(r => setPlansList(r.data || [])).catch(() => setPlansList([]));
         const c = clinicRes.data;
         setClinic(c);
         if (configRes.data?.current_member?.id) setCurrentMemberId(configRes.data.current_member.id);
@@ -929,38 +980,99 @@ export default function ClinicSettingsPage() {
               <CardContent>
                 {subscription ? (
                   <div className="space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-50 rounded-lg border border-slate-100">
-                      <div>
-                        <p className="text-xs text-slate-500">Cargo mensual</p>
-                        <p className="text-2xl font-bold text-slate-800">
-                          {subscription.price_monthly != null
-                            ? `${subscription.currency === 'GTQ' ? 'Q' : '$'}${Number(subscription.price_monthly).toLocaleString('es-GT', { minimumFractionDigits: 2 })}`
-                            : '—'}
-                          <span className="text-sm font-normal text-slate-400"> /mes</span>
-                        </p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          Plan {subscription.plan_name} · {subscription.status === 'active' ? 'Al día' : 'Suspendido'}
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <Badge className={subscription.stripe_configured ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}>
-                          {subscription.stripe_configured ? 'Pago automático activo' : 'Pago automático pendiente'}
-                        </Badge>
+                    {/* Current subscription status */}
+                    {subscription.has_customer && subscription.stripe_subscription ? (
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge className="bg-emerald-600 text-white text-xs">
+                              {subscription.stripe_subscription.status === 'active' ? 'Suscripción activa' :
+                               subscription.stripe_subscription.status === 'trialing' ? 'En prueba' :
+                               subscription.stripe_subscription.status === 'past_due' ? 'Pago vencido' :
+                               subscription.stripe_subscription.status === 'canceled' ? 'Cancelada' :
+                               subscription.stripe_subscription.status}
+                            </Badge>
+                            {subscription.stripe_subscription.cancel_at_period_end && (
+                              <Badge className="bg-amber-100 text-amber-700 text-[10px]">Se cancelará al final del periodo</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-emerald-700">
+                            Plan {subscription.plan_name} · {subscription.billing_cycle === 'yearly' ? 'Anual' : 'Mensual'}
+                            {subscription.stripe_subscription.current_period_end && (
+                              <> · Próximo cobro: {new Date(subscription.stripe_subscription.current_period_end * 1000).toLocaleDateString('es-GT')}</>
+                            )}
+                          </p>
+                        </div>
                         <Button
                           size="sm"
-                          className="bg-teal-600 hover:bg-teal-700 text-xs"
-                          onClick={startCheckout}
-                          disabled={checkoutLoading}
-                          data-testid="billing-checkout-btn"
+                          variant="outline"
+                          onClick={openBillingPortal}
+                          disabled={portalLoading}
+                          data-testid="billing-portal-btn"
                         >
                           <CreditCard className="w-3.5 h-3.5 mr-1" />
-                          {checkoutLoading ? 'Abriendo…' : 'Administrar método de pago'}
+                          {portalLoading ? 'Abriendo…' : 'Administrar facturación'}
                         </Button>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+                        <p className="text-sm font-medium text-amber-900">Suscripción no activada</p>
+                        <p className="text-xs text-amber-800 mt-1">
+                          Elige un plan abajo y actívalo con Stripe para activar los cobros automáticos.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Plan selector */}
+                    {subscription.stripe_configured && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                          <Label className="text-xs">Plan</Label>
+                          <select
+                            className="text-sm border border-slate-200 rounded px-3 py-1.5 bg-white"
+                            value={checkoutPlan || subscription.plan_code || ''}
+                            onChange={e => setCheckoutPlan(e.target.value)}
+                            data-testid="checkout-plan-select"
+                          >
+                            {plansList.length === 0 && subscription.plan_code && (
+                              <option value={subscription.plan_code}>{subscription.plan_name}</option>
+                            )}
+                            {plansList.map(p => (
+                              <option key={p.code} value={p.code}>
+                                {p.name} — ${p.price_monthly}/mes
+                              </option>
+                            ))}
+                          </select>
+                          <Label className="text-xs ml-2">Ciclo</Label>
+                          <select
+                            className="text-sm border border-slate-200 rounded px-3 py-1.5 bg-white"
+                            value={checkoutCycle}
+                            onChange={e => setCheckoutCycle(e.target.value)}
+                            data-testid="checkout-cycle-select"
+                          >
+                            <option value="monthly">Mensual</option>
+                            <option value="yearly">Anual (ahorra)</option>
+                          </select>
+                          <Button
+                            size="sm"
+                            className="bg-teal-600 hover:bg-teal-700 ml-auto"
+                            onClick={() => startCheckout(checkoutPlan || subscription.plan_code, checkoutCycle)}
+                            disabled={checkoutLoading || !(checkoutPlan || subscription.plan_code)}
+                            data-testid="billing-checkout-btn"
+                          >
+                            <CreditCard className="w-3.5 h-3.5 mr-1" />
+                            {checkoutLoading ? 'Abriendo…' : subscription.has_customer ? 'Cambiar plan' : 'Activar plan'}
+                          </Button>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Al continuar serás redirigido a Stripe Checkout. Puedes pagar con cualquier tarjeta Visa, Mastercard o American Express.
+                        </p>
+                      </div>
+                    )}
+
                     {!subscription.stripe_configured && (
-                      <p className="text-xs text-slate-400">
-                        La ruta de cobros está lista. En cuanto se conecte Stripe, podrás pagar tu suscripción y actualizar tu tarjeta desde aquí.
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+                        ⚠ La pasarela de pagos aún no está activa en la plataforma. Avisa al administrador del sistema.
                       </p>
                     )}
                   </div>
