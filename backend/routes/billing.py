@@ -200,6 +200,27 @@ def _ensure_price(product_id: str, lookup_key: str, amount_cents: int, interval:
 
 # ============== CLINIC-FACING ==============
 
+@router.get("/billing/payment-status")
+async def payment_status(ctx=Depends(require_clinic_member)):
+    """Current clinic's payment-block state (for banner + full-screen gate).
+
+    IMPORTANT: this endpoint is under /billing/ so the payment-block gate in
+    core.py lets it through even when the clinic is blocked — otherwise the
+    frontend couldn't fetch the state to show the block screen.
+    """
+    clinic_id = ctx["member"]["clinic_id"]
+    c = sdb.table('clinics').select(
+        'is_payment_blocked,payment_grace_until,is_courtesy,stripe_subscription_status,payment_blocked_at,name'
+    ).eq('id', clinic_id).single().execute().data
+    return {
+        "is_payment_blocked": bool(c.get('is_payment_blocked')),
+        "payment_grace_until": c.get('payment_grace_until'),
+        "is_courtesy": bool(c.get('is_courtesy')),
+        "stripe_subscription_status": c.get('stripe_subscription_status'),
+        "clinic_name": c.get('name'),
+    }
+
+
 @router.get("/billing/subscription")
 async def my_subscription(ctx=Depends(require_clinic_member)):
     """Current clinic's plan + billing status (reads clinic row + Stripe status if any)."""
@@ -426,6 +447,8 @@ async def stripe_webhook(request: Request):
             _apply_subscription_cancellation(obj)
         elif etype == 'invoice.payment_failed':
             _apply_payment_failure(obj)
+        elif etype == 'invoice.payment_succeeded':
+            _apply_payment_success(obj)
     except Exception as e:
         logger.error(f"webhook handler failed for {etype}: {e}", exc_info=True)
     return {"status": "ok"}
@@ -533,12 +556,82 @@ def _apply_payment_failure(invoice_obj):
     if not sub_id:
         return
     try:
+        rows = sdb.table('clinics').select('id,is_courtesy').eq('stripe_subscription_id', sub_id).execute().data or []
+        for r in rows:
+            if r.get('is_courtesy'):
+                continue  # courtesy clinics never enter the blocking flow
+            grace_until = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+            sdb.table('clinics').update({
+                "stripe_subscription_status": "past_due",
+                "payment_grace_until": grace_until,
+                "updated_at": now_iso(),
+            }).eq('id', r['id']).execute()
+            _send_payment_failed_emails(r['id'], grace_until)
+    except Exception as e:
+        logger.warning(f"apply payment failure failed: {e}")
+
+
+def _apply_payment_success(invoice_obj):
+    """Clear block + grace on successful payment."""
+    def g(k, default=None):
+        return invoice_obj.get(k, default) if isinstance(invoice_obj, dict) else getattr(invoice_obj, k, default)
+    sub_id = g('subscription')
+    if not sub_id:
+        return
+    try:
         sdb.table('clinics').update({
-            "stripe_subscription_status": "past_due",
+            "stripe_subscription_status": "active",
+            "payment_grace_until": None,
+            "is_payment_blocked": False,
+            "payment_blocked_at": None,
+            "is_active": True,
             "updated_at": now_iso(),
         }).eq('stripe_subscription_id', sub_id).execute()
     except Exception as e:
-        logger.warning(f"apply payment failure failed: {e}")
+        logger.warning(f"apply payment success failed: {e}")
+
+
+def _send_payment_failed_emails(clinic_id: str, grace_until: str):
+    """Email all active clinic_admins about the failed payment."""
+    try:
+        from services.email_service import send_email
+        admins = sdb.table('clinic_members').select('email,first_name').eq('clinic_id', clinic_id).eq('role', 'clinic_admin').eq('is_active', True).is_('deleted_at', 'null').execute().data or []
+        clinic = sdb.table('clinics').select('name').eq('id', clinic_id).maybe_single().execute()
+        clinic_name = (clinic.data or {}).get('name', 'tu clínica') if clinic else 'tu clínica'
+        for a in admins:
+            if not a.get('email'):
+                continue
+            try:
+                send_email(
+                    to=a['email'],
+                    subject=f"⚠ Pago vencido en {clinic_name}",
+                    html=f"<p>Hola {a.get('first_name','')},</p><p>El cobro mensual de tu clínica <strong>{clinic_name}</strong> no pudo completarse. Tienes hasta el <strong>{grace_until[:10]}</strong> para actualizar tu método de pago, de lo contrario tu cuenta será bloqueada.</p><p>Entra al sistema y presiona <strong>Pagar ahora</strong> en el banner rojo para abrir el portal de Stripe.</p>",
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"send payment failed emails: {e}")
+
+
+def _send_payment_blocked_emails(clinic_id: str):
+    try:
+        from services.email_service import send_email
+        admins = sdb.table('clinic_members').select('email,first_name').eq('clinic_id', clinic_id).eq('role', 'clinic_admin').eq('is_active', True).is_('deleted_at', 'null').execute().data or []
+        clinic = sdb.table('clinics').select('name').eq('id', clinic_id).maybe_single().execute()
+        clinic_name = (clinic.data or {}).get('name', 'tu clínica') if clinic else 'tu clínica'
+        for a in admins:
+            if not a.get('email'):
+                continue
+            try:
+                send_email(
+                    to=a['email'],
+                    subject=f"🔒 {clinic_name} bloqueada por falta de pago",
+                    html=f"<p>Hola {a.get('first_name','')},</p><p>Tu clínica <strong>{clinic_name}</strong> ha sido bloqueada temporalmente por falta de pago. Para restaurar el acceso, actualiza tu método de pago desde la pantalla de inicio y Stripe aplicará el cobro pendiente.</p>",
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"send payment blocked emails: {e}")
 
 
 # ============== SUPER-ADMIN (Cobros) ==============
@@ -556,6 +649,7 @@ async def billing_overview(user=Depends(require_super_admin)):
     mrr = 0.0
     active_count = 0
     with_sub = 0
+    courtesy_count = 0
     by_plan: dict = {}
     rows = []
     for c in clinics:
@@ -564,23 +658,29 @@ async def billing_overview(user=Depends(require_super_admin)):
         price_monthly = float(p.get('price_monthly') or 0)
         price_yearly = float(p.get('price_yearly') or 0)
         is_active = bool(c.get('is_active'))
+        is_courtesy = bool(c.get('is_courtesy'))
         cycle = c.get('billing_cycle') or 'monthly'
-        # MRR normalization: yearly / 12
         monthly_eq = price_yearly / 12 if cycle == 'yearly' and price_yearly else price_monthly
         has_sub = bool(c.get('stripe_subscription_id'))
-        if has_sub and c.get('stripe_subscription_status') in ('active', 'trialing'):
+        if is_courtesy:
+            courtesy_count += 1
+        elif has_sub and c.get('stripe_subscription_status') in ('active', 'trialing'):
             mrr += monthly_eq
             with_sub += 1
         if is_active:
             active_count += 1
         agg = by_plan.setdefault(plan_code or 'sin_plan', {
             "plan_code": plan_code, "plan_name": p.get('name') or plan_code,
-            "count": 0, "mrr": 0.0,
+            "price_monthly": price_monthly,
+            "count": 0, "paying_count": 0, "courtesy_count": 0, "mrr": 0.0,
             "synced": bool(p.get('stripe_price_monthly')),
         })
         agg["count"] += 1
-        if has_sub and c.get('stripe_subscription_status') in ('active', 'trialing'):
+        if is_courtesy:
+            agg["courtesy_count"] += 1
+        elif has_sub and c.get('stripe_subscription_status') in ('active', 'trialing'):
             agg["mrr"] += monthly_eq
+            agg["paying_count"] += 1
         rows.append({
             "clinic_id": c.get('id'),
             "name": c.get('name'),
@@ -594,6 +694,9 @@ async def billing_overview(user=Depends(require_super_admin)):
             "stripe_subscription_id": c.get('stripe_subscription_id'),
             "stripe_subscription_status": c.get('stripe_subscription_status'),
             "billing_cycle": cycle,
+            "is_courtesy": is_courtesy,
+            "is_payment_blocked": bool(c.get('is_payment_blocked')),
+            "payment_grace_until": c.get('payment_grace_until'),
         })
 
     return {
@@ -602,6 +705,7 @@ async def billing_overview(user=Depends(require_super_admin)):
             "total_clinics": len(clinics),
             "active_clinics": active_count,
             "with_subscription": with_sub,
+            "courtesy": courtesy_count,
             "mrr": round(mrr, 2),
             "arr": round(mrr * 12, 2),
         },

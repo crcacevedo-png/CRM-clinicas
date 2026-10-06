@@ -4,6 +4,9 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useFeatures } from '../context/FeatureContext';
 import { useBranch } from '../context/BranchContext';
+import { usePaymentStatus } from '../context/PaymentStatusContext';
+import PaymentOverdueBanner from '../components/PaymentOverdueBanner';
+import PaymentBlockedScreen from '../components/PaymentBlockedScreen';
 import { 
   LayoutDashboard, CalendarDays, Users, LogOut, ChevronRight,
   Pill, FlaskConical, Settings, Package, ShoppingCart, Receipt,
@@ -35,6 +38,7 @@ export default function ClinicLayout() {
   const { user, logout, getAuthHeaders } = useAuth();
   const { hasFeature, hasModule } = useFeatures();
   const { branches, activeBranch, setActiveBranch, hasBranches } = useBranch();
+  const { isPaymentBlocked, loading: paymentLoading } = usePaymentStatus();
   const navigate = useNavigate();
 
   const [clinicBrand, setClinicBrand] = useState({ name: '', logo_url: null });
@@ -65,6 +69,12 @@ export default function ClinicLayout() {
     (!item.feature || hasFeature(item.feature)) &&
     (!item.module || hasModule(item.module))
   );
+
+  // Hard-block: full-screen gate when the clinic subscription is past due and
+  // the grace window has expired. No sidebar, no routes — only the block UI.
+  if (!paymentLoading && isPaymentBlocked) {
+    return <PaymentBlockedScreen />;
+  }
 
   return (
     <div className="flex min-h-screen bg-[#FAFAFA]">
@@ -161,6 +171,7 @@ export default function ClinicLayout() {
       </aside>
 
       <main className="flex-1 ml-52">
+        <PaymentOverdueBanner />
         <Outlet />
       </main>
     </div>

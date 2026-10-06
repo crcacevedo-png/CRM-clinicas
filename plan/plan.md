@@ -1,62 +1,108 @@
-# Rediseño del flujo de Pago con Seguro
+# Cobros SaaS: Fuente única de precios, Cortesía, Falta de pago y CRUD completo
 
-Un cargo hecho a un seguro médico ya no se cuenta como dinero recibido en caja: se separa del monto que el paciente paga hoy (copago o deducible) y se registra como una cuenta por cobrar a la aseguradora, que se marcará como cobrada cuando la aseguradora efectivamente pague.
+Alineación del cobro mensual con el precio real de cada plan, modo cortesía para clínicas regaladas, bloqueo automático por falta de pago con pantalla "Pago vencido", y gestión completa (crear / editar / eliminar / restaurar) de clínicas y usuarios desde el Super Admin.
 
 ## Who it's for
-Recepcionistas, cajeros y administradores de clínicas que atienden pacientes con cobertura de seguro médico, y que necesitan saber en todo momento cuánto entró realmente a caja hoy y cuánto está pendiente de cobro con cada aseguradora.
+
+- **Super Admin** (dueño de la plataforma): necesita cuadrar reportes de ingresos con los precios reales de los planes, regalar acceso a clínicas aliadas, forzar el pago cuando una tarjeta falla, y mantener limpios los catálogos de clínicas y usuarios sin editar la base de datos a mano.
+- **Administradores de clínica**: cuando su cobro falla, deben saber qué pasó, cuántos días les quedan de gracia y cómo pagar; si no actualizan la tarjeta, el sistema los pone en pausa hasta regularizar.
 
 ## Core features and experience
-- **Separación clara entre pago del paciente y cargo al seguro.** El cobro en el punto de venta muestra ambos montos por separado y calcula por sí solo el saldo pendiente restante.
-- **La aseguradora deja de ser un “método de pago”.** Se elimina del selector de métodos de pago, y en su lugar aparece un panel dedicado arriba de los pagos del paciente.
-- **Autocompletado de aseguradoras existentes.** Se mantiene la lista de aseguradoras que la clínica ya ha usado, con opción de agregar una nueva sobre la marcha.
-- **La cuenta por cobrar refleja al deudor real.** Cuando parte del total va al seguro, la cuenta por cobrar asociada guarda el nombre de la aseguradora y el monto que le corresponde; el resto (si el paciente además queda a deber algo) queda como saldo a nombre del paciente en la misma cuenta.
-- **Reporte de aseguradoras coherente con la caja.** El “cobrado por aseguradoras” en el reporte solo suma pagos efectivamente recibidos de aseguradoras (pagos aplicados a cuentas por cobrar de seguro), no promesas de pago al momento de la venta. El “pendiente” refleja lo que aún debe cada aseguradora.
-- **Cobro del seguro cuando llega el pago.** Cuando la aseguradora paga, el usuario abre esa cuenta por cobrar en el módulo de Cuentas por Cobrar y usa el botón existente “Registrar pago” con el método real (transferencia, cheque, etc.). Ese pago sí cuenta como cobrado en el reporte de aseguradoras.
-- **Migración retroactiva de ventas anteriores.** Las ventas ya registradas con “seguro” como método de pago se corrigen automáticamente para que los importes queden como cargo al seguro (cuenta por cobrar) y no como dinero recibido en caja. El historial visible se preserva, pero los totales de caja, cierres previos y reportes quedan alineados con la nueva definición.
-- **Manual de usuario actualizado.** La sección de Ventas / Punto de venta y la de Cuentas por cobrar se reescriben para describir el nuevo flujo, incluyendo cómo registrar el pago que llega después desde la aseguradora.
+
+- **Precio y límites del plan como fuente única de verdad.** Toda vista de cobros (Super Admin → Cobros, Clínica → Configuración → Plan, reportes y KPIs) muestra el precio tomado del plan en el momento de ver, no una copia guardada por clínica. Los límites (máximo de usuarios, pacientes y almacenamiento) también se leen del plan en el momento, nunca se guardan por clínica. Si un plan sube de $39 a $49 o cambia su límite de usuarios de 10 a 15, el cambio se refleja de inmediato en todas las clínicas suscritas a ese plan. El reporte "Ingresos por plan" deja de mostrar sumatorias confusas (ej. "$78 Professional" cuando dos clínicas pagan $39 cada una) y pasa a mostrar el precio unitario del plan, el conteo de clínicas, y el MRR total aparte en una línea diferente.
+- **Cortesía.** El Super Admin puede marcar cualquier clínica como "Cortesía" desde su panel. Una clínica en cortesía:
+  - No necesita suscripción Stripe para operar.
+  - Se queda indefinidamente activa hasta que el Super Admin la desactive.
+  - No participa en el MRR / ARR del reporte (se cuenta aparte como "Cortesía: N clínicas").
+  - Nunca entra al flujo de bloqueo por falta de pago, aunque Stripe la haya marcado como `past_due`.
+  - Mantiene su etiqueta de plan (Basic, Professional, Enterprise) para fines de permisos y límites.
+- **Flujo de falta de pago.** Cuando Stripe reporta un pago fallido (`invoice.payment_failed` o `subscription.status = past_due`):
+  - La clínica entra en periodo de gracia de **3 días**. Durante ese tiempo:
+    - Un banner rojo aparece en todas las pantallas de la clínica indicando "Pago vencido — Actualiza tu método de pago antes del <fecha> o perderás acceso", con un botón "Pagar ahora" que abre el Stripe Customer Portal.
+    - Se envía correo a **todos los administradores activos de la clínica** el día 0 (al detectar la falla) con instrucciones.
+    - Se reintenta el cobro automáticamente por reglas de Stripe.
+  - Al **día 4**, si el pago sigue sin aplicarse:
+    - La clínica se bloquea. Todas las rutas devuelven una pantalla única "Pago vencido" con el logo, un mensaje claro, y un solo botón "Pagar ahora" que lleva al Customer Portal de Stripe. Nada más se puede ver ni hacer.
+    - El API bloquea toda llamada que no sea de pago/portal con código HTTP 402.
+    - Se envía un segundo correo a todos los administradores activos de la clínica indicando el bloqueo.
+  - Cuando el pago se aplica (webhook `invoice.payment_succeeded` o `subscription.status = active`), el bloqueo se levanta automáticamente, el banner desaparece y la clínica vuelve a operar sin intervención manual.
+  - Un cron diario revisa clínicas con suscripciones en estado `past_due`/`unpaid` cuyo periodo de gracia venció y activa el bloqueo si Stripe no lo resolvió solo.
+  - Plan `basic` (precio = $0) nunca entra al flujo de bloqueo: no tiene suscripción Stripe que pueda fallar.
+- **CRUD completo de clínicas.** El Super Admin puede desde la vista Clínicas:
+  - Crear una clínica (ya existe).
+  - **Editar todos los campos**: nombre, slug, país, ciudad, dirección, teléfono, email, zona horaria, plan, estado activo/inactivo, flag de cortesía. Los límites de usuarios / pacientes / almacenamiento no son editables por clínica: se heredan del plan en todo momento. Al cambiar el plan, si la clínica tiene suscripción Stripe activa, se cambia la suscripción en Stripe automáticamente con prorrateo; si la clínica está en cortesía o no tiene suscripción, solo se cambia el plan local sin tocar Stripe.
+  - Enviar a Papelera (ya existe).
+  - Restaurar desde Papelera (ya existe).
+  - Purgar permanentemente (ya existe).
+- **CRUD completo de usuarios.** El Super Admin puede desde la vista Usuarios:
+  - Crear un usuario (ya existe).
+  - **Editar todos los campos**: nombre, apellido, email (actualizando también en Supabase Auth), teléfono, rol, sucursales asignadas, estado activo/inactivo.
+  - Reiniciar contraseña (ya existe).
+  - Mover a otra clínica (ya existe).
+  - Enviar a Papelera (ya existe).
+  - Restaurar / Purgar (ya existe).
 
 ## User flow
-1. En el punto de venta, el cajero arma el carrito y presiona “Cobrar”.
-2. Se abre el diálogo de cobro con el total a pagar. Encima de los métodos de pago aparece un panel “¿Parte del total va a un seguro médico?”. El cajero, si aplica, elige la aseguradora del autocompletado (o escribe una nueva) y captura el monto que cubre esa aseguradora.
-3. Debajo, el cajero registra lo que el paciente paga hoy (efectivo, tarjeta, transferencia, etc.). El diálogo muestra en tiempo real: total, cargo al seguro, pagado hoy, cambio si aplica, y saldo pendiente del paciente.
-4. Al confirmar, el sistema crea la venta con los pagos del paciente como cobrado real y, si el cargo al seguro es mayor a cero, crea una cuenta por cobrar a nombre de la aseguradora con ese monto. Si además queda saldo del paciente, ese saldo se registra en la misma cuenta con desglose visible en el detalle.
-5. Días después, cuando la aseguradora deposita, el usuario abre la cuenta por cobrar correspondiente en el módulo de Cuentas por Cobrar y presiona “Registrar pago” con el método real. Ese abono se refleja de inmediato en el reporte de aseguradoras como “cobrado” y reduce el pendiente.
-6. En el reporte de aseguradoras, el usuario ve por cada aseguradora: pendiente actual, cobrado en el período, acumulado, participación y el desglose mensual — todo alineado con lo que realmente entró a caja.
+
+**Super Admin regala una clínica.**
+1. Entra a Clínicas, ubica la clínica, abre el menú de acciones → "Marcar como cortesía". Confirma el plan que quiere regalar.
+2. La clínica aparece etiquetada con un badge amarillo "Cortesía". El Super Admin puede en cualquier momento revertir con "Quitar cortesía".
+
+**Clínica entra en falta de pago.**
+1. Stripe reintenta cobrar la tarjeta → falla. El webhook llega al backend. Se guarda `payment_grace_until = ahora + 3 días`, se envía email a todos los administradores de la clínica.
+2. Un admin entra al sistema al día siguiente → ve un banner rojo con cuenta regresiva y un botón "Pagar ahora".
+3. Si paga antes del día 4 → Stripe envía `invoice.payment_succeeded`, el banner desaparece, todo sigue normal.
+4. Si no paga → al día 4 el cron bloquea la clínica. Al próximo login, en vez de ver el panel, se ve la pantalla "Pago vencido" con un solo botón que abre el Customer Portal.
+5. El admin actualiza la tarjeta en el portal, Stripe cobra, webhook llega, bloqueo se levanta.
+
+**Super Admin edita una clínica o un usuario.**
+1. Entra a Clínicas → clic en una fila → se abre un panel con todos los campos editables agrupados por sección (Datos generales, Plan, Cortesía). Los límites se muestran como solo-lectura con el valor del plan actual.
+2. Modifica lo que necesita. Si cambia el plan y la clínica tiene suscripción Stripe activa, aparece una confirmación: "Esto cambiará también la suscripción en Stripe con prorrateo. ¿Continuar?".
+3. Guarda. Toda la acción queda en la bitácora de auditoría.
+4. Para usuarios es el mismo patrón, con un botón "Editar" en cada fila que abre un modal con todos los campos.
 
 ## UI/UX feel
-- El panel de seguro se ve claramente separado de los métodos de pago: fondo suave azul con ícono de escudo, para diferenciarlo del bloque verde/teal de pagos reales.
-- El resumen del diálogo destaca tres números en la misma línea: “Pagado hoy”, “Cargo al seguro”, “Saldo pendiente”, con colores distintos, para que el cajero entienda de un vistazo qué está entrando a caja y qué está quedando por cobrar.
-- Si no se usa seguro, el panel se muestra colapsado con un simple “¿Parte va a un seguro? Agregar” para no ensuciar la vista de cobros comunes.
-- El diálogo bloquea confirmar si el total no cuadra (paciente + seguro + pendiente ≠ total), con un mensaje claro de qué falta.
-- En el módulo de Cuentas por Cobrar, la etiqueta “Seguro” en la tabla se mantiene y sigue siendo el indicador de que ese saldo pertenece a una aseguradora.
+
+- **Banner de pago vencido**: rojo sobre fondo claro, fijo arriba de todas las pantallas de la clínica, con icono de alerta, cuenta regresiva ("Faltan 2 días para el bloqueo"), y un botón primario grande "Pagar ahora". No se puede cerrar.
+- **Pantalla de bloqueo**: pantalla completa centrada, logo de la clínica arriba, icono grande de tarjeta rechazada, título "Pago vencido", párrafo breve, un solo botón grande "Pagar ahora" que lleva al portal, y un enlace secundario a soporte. Mismos colores que el resto del sistema, nada agresivo.
+- **Badge Cortesía**: pequeño badge amarillo con icono de regalo, visible en la fila de clínicas (Super Admin) y en el banner superior del dashboard de la clínica para que su admin sepa que su acceso es cortesía.
+- **Reporte "Ingresos por plan"**: cada tarjeta muestra el precio unitario del plan (del campo `plans.price_monthly`), un conteo de clínicas pagantes, y un MRR del plan debajo. Las cortesías aparecen en una tarjeta aparte, sin precio, con el solo conteo.
+- **Modal de editar clínica/usuario**: dialog ancho con secciones colapsables, campos agrupados, botón primario "Guardar cambios" abajo a la derecha. Los límites se muestran como texto gris no editable (ej. "Usuarios: hasta 10 — definido por el plan Professional"). Si al cambiar plan se va a tocar Stripe, un cuadro informativo aparece dentro del modal antes de guardar.
 
 ## Implementation phases
 
 ### Phase 1 — MVP (se construye ahora)
-- Rediseño del diálogo de cobro en el punto de venta con el panel dedicado de seguro fuera del selector de métodos.
-- Backend deja de aceptar “seguro” como método de pago; el cargo al seguro entra por un campo separado en la venta.
-- Creación de la cuenta por cobrar con nombre de aseguradora y monto asignado; el resto del saldo del paciente queda en la misma cuenta con etiqueta clara.
-- Migración retroactiva única que corrige las ventas históricas con “seguro” como método de pago: elimina esos pagos de caja, crea/ajusta la cuenta por cobrar y deja el historial consistente. Se registra en auditoría con conteo de filas afectadas.
-- Reporte de aseguradoras: el “cobrado” pasa a alimentarse de pagos aplicados a cuentas por cobrar de seguro. El “pendiente” sigue leyendo el balance actual de cuentas por cobrar con aseguradora.
-- Manual de usuario actualizado con el nuevo flujo y con instrucciones específicas para cuando llega el pago de la aseguradora.
 
-### Phase 2 — Cobro y conciliación mejorados
-- Vista dedicada “Por cobrar a aseguradoras” dentro del módulo de Cuentas por cobrar, con filtros por aseguradora y por antigüedad, y acción rápida “Registrar pago del seguro”.
-- Registrar pago de aseguradora en lote: un solo depósito puede cubrir varias cuentas por cobrar de la misma aseguradora.
-- Referencia opcional del número de autorización del seguro por cada venta.
+- Reporte y vistas de cobros leen `plans.price_monthly` y los límites del plan en el momento, en vez de copias guardadas en la clínica. KPIs (MRR, ARR, Ingresos por plan) se recalculan desde los planes vigentes. Las columnas de límites por clínica se retiran del CRUD (solo se muestran como herencia del plan).
+- Nueva columna `is_courtesy` en clínicas. Toggle para marcar/desmarcar desde el panel de Super Admin, con confirmación. Las clínicas en cortesía quedan excluidas del cálculo de MRR y del flujo de bloqueo, y se muestran aparte en el reporte.
+- Flujo completo de falta de pago: campos `payment_grace_until`, `is_payment_blocked`; webhooks de Stripe actualizan estos campos; cron diario que aplica el bloqueo al día 4; dos correos (día 0 y día 4) a todos los administradores activos de la clínica; banner rojo en todas las pantallas durante gracia; pantalla única de bloqueo que reemplaza el dashboard; middleware/dependencia en el backend que devuelve 402 excepto para rutas de pago y portal; levantamiento automático al cobrarse.
+- CRUD completo de clínicas: endpoint para editar todos los campos editables (incluido cambio de plan con reemplazo de suscripción Stripe prorrateado); modal en el panel Super Admin con todos los campos agrupados y límites del plan en modo solo-lectura.
+- CRUD completo de usuarios: endpoint para editar todos los campos (incluido actualización de email en Supabase Auth); modal en el panel Super Admin con todos los campos.
+- Toda acción destructiva o de cambio relevante queda registrada en `audit_log` con actor, entidad y snapshot.
 
-### Phase 3 — Contabilidad de aseguradoras
-- Estados de cuenta descargables en PDF por aseguradora y por período, listos para enviar.
-- Alertas automáticas de cuentas por cobrar de aseguradora con más de N días de antigüedad.
-- Comisión por aseguradora (porcentaje que la aseguradora descuenta al pagar) reflejada como gasto o descuento.
+### Phase 2 — Automatizaciones y visibilidad
+
+- Reintento de pago inteligente: botón "Reintentar cobro ahora" desde el banner, sin esperar al próximo intento de Stripe.
+- Historial de intentos de cobro por clínica (listado con fecha, resultado y motivo) accesible desde la vista de la clínica.
+- Alerta a Slack / email para el Super Admin cuando una clínica entra en estado bloqueado (día 4).
+- Reporte de churn: clínicas que entraron en bloqueo y no se recuperaron en N días → candidatas a cancelación.
+- Vista "Mis cortesías" filtrable en Super Admin con el responsable comercial de cada cortesía.
+
+### Phase 3 — Políticas avanzadas
+
+- Políticas configurables de falta de pago por plan (ej. Enterprise con 7 días de gracia en vez de 3).
+- Descuentos y cupones aplicables desde el panel Super Admin (crea cupones Stripe y los asigna).
+- Downgrades programados (ej. "cancelar al final del periodo") y upgrades con fecha futura.
+- Reporte financiero mensual descargable en PDF con MRR, ARR, churn, nuevos clientes y cortesías regaladas.
 
 ## Assumptions
-- El cargo al seguro es un solo monto por venta y una sola aseguradora por venta. No se soportan por ahora ventas partidas entre dos aseguradoras distintas.
-- Si el paciente paga hoy más que la diferencia entre total y seguro, el excedente se toma como cambio (mismo comportamiento actual con efectivo).
-- Si el paciente además queda a deber una parte propia (no cubierta por seguro y no pagada hoy), esa deuda se registra en la misma cuenta por cobrar del seguro, con el saldo del paciente diferenciado en las notas y visible en el detalle de la cuenta. No se crean dos cuentas por cobrar separadas para la misma venta.
-- La aseguradora capturada al vuelo (sin autocompletado) se guarda automáticamente como aseguradora de la clínica para futuros cobros, tal como ya funciona hoy.
-- En el reporte de aseguradoras, “cobrado” refleja desde este cambio en adelante solo pagos aplicados a cuentas por cobrar con nombre de aseguradora. La migración retroactiva ajusta el histórico para que el comportamiento sea uniforme antes y después.
-- La migración retroactiva se ejecuta una única vez, es idempotente (se puede reintentar sin duplicar) y se puede correr manualmente desde un endpoint protegido para super admin en caso de que quede una clínica pendiente.
-- Los cierres de caja anteriores que ya se generaron no se recalculan hacia atrás; solo el histórico de datos base queda corregido. Si un cierre de caja imprimió “Q X en seguro” como ingreso, ese PDF ya está entregado y no se regenera.
-- El botón “Registrar pago” en Cuentas por Cobrar se mantiene tal cual está hoy; sirve tanto para pagos del paciente como para pagos del seguro. No se agrega un botón especial.
-- La UI del panel de seguro solo se muestra si la clínica ya ha usado el seguro alguna vez o si el usuario despliega explícitamente el panel colapsado; no se muestra siempre para no distraer en clínicas que no manejan seguros.
+
+- "Cortesía nunca expira" — una clínica en cortesía queda así hasta que un super admin cambie manualmente el flag; no hay fecha de vencimiento automática en esta fase.
+- "Bloqueo total al día 4" — cuando el bloqueo se activa, el único botón disponible es "Pagar ahora" que lleva al Stripe Customer Portal; no hay modo solo-lectura intermedio, el admin tampoco puede ver sus datos. Los usuarios no-admin de la clínica ven la misma pantalla si intentan entrar.
+- "Cambio de plan en Stripe automático" — al editar el plan de una clínica con suscripción activa desde el panel super admin, se llama a Stripe para cambiar el item de suscripción, con prorrateo (`proration_behavior = create_prorations`). Si la clínica no tiene suscripción activa o está en cortesía, solo se cambia el plan localmente.
+- Correos de falta de pago (día 0 y día 4) se envían a todos los usuarios con rol `clinic_admin` activo en la clínica. Si no hay ningún admin activo, se registra el evento pero no se envía nada.
+- El periodo de gracia de 3 días se cuenta en UTC desde el momento del webhook de pago fallido; una vez bloqueada, la clínica se desbloquea al recibir cualquier webhook de pago exitoso (`invoice.payment_succeeded` o `subscription.status = active`).
+- Los límites (max_users, max_patients, max_storage_mb) viven en `plans` y nunca se guardan por clínica. Cualquier override previo en una fila de clínica se ignora y queda obsoleto; el super admin ya no puede ajustar límites por clínica desde el panel.
+- Cambio de email de usuario desde CRUD también actualiza el email en Supabase Auth. Si la clave de Supabase falla, la operación entera se revierte y se muestra error, no se deja al usuario con emails distintos en Auth y en la base.
+- Plan `basic` con `price_monthly = 0` nunca entra al flujo de bloqueo (no hay suscripción Stripe para fallar); solo los planes de pago participan.
+- Toda vista de precios ("Precio/mes" en Cobros, "Ingresos por plan", KPIs de MRR/ARR) se recalcula leyendo `plans.price_monthly` en el momento, excluyendo cortesías. Si un plan sube de precio y hay clínicas con suscripciones Stripe antiguas al precio anterior, la vista local reflejará el precio nuevo mientras que Stripe seguirá cobrando el precio al que se suscribieron; esto es consistente con cómo funciona Stripe y el super admin puede sincronizar manualmente desde Cobros → Sincronizar planes para alinear.

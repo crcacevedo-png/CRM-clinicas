@@ -534,15 +534,27 @@ async def require_super_admin(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Super admin access required")
     return user
 
-async def require_clinic_member(user=Depends(get_current_user)):
+async def require_clinic_member(request: Request, user=Depends(get_current_user)):
     result = sdb.table('clinic_members').select(
         'id,clinic_id,role,role_key,first_name,last_name'
     ).eq('user_id', user.id).eq('is_active', True).maybe_single().execute()
     if not result.data:
         raise HTTPException(status_code=403, detail="Acceso de miembro de clinica requerido")
     m = result.data
-    # role_key (if set) is the authoritative role for RBAC/permissions. The enum
-    # `role` column is legacy and only holds values present in the user_role enum.
+    # Payment-block gate: refuse non-billing requests when the clinic is blocked for non-payment.
+    # Routes allowed through the block: anything under /api/billing/ (checkout, portal, status) + the public /api/plans.
+    try:
+        path = request.url.path or ""
+        allow = path.startswith("/api/billing/") or path.startswith("/api/webhook/stripe") or path.startswith("/api/plans")
+        if not allow:
+            c = sdb.table('clinics').select('is_payment_blocked,is_courtesy').eq('id', m['clinic_id']).maybe_single().execute()
+            cd = getattr(c, 'data', None) if c else None
+            if cd and cd.get('is_payment_blocked') and not cd.get('is_courtesy'):
+                raise HTTPException(status_code=402, detail="Pago vencido. Actualiza tu método de pago para restaurar el acceso.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     m["base_role"] = m.get("role")
     if m.get("role_key"):
         m["role"] = m["role_key"]
@@ -855,6 +867,11 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     clinic_id: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    role_key: Optional[str] = None
 
 class MedicationCreate(BaseModel):
     generic_name: str

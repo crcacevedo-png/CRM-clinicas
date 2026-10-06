@@ -238,15 +238,38 @@ async def update_clinic(clinic_id: str, data: ClinicUpdate, user=Depends(require
         if not existing.data:
             raise HTTPException(status_code=404, detail="Clinica no encontrada")
 
+        current = existing.data
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
         update_data["updated_at"] = now_iso()
 
         if "name" in update_data:
             update_data["slug"] = generate_slug(update_data["name"])
 
+        new_plan = update_data.get("plan")
+        plan_changed = new_plan and new_plan != current.get("plan")
+
         if "plan" in update_data:
             limits = get_plan_limits(update_data["plan"])
             update_data.update(limits)
+
+        # Stripe proration — swap subscription item when plan changes on an active sub
+        # Skipped for courtesy clinics (they don't have real subscriptions)
+        if plan_changed and current.get("stripe_subscription_id") and not current.get("is_courtesy"):
+            try:
+                from routes.billing import _price_id_for
+                cycle = current.get("billing_cycle") or "monthly"
+                new_price_id = _price_id_for(new_plan, cycle)
+                if new_price_id:
+                    import stripe as _stripe
+                    sub = _stripe.Subscription.retrieve(current["stripe_subscription_id"])
+                    item_id = sub["items"]["data"][0]["id"]
+                    _stripe.Subscription.modify(
+                        current["stripe_subscription_id"],
+                        items=[{"id": item_id, "price": new_price_id}],
+                        proration_behavior="create_prorations",
+                    )
+            except Exception as e:
+                logger.warning(f"Stripe sub plan swap failed for clinic {clinic_id}: {e}")
 
         sdb.table('clinics').update(update_data).eq('id', clinic_id).execute()
 
@@ -409,11 +432,24 @@ async def list_users(
 @router.put("/admin/users/{member_id}")
 async def update_user(member_id: str, data: UserUpdate, user=Depends(require_super_admin)):
     try:
-        existing = sdb.table('clinic_members').select('id').eq('id', member_id).maybe_single().execute()
+        existing = sdb.table('clinic_members').select('*').eq('id', member_id).maybe_single().execute()
         if not existing.data:
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        member = existing.data
 
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+
+        # Email change: must update Supabase Auth first (source of truth)
+        new_email = (update_data.get("email") or "").strip()
+        if new_email and member.get("user_id") and new_email != (member.get("email") or ""):
+            try:
+                supabase_admin.auth.admin.update_user_by_id(member["user_id"], {"email": new_email})
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"No se pudo actualizar el email en Supabase: {str(e)[:120]}")
+            update_data["email"] = new_email
+        elif "email" in update_data and not new_email:
+            update_data.pop("email", None)
+
         update_data["updated_at"] = now_iso()
 
         sdb.table('clinic_members').update(update_data).eq('id', member_id).execute()
@@ -711,23 +747,60 @@ async def delete_user(
         raise HTTPException(status_code=500, detail="Error al eliminar usuario")
 
 
-# ============== PAPELERA (TRASH) ROUTES ==============
-
-def _days_left_in_trash(deleted_at_iso: str) -> int:
-    """Return remaining days before auto-purge (30 days retention)."""
+@router.post("/admin/clinics/{clinic_id}/courtesy")
+async def toggle_courtesy(clinic_id: str, data: dict, request: Request, user=Depends(require_super_admin)):
+    """Toggle the courtesy flag for a clinic.
+    body: { enabled: bool }
+    """
     try:
-        from datetime import datetime as dt
-        d = dt.fromisoformat(deleted_at_iso.replace('Z', '+00:00'))
-        now = dt.now(timezone.utc)
-        elapsed = (now - d).days
-        return max(0, 30 - elapsed)
-    except Exception:
-        return 0
+        existing = sdb.table('clinics').select('*').eq('id', clinic_id).maybe_single().execute()
+        if not existing or not existing.data:
+            raise HTTPException(status_code=404, detail="Clínica no encontrada")
+        enabled = bool(data.get('enabled'))
+        update = {
+            "is_courtesy": enabled,
+            "updated_at": now_iso(),
+        }
+        if enabled:
+            # When granting courtesy, clear any payment-block state
+            update["is_payment_blocked"] = False
+            update["payment_blocked_at"] = None
+            update["payment_grace_until"] = None
+            update["is_active"] = True
+        sdb.table('clinics').update(update).eq('id', clinic_id).execute()
+        try:
+            from services.audit import log_audit, actor_from_super_admin
+            await log_audit(
+                action="clinic_courtesy_toggled",
+                entity="clinic",
+                entity_id=clinic_id,
+                clinic_id=clinic_id,
+                **actor_from_super_admin(user),
+                new_values={"is_courtesy": enabled},
+                request=request,
+            )
+        except Exception:
+            pass
+        return {"ok": True, "is_courtesy": enabled}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Toggle courtesy error: {e}")
+        raise HTTPException(status_code=500, detail="Error al cambiar cortesía")
 
 
 @router.get("/admin/trash")
 async def list_trash(user=Depends(require_super_admin)):
     """Return soft-deleted clinics and users with remaining days before purge."""
+    def _days_left_in_trash(deleted_at_iso: str) -> int:
+        try:
+            from datetime import datetime as dt
+            d = dt.fromisoformat(deleted_at_iso.replace('Z', '+00:00'))
+            now = dt.now(timezone.utc)
+            elapsed = (now - d).days
+            return max(0, 30 - elapsed)
+        except Exception:
+            return 0
     try:
         clinics = sdb.table('clinics').select('*').not_.is_('deleted_at', 'null').order('deleted_at', desc=True).execute().data or []
         members = sdb.table('clinic_members').select('*').not_.is_('deleted_at', 'null').order('deleted_at', desc=True).execute().data or []

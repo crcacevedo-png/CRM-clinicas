@@ -627,6 +627,20 @@ MIGRATIONS: list[tuple[str, str]] = [
             ADD COLUMN IF NOT EXISTS stripe_product_id TEXT;
         """,
     ),
+    (
+        "2026_10_06_courtesy_and_blocking",
+        """
+        ALTER TABLE public.clinics
+            ADD COLUMN IF NOT EXISTS is_courtesy BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS payment_grace_until TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS is_payment_blocked BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS payment_blocked_at TIMESTAMPTZ;
+        CREATE INDEX IF NOT EXISTS idx_clinics_payment_blocked
+            ON public.clinics (is_payment_blocked) WHERE is_payment_blocked = TRUE;
+        CREATE INDEX IF NOT EXISTS idx_clinics_grace
+            ON public.clinics (payment_grace_until) WHERE payment_grace_until IS NOT NULL;
+        """,
+    ),
 ]
 
 

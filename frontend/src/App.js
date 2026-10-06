@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { FeatureProvider } from "./context/FeatureContext";
 import { BranchProvider } from "./context/BranchContext";
+import { PaymentStatusProvider } from "./context/PaymentStatusContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ModuleRoute } from "./components/ModuleRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -58,6 +59,7 @@ function App() {
       <AuthProvider>
       <FeatureProvider>
       <BranchProvider>
+      <PaymentStatusProvider>
       <BrowserRouter>
         <Routes>
           {/* Public Routes */}
@@ -135,6 +137,7 @@ function App() {
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" />
+      </PaymentStatusProvider>
       </BranchProvider>
       </FeatureProvider>
     </AuthProvider>

@@ -295,6 +295,50 @@ def start_scheduler():
         coalesce=True,
     )
 
+    # Payment block watchdog — hourly check for clinics whose grace period expired.
+    async def _payment_block_wrapper():
+        try:
+            from core import sdb, now_iso
+            from datetime import datetime as dt, timezone as tz
+            now_dt = dt.now(tz.utc).isoformat()
+            rows = (
+                sdb.table('clinics')
+                .select('id,name,stripe_subscription_status,is_courtesy,is_payment_blocked,payment_grace_until')
+                .not_.is_('payment_grace_until', 'null')
+                .lte('payment_grace_until', now_dt)
+                .execute()
+                .data or []
+            )
+            for c in rows:
+                if c.get('is_courtesy') or c.get('is_payment_blocked'):
+                    continue
+                if c.get('stripe_subscription_status') not in ('past_due', 'unpaid', 'incomplete'):
+                    continue
+                try:
+                    sdb.table('clinics').update({
+                        "is_payment_blocked": True,
+                        "payment_blocked_at": now_iso(),
+                        "is_active": False,
+                        "updated_at": now_iso(),
+                    }).eq('id', c['id']).execute()
+                    from routes.billing import _send_payment_blocked_emails
+                    _send_payment_blocked_emails(c['id'])
+                    logger.info(f"payment block activated for clinic {c['name']} ({c['id']})")
+                except Exception as e:
+                    logger.warning(f"payment block activation failed for {c['id']}: {e}")
+        except Exception as e:
+            logger.warning(f"payment block watchdog failed: {e}")
+
+    _scheduler.add_job(
+        _payment_block_wrapper,
+        trigger='interval',
+        hours=1,
+        id='payment_block_watchdog',
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(minutes=2),
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler started — reminder tick every {REMINDER_TICK_MIN}min "
