@@ -439,16 +439,21 @@ async def update_user(member_id: str, data: UserUpdate, user=Depends(require_sup
 
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
 
-        # Email change: must update Supabase Auth first (source of truth)
-        new_email = (update_data.get("email") or "").strip()
-        if new_email and member.get("user_id") and new_email != (member.get("email") or ""):
-            try:
-                supabase_admin.auth.admin.update_user_by_id(member["user_id"], {"email": new_email})
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"No se pudo actualizar el email en Supabase: {str(e)[:120]}")
-            update_data["email"] = new_email
-        elif "email" in update_data and not new_email:
-            update_data.pop("email", None)
+        # Email change: Supabase Auth is the source of truth (clinic_members has
+        # no `email` column). Resolve the current email via the auth map so an
+        # unchanged email is a true no-op and doesn't hit Supabase.
+        new_email = (update_data.pop("email", "") or "").strip()
+        if new_email and member.get("user_id"):
+            auth_map = get_auth_users_map()
+            current_email = (auth_map.get(member["user_id"]) or {}).get("email") or ""
+            if new_email.lower() != current_email.lower():
+                try:
+                    supabase_admin.auth.admin.update_user_by_id(member["user_id"], {"email": new_email})
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No se pudo actualizar el email en Supabase: {str(e)[:120]}",
+                    )
 
         update_data["updated_at"] = now_iso()
 

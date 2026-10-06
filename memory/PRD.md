@@ -10,6 +10,13 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **SAAS BILLING EDGE CASES — FASE 1** (6 Oct 2026):
+  - [x] Backend consolidado: fusionadas rutas PUT duplicadas en `super_admin.py`. `PUT /api/admin/clinics/{id}` ahora dispara Stripe proration (`subscription.modify` con `create_prorations`) al cambiar plan en clínicas con suscripción activa y sin cortesía. `PUT /api/admin/users/{id}` actualiza email en Supabase Auth (fuente de verdad), con comparación idempotente vía auth map y manejo correcto de la columna inexistente.
+  - [x] Frontend — Banner rojo "Pago vencido" (`/components/PaymentOverdueBanner.js`) renderizado globalmente en `ClinicLayout` cuando la suscripción está `past_due/unpaid/incomplete` y aún dentro de la ventana de gracia. Muestra días restantes y CTA al Stripe Customer Portal (sólo admins).
+  - [x] Frontend — Pantalla de bloqueo total (`/components/PaymentBlockedScreen.js`) sustituye todo el layout cuando `is_payment_blocked=true` (gracia expirada). Reusa Stripe Customer Portal, botón "Ya pagué — Verificar" y logout. No admin → mensaje para contactar al administrador de la clínica.
+  - [x] `PaymentStatusContext` con polling de 2 min a `GET /api/billing/payment-status`; se integra con el gate 402 del middleware `require_clinic_member` (allowlist: `/api/billing/*`, `/api/webhook/stripe`, `/api/plans`).
+  - [x] Tests: 16/16 pasando (`/app/backend/tests/test_billing_edge_cases.py`): route uniqueness, name→slug recompute, plan→limits refresh, Stripe proration swallow, user email idempotency, invalid-email → 400, courtesy toggle clears block flags, middleware 402 + allowlist.
+
 - [x] **INTEGRACIÓN STRIPE SAAS** (6 Oct 2026):
   - [x] Flow B (BYOK) — `STRIPE_API_KEY` leído del env, operador agrega su key real en Manage → Secrets (Guatemala no soporta sandbox Stripe nativo)
   - [x] Migración: columnas `stripe_customer_id`, `stripe_subscription_id`, `stripe_subscription_status`, `billing_cycle` en `clinics`; tabla `billing_transactions`; `stripe_price_monthly/yearly/product_id` en `plans`

@@ -1,0 +1,49 @@
+{
+  "summary": "Backend-only testing of Phase 1 SaaS Billing Edge Cases (iter41). Created /app/backend/tests/test_billing_edge_cases.py with 16 pytest cases covering: route uniqueness (no duplicate PUT handlers / no legacy edit_* handlers), PUT /api/admin/clinics/{id} (name->slug recompute, city persistence, plan->limits refresh, is_active toggle, Stripe proration swallow), PUT /api/admin/users/{id} (basic fields, role_key preservation, invalid email -> 400 with Supabase msg, same-email no-op), GET /api/billing/payment-status normal-state structure, payment-block middleware (402 on /api/clinic/settings when is_payment_blocked=True, pass-through for /api/billing/payment-status + /api/billing/subscription + /api/plans), courtesy toggle clears block flags + sets is_active=true. Result: 15/16 passed. 1 failure is a REAL backend bug in super_admin.update_user: when the request body contains an email equal to the member's current Supabase email, the handler still calls Supabase (noop) and then tries to persist `email` into clinic_members, which has no `email` column -> PGRST204 -> 500.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/admin/users/{member_id}",
+        "issue": "Returns 500 'Error al actualizar usuario' when body sends `email` equal to the current Supabase auth email. Root cause: clinic_members table has no `email` column, but routes/super_admin.py:449 still assigns `update_data['email'] = new_email`. Then the sdb.table('clinic_members').update(update_data) fails with PGRST204 'Could not find the email column of clinic_members in the schema cache'. Additionally, the condition that gates the Supabase call compares against `member.get('email')` which is always None (the DB row has no such key), so Supabase Auth is called on EVERY email-in-body request, even when unchanged. Fix: (a) always `update_data.pop('email', None)` before persisting to clinic_members; (b) resolve the comparison email from the auth map (same source enrich_member uses) so unchanged emails short-circuit before calling Supabase.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "PUT /api/admin/clinics/{clinic_id}",
+        "issue": "DB column clinics.plan is a PostgreSQL enum (`subscription_plan`) that only accepts `professional` and `enterprise`, yet the `plans` catalog table also lists `basic` and `core.get_plan_limits()` returns limits for `basic`, `starter`, and `pro`. Any attempt to update a clinic's plan to `basic` returns 500 (`invalid input value for enum subscription_plan: 'basic'`). Either extend the enum (ALTER TYPE subscription_plan ADD VALUE 'basic') or validate the incoming plan against the enum/plans table and return 422 instead of 500."
+      },
+      {
+        "endpoint": "PUT /api/admin/clinics/{clinic_id}",
+        "issue": "Spec requires `max_branches` to be refreshed when plan changes, but core.get_plan_limits() returns only {max_users, max_patients, max_storage_mb} — no max_branches key. Clinic row therefore retains the previous max_branches on plan change."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_billing_edge_cases.py",
+    "/app/test_reports/pytest/iter41_billing_edge.xml"
+  ],
+  "action_items": [
+    "Fix routes/super_admin.py update_user: do NOT write `email` to clinic_members (there is no such column). After the Supabase Auth update, pop 'email' from update_data. Also compare new_email against the resolved auth-map email (not member.get('email')) so same-email is a true no-op.",
+    "Decide the plan taxonomy: either ALTER TYPE subscription_plan ADD VALUE 'basic' (and align starter/pro/basic) or validate `data.plan` against the DB enum in update_clinic and return 422 with a clear message rather than letting Supabase return 500.",
+    "Add `max_branches` to core.get_plan_limits() for every plan (basic/professional/enterprise). The ClinicUpdate flow depends on it per the spec."
+  ],
+  "critical_code_review_comments": [
+    "routes/super_admin.py:432-464 (update_user) — persists `email` into clinic_members although that column does not exist. The two-branch email handling is also inverted: when `new_email` equals the auth email it still goes through Supabase. Comparison must use the auth map, and the DB write must strip `email` before PATCH.",
+    "routes/super_admin.py:248-273 (plan swap) — fine for the proration side (correctly wrapped in try/except that logs a warning), but the pre-check uses the raw user-supplied plan string. If the plan is not in the DB enum the subsequent PATCH 500s instead of returning 422 up-front.",
+    "core.get_plan_limits — missing `max_branches` across all plans; the spec explicitly lists it. Also the function silently returns limits for plan codes (`starter`, `pro`) that cannot actually be stored because the DB enum rejects them. Divergence between the plans catalog table, the enum, and get_plan_limits is a landmine.",
+    "routes/super_admin.py:1077 total lines — getting unwieldy. Consider splitting into clinics.py, users.py, catalogs.py.",
+    "core.py:548 — payment-block gate correctly allows /api/billing/*, /api/webhook/stripe, /api/plans. Verified by tests. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_billing_edge_cases.py (created)"
+  ],
+  "success_rate": {"backend": "93.75% (15/16)", "frontend": "n/a"},
+  "test_credentials": "Super Admin info@cortexiagt.com / Armagedon1980$ · Clinic Admin prueba3@gmail.com / Test123456!",
+  "seed_data_creation": "None persistent. Tests mutate clinic c0321ed8 and member e6f13689 transiently; teardown restores clinic to {plan=professional, name='Clinica la salud', city='Guatemala', is_active=true, is_payment_blocked=false, payment_blocked_at=null, payment_grace_until=null, stripe_subscription_status=null, is_courtesy=false} and member phone to original value (50255555555, first_name=Admin, role=clinic_admin). Verified post-run with direct sdb query.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Rerun /app/backend/tests/test_billing_edge_cases.py after E1 fixes update_user email handling. Note: DB enum subscription_plan currently only accepts 'professional' and 'enterprise' — basic/starter/pro cause 500. Payment-block middleware works correctly (402 on /api/clinic/settings, pass-through for /api/billing/payment-status, /api/billing/subscription, /api/plans). Courtesy toggle correctly clears is_payment_blocked, payment_blocked_at, payment_grace_until and sets is_active=true.",
+  "rca of the issue": "PUT /api/admin/users with body {\"email\": \"<same as current>\"} 500s because: 1) The handler uses `member.get('email')` to detect email changes, but the clinic_members DB row has no `email` field (email is only in Supabase Auth), so the comparison is always `new_email != ''` -> True. 2) After the Supabase Auth call succeeds (idempotent on same email), the code sets `update_data['email'] = new_email` and calls sdb.table('clinic_members').update(update_data) which returns PGRST204 because the column doesn't exist. 3) The exception is caught by the generic `except Exception` -> 500. Mitigation: resolve the current email via get_auth_users_map() for the comparison, and always pop 'email' from update_data before writing to clinic_members (email is Supabase-owned)."
+}
