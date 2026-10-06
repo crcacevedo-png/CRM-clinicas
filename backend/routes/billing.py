@@ -122,6 +122,39 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
     stats = {"products": 0, "prices_created": 0, "prices_reused": 0, "skipped": 0, "errors": []}
     tax_code = "txcd_10103001"  # SaaS
 
+    # Pre-fetch all active products so we can match by metadata OR by name.
+    # name-match catches products the user created manually in Stripe before
+    # running the first sync (very common on live mode).
+    all_products = []
+    try:
+        for p in stripe.Product.list(active=True, limit=100).auto_paging_iter():
+            all_products.append(p)
+    except Exception as e:
+        logger.error(f"sync_stripe_catalog: cannot list products: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Stripe inaccesible: {type(e).__name__}: {str(e)[:200]}")
+
+    def _find_product_for(code: str, plan_name: str):
+        """Smart matching: metadata.plan_code → exact name → name contains code."""
+        plan_lower = (plan_name or '').lower()
+        code_lower = (code or '').lower()
+        # Pass 1: metadata.plan_code (fast path for already-synced products)
+        for p in all_products:
+            try:
+                meta = p.metadata or {}
+                meta_code = meta.get('plan_code') if hasattr(meta, 'get') else None
+            except Exception:
+                meta_code = None
+            if meta_code == code:
+                return p, 'metadata'
+        # Pass 2: product name contains plan code or plan name (case-insensitive)
+        for p in all_products:
+            n = (getattr(p, 'name', '') or '').lower()
+            if code_lower and code_lower in n:
+                return p, 'name_code'
+            if plan_lower and plan_lower in n:
+                return p, 'name_plan'
+        return None, None
+
     for plan in plans:
         code = plan.get('code')
         price_monthly = float(plan.get('price_monthly') or 0)
@@ -130,19 +163,8 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
             stats["skipped"] += 1
             continue
         try:
-            # Find or create product by metadata.plan_code. Be defensive — some
-            # Stripe accounts return products with metadata=None (vs empty dict),
-            # and dict-like .get on the StripeObject can misbehave on edge cases.
-            product = None
-            for p in stripe.Product.list(active=True, limit=100).auto_paging_iter():
-                try:
-                    meta = p.metadata or {}
-                    meta_code = meta.get('plan_code') if hasattr(meta, 'get') else (meta['plan_code'] if 'plan_code' in meta else None)
-                except Exception:
-                    meta_code = None
-                if meta_code == code:
-                    product = p
-                    break
+            product, match_by = _find_product_for(code, plan.get('name'))
+
             if not product:
                 create_kwargs = {
                     "name": f"ClinicWise · {plan.get('name') or code}",
@@ -157,6 +179,21 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
                     product = stripe.Product.create(**create_kwargs)
                 stats["products"] += 1
             else:
+                # If we matched by name (user-created product), backfill
+                # metadata.plan_code so the next sync is instant.
+                if match_by != 'metadata':
+                    try:
+                        existing_meta = {}
+                        try:
+                            m = product.metadata or {}
+                            existing_meta = {k: m[k] for k in m} if hasattr(m, 'keys') else {}
+                        except Exception:
+                            existing_meta = {}
+                        existing_meta.update({"plan_code": code, "managed_by": "clinicwise"})
+                        stripe.Product.modify(product.id, metadata=existing_meta)
+                        logger.info(f"sync_stripe_catalog: linked existing Stripe product {product.id} to plan '{code}' by {match_by}")
+                    except Exception as link_err:
+                        logger.warning(f"Could not backfill metadata for {product.id}: {link_err}")
                 stats["products"] += 1  # count reused as well
 
             # --- Monthly price
@@ -192,19 +229,44 @@ async def sync_stripe_catalog(user=Depends(require_super_admin)):
 
 
 def _ensure_price(product_id: str, lookup_key: str, amount_cents: int, interval: str, stats: dict) -> str:
-    """Reuse an existing active price if amount matches, else create a new one."""
+    """Reuse an existing active price if amount/interval match, else create a new one.
+
+    Tries two matching paths so operator-created prices (no `lookup_key` set) are
+    still reused instead of duplicated:
+      1. Exact `lookup_key` match
+      2. Any recurring price on the product with matching amount+interval+currency
+         (we backfill the `lookup_key` so future syncs are instant).
+    """
+    # Path 1: exact lookup_key match
     existing = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
     if existing:
         p = existing[0]
-        # Defensive: recurring may be absent/None for one-off prices created
-        # outside of this sync. Treat any mismatch as "deactivate and recreate".
         recurring = getattr(p, 'recurring', None) or {}
         rec_interval = recurring.get('interval') if hasattr(recurring, 'get') else None
         if p.unit_amount == amount_cents and p.currency == 'usd' and rec_interval == interval:
             stats["prices_reused"] += 1
             return p.id
-        # Price mismatch — deactivate the old one and create a new one with the same lookup_key.
+        # Price mismatch — deactivate the old one and create fresh.
         stripe.Price.modify(p.id, active=False, lookup_key=None)
+
+    # Path 2: match by amount+interval on this product (handles operator-created
+    # prices without lookup_key). First one found wins; we backfill lookup_key.
+    for p in stripe.Price.list(product=product_id, active=True, limit=100).auto_paging_iter():
+        if p.unit_amount != amount_cents or p.currency != 'usd':
+            continue
+        recurring = getattr(p, 'recurring', None) or {}
+        rec_interval = recurring.get('interval') if hasattr(recurring, 'get') else None
+        if rec_interval != interval:
+            continue
+        try:
+            stripe.Price.modify(p.id, lookup_key=lookup_key, transfer_lookup_key=True)
+            logger.info(f"_ensure_price: linked existing Stripe price {p.id} as {lookup_key}")
+        except Exception as link_err:
+            logger.warning(f"_ensure_price could not backfill lookup_key on {p.id}: {link_err}")
+        stats["prices_reused"] += 1
+        return p.id
+
+    # Nothing matched — create a new price
     new_price = stripe.Price.create(
         product=product_id,
         unit_amount=amount_cents,
