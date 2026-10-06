@@ -52,7 +52,7 @@ async def executive_summary(
         prev_from, prev_to = _previous_period(d_from, d_to)
         # Sales for current and previous period
         def fetch_sales(df, dt_):
-            q = sdb.table('sales').select('id,total,amount_due,patient_id,created_at,branch_id').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', df).lte('created_at', dt_ + 'T23:59:59Z')
+            q = sdb.table('sales').select('id,total,tax_amount,amount_due,patient_id,created_at,branch_id').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', df).lte('created_at', dt_ + 'T23:59:59Z')
             if branch_id: q = q.eq('branch_id', branch_id)
             return q.execute().data or []
         cur_sales = fetch_sales(d_from, d_to)
@@ -77,9 +77,11 @@ async def executive_summary(
             app_count = ap.execute().count or 0
         except Exception:
             pass
-        # Compute KPIs
-        income = round(sum(float(s.get('total') or 0) for s in cur_sales), 2)
-        prev_income = round(sum(float(s.get('total') or 0) for s in prev_sales), 2)
+        # Compute KPIs (income = NET of IVA: total minus tax collected on behalf of the fisc)
+        def _net(s):
+            return float(s.get('total') or 0) - float(s.get('tax_amount') or 0)
+        income = round(sum(_net(s) for s in cur_sales), 2)
+        prev_income = round(sum(_net(s) for s in prev_sales), 2)
         expenses_total = round(sum(float(e.get('total') or 0) for e in cur_exp), 2)
         prev_expenses = round(sum(float(e.get('total') or 0) for e in prev_exp), 2)
         # Commissions
@@ -98,11 +100,11 @@ async def executive_summary(
         for i in range(11, -1, -1):
             month_first = (today_d.replace(day=1) - relativedelta(months=i))
             next_first = month_first + relativedelta(months=1)
-            ms = sdb.table('sales').select('total').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', month_first.isoformat()).lt('created_at', next_first.isoformat()).execute().data or []
+            ms = sdb.table('sales').select('total,tax_amount').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', month_first.isoformat()).lt('created_at', next_first.isoformat()).execute().data or []
             me = sdb.table('expenses').select('total').eq('clinic_id', clinic_id).gte('expense_date', month_first.isoformat()).lt('expense_date', next_first.isoformat()).execute().data or []
             trend.append({
                 "month": month_first.strftime('%Y-%m'),
-                "income": round(sum(float(x.get('total') or 0) for x in ms), 2),
+                "income": round(sum(float(x.get('total') or 0) - float(x.get('tax_amount') or 0) for x in ms), 2),
                 "expenses": round(sum(float(x.get('total') or 0) for x in me), 2),
             })
 
@@ -121,11 +123,11 @@ async def executive_summary(
             cat_totals[k] = round(cat_totals.get(k, 0) + float(e.get('total') or 0), 2)
         cat_breakdown = [{"key": k, "label": EXPENSE_CATEGORY_LABELS.get(k, k), "amount": v} for k, v in cat_totals.items()]
         cat_breakdown.sort(key=lambda x: x['amount'], reverse=True)
-        # Income by branch
+        # Income by branch (net of IVA)
         by_branch = {}
         for s in cur_sales:
             b = s.get('branch_id')
-            if b: by_branch[b] = round(by_branch.get(b, 0) + float(s.get('total') or 0), 2)
+            if b: by_branch[b] = round(by_branch.get(b, 0) + (float(s.get('total') or 0) - float(s.get('tax_amount') or 0)), 2)
         # Pre-fetch branch dictionary in one query
         branch_dict = {}
         if by_branch:
@@ -170,11 +172,13 @@ async def income_report(
     require_finance_role(ctx)
     try:
         d_from, d_to = _period_dates(period, date_from, date_to)
-        q = sdb.table('sales').select('id,total,created_at,branch_id,doctor_id,cashier_id').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', d_from).lte('created_at', d_to + 'T23:59:59Z')
+        q = sdb.table('sales').select('id,total,tax_amount,created_at,branch_id,doctor_id,cashier_id').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', d_from).lte('created_at', d_to + 'T23:59:59Z')
         if branch_id: q = q.eq('branch_id', branch_id)
         if doctor_id: q = q.eq('doctor_id', doctor_id)
         sales = q.execute().data or []
         sale_ids = [s['id'] for s in sales]
+        def _net(s):
+            return float(s.get('total') or 0) - float(s.get('tax_amount') or 0)
         # Time series (day/week/month)
         from datetime import datetime as dt, date as dt_date, timedelta
         series = {}
@@ -192,20 +196,20 @@ async def income_report(
                 k = day.replace(day=1).isoformat()
             else:
                 k = d
-            series[k] = round(series.get(k, 0) + float(s.get('total') or 0), 2)
+            series[k] = round(series.get(k, 0) + _net(s), 2)
         time_series = [{"date": k, "amount": v} for k, v in sorted(series.items())]
 
-        # Per-sale-item analysis: top products + top services
+        # Per-sale-item analysis: top products + top services (NET of IVA via item subtotal)
         items = []
         if sale_ids:
-            items = sdb.table('sale_items').select('product_id,service_id,description,quantity,total').in_('sale_id', sale_ids).execute().data or []
+            items = sdb.table('sale_items').select('product_id,service_id,description,quantity,subtotal,total').in_('sale_id', sale_ids).execute().data or []
         prod_totals = {}
         prod_qty = {}
         svc_totals = {}
         svc_qty = {}
         for it in items:
             qty = float(it.get('quantity') or 0)
-            tot = float(it.get('total') or 0)
+            tot = float(it.get('subtotal') or 0)
             if it.get('product_id'):
                 pid = it['product_id']
                 prod_totals[pid] = prod_totals.get(pid, 0) + tot
@@ -230,12 +234,12 @@ async def income_report(
         top_products = top_n(prod_totals, prod_qty, 'product')
         top_services = top_n(svc_totals, svc_qty, 'service')
 
-        # Income by doctor
+        # Income by doctor (net of IVA)
         by_doctor = {}
         for s in sales:
             d = s.get('doctor_id')
             if not d: continue
-            by_doctor[d] = round(by_doctor.get(d, 0) + float(s.get('total') or 0), 2)
+            by_doctor[d] = round(by_doctor.get(d, 0) + _net(s), 2)
         doctor_list = []
         for did, amount in by_doctor.items():
             mb = sdb.table('clinic_members').select('first_name,last_name').eq('id', did).maybe_single().execute()
@@ -253,7 +257,7 @@ async def income_report(
 
         return {
             "period": {"from": d_from, "to": d_to, "grouping": grouping},
-            "total_income": round(sum(float(s.get('total') or 0) for s in sales), 2),
+            "total_income": round(sum(_net(s) for s in sales), 2),
             "sales_count": len(sales),
             "time_series": time_series,
             "top_products": top_products,
@@ -287,9 +291,9 @@ async def pnl_report(
             prod_income = 0.0
             cogs = 0.0
             if sale_ids:
-                items = sdb.table('sale_items').select('product_id,service_id,quantity,total').in_('sale_id', sale_ids).execute().data or []
+                items = sdb.table('sale_items').select('product_id,service_id,quantity,subtotal,total').in_('sale_id', sale_ids).execute().data or []
                 for it in items:
-                    tot = float(it.get('total') or 0)
+                    tot = float(it.get('subtotal') or 0)
                     qty = float(it.get('quantity') or 0)
                     if it.get('product_id'):
                         prod_income += tot
@@ -487,8 +491,8 @@ async def by_branch_report(
         branches = sdb.table('branches').select('id,name').eq('clinic_id', clinic_id).eq('is_active', True).execute().data or []
         result = []
         for br in branches:
-            sales = sdb.table('sales').select('total').eq('clinic_id', clinic_id).eq('branch_id', br['id']).neq('status', 'cancelled').gte('created_at', d_from).lte('created_at', d_to + 'T23:59:59Z').execute().data or []
-            income = sum(float(s.get('total') or 0) for s in sales)
+            sales = sdb.table('sales').select('total,tax_amount').eq('clinic_id', clinic_id).eq('branch_id', br['id']).neq('status', 'cancelled').gte('created_at', d_from).lte('created_at', d_to + 'T23:59:59Z').execute().data or []
+            income = sum(float(s.get('total') or 0) - float(s.get('tax_amount') or 0) for s in sales)
             exps = sdb.table('expenses').select('total').eq('clinic_id', clinic_id).eq('branch_id', br['id']).gte('expense_date', d_from).lte('expense_date', d_to).execute().data or []
             expenses_total = sum(float(e.get('total') or 0) for e in exps)
             apps = 0
@@ -516,6 +520,83 @@ async def by_branch_report(
         return {"period": {"from": d_from, "to": d_to}, "branches": result, "totals": totals}
     except Exception as e:
         logger.error(f"By branch report error: {e}")
+        raise HTTPException(status_code=500, detail="Error")
+
+@router.get("/clinic/reports/cash-flow")
+async def cash_flow_report(
+    period: str = "current_month", date_from: str = "", date_to: str = "",
+    branch_id: str = "", ctx=Depends(require_clinic_member)
+):
+    """Flujo de caja real: dinero cobrado (payments) menos gastos pagados en el período.
+    A diferencia del P&L (devengado), esto refleja caja real entrante/saliente.
+    'credit' no cuenta como entrada (es una promesa de pago, no dinero recibido)."""
+    clinic_id = ctx["member"]["clinic_id"]
+    require_finance_role(ctx)
+    try:
+        d_from, d_to = _period_dates(period, date_from, date_to)
+        method_labels = {
+            'cash': 'Efectivo', 'credit_card': 'Tarjeta crédito', 'debit_card': 'Tarjeta débito',
+            'transfer': 'Transferencia', 'check': 'Cheque', 'other': 'Otro',
+        }
+
+        # Entradas: pagos recibidos dentro del período
+        pays = (
+            sdb.table('payments').select('amount,payment_method,sale_id,paid_at')
+            .eq('clinic_id', clinic_id)
+            .gte('paid_at', d_from).lte('paid_at', f"{d_to}T23:59:59Z")
+            .execute().data or []
+        )
+        if branch_id:
+            branch_sale_ids = {
+                s['id'] for s in (
+                    sdb.table('sales').select('id').eq('clinic_id', clinic_id).eq('branch_id', branch_id).execute().data or []
+                )
+            }
+            pays = [p for p in pays if p.get('sale_id') in branch_sale_ids]
+
+        inflow_by_method = {}
+        total_in = 0.0
+        for p in pays:
+            m = p.get('payment_method') or 'other'
+            if m == 'credit':
+                continue  # not real cash received
+            amt = float(p.get('amount') or 0)
+            inflow_by_method[m] = round(inflow_by_method.get(m, 0) + amt, 2)
+            total_in += amt
+        inflows = [
+            {"method": k, "label": method_labels.get(k, k), "amount": v}
+            for k, v in sorted(inflow_by_method.items(), key=lambda x: -x[1])
+        ]
+
+        # Salidas: gastos del período (por fecha de gasto)
+        eq = sdb.table('expenses').select('total,category,expense_date').eq('clinic_id', clinic_id).gte('expense_date', d_from).lte('expense_date', d_to)
+        if branch_id:
+            eq = eq.eq('branch_id', branch_id)
+        exps = eq.execute().data or []
+        out_by_cat = {}
+        total_out = 0.0
+        for e in exps:
+            k = e.get('category') or 'other'
+            amt = float(e.get('total') or 0)
+            out_by_cat[k] = round(out_by_cat.get(k, 0) + amt, 2)
+            total_out += amt
+        outflows = [
+            {"key": k, "label": EXPENSE_CATEGORY_LABELS.get(k, k), "amount": v}
+            for k, v in sorted(out_by_cat.items(), key=lambda x: -x[1])
+        ]
+
+        total_in = round(total_in, 2)
+        total_out = round(total_out, 2)
+        return {
+            "period": {"from": d_from, "to": d_to},
+            "inflows": inflows,
+            "outflows": outflows,
+            "total_in": total_in,
+            "total_out": total_out,
+            "net_cash_flow": round(total_in - total_out, 2),
+        }
+    except Exception as e:
+        logger.error(f"Cash flow report error: {e}")
         raise HTTPException(status_code=500, detail="Error")
 
 @router.get("/clinic/reports/pnl-pdf")

@@ -348,14 +348,28 @@ async def process_po_receive(po_id: str, clinic_id: str, branch_id: str, perform
     for item in (items.data or []):
         pid = item['product_id']
         qty = item['quantity']
+        unit_cost = float(item.get('unit_cost') or 0)
+        # Capture stock + cost BEFORE the movement to compute weighted-average cost.
+        prod = sdb.table('products').select('cost_price').eq('id', pid).maybe_single().execute()
+        prod_data = getattr(prod, 'data', None) if prod else None
+        old_cost = float((prod_data or {}).get('cost_price') or 0)
+        stock_rows = sdb.table('inventory_stock').select('quantity').eq('clinic_id', clinic_id).eq('product_id', pid).execute().data or []
+        old_qty = sum(float(s.get('quantity') or 0) for s in stock_rows)
         # Insert movement; Postgres trigger on inventory_movements upserts inventory_stock automatically.
         sdb.table('inventory_movements').insert({
             "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": pid,
             "branch_id": branch_id, "movement_type": "purchase",
-            "quantity": qty, "unit_cost": item.get('unit_cost'),
+            "quantity": qty, "unit_cost": unit_cost,
             "reference_type": "purchase_order", "reference_id": po_id,
             "performed_by": performed_by, "created_at": now_iso(),
         }).execute()
+        # Recompute weighted-average cost_price (only when a real purchase cost is given).
+        if unit_cost > 0 and float(qty or 0) > 0:
+            base_qty = max(old_qty, 0.0)
+            denom = base_qty + float(qty)
+            if denom > 0:
+                new_cost = round((base_qty * old_cost + float(qty) * unit_cost) / denom, 4)
+                sdb.table('products').update({"cost_price": new_cost, "updated_at": now_iso()}).eq('id', pid).eq('clinic_id', clinic_id).execute()
         # Create batch if has expiration
         if item.get('expiration_date') or item.get('batch_number'):
             sdb.table('inventory_batches').insert({

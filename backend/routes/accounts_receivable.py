@@ -275,6 +275,12 @@ async def register_ar_payment(ar_id: str, data: dict, ctx=Depends(require_clinic
         ar = sdb.table('accounts_receivable').select('*').eq('id', ar_id).eq('clinic_id', clinic_id).single().execute().data
         if ar['status'] == 'paid':
             raise HTTPException(status_code=400, detail="Cuenta ya pagada")
+        current_balance = round(float(ar.get('balance') or 0), 2)
+        if amount > current_balance + 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El pago (Q{amount:.2f}) excede el saldo pendiente (Q{current_balance:.2f})."
+            )
         new_paid = round(float(ar.get('paid_amount') or 0) + amount, 2)
         new_balance = round(float(ar.get('original_amount') or 0) - new_paid, 2)
         new_status = 'paid' if new_balance <= 0.001 else 'partial'

@@ -370,6 +370,28 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             raise HTTPException(status_code=400, detail="Monto de pago inválido")
         if _pa < 0:
             raise HTTPException(status_code=400, detail="El monto de pago no puede ser negativo")
+
+    # Oversell protection + fetch real product costs for the kardex.
+    # Aggregate required quantity per product at the sale's branch.
+    stock_needed = {}
+    for it in items:
+        pid = it.get("product_id")
+        if pid:
+            stock_needed[pid] = stock_needed.get(pid, 0.0) + float(it.get("quantity") or 0)
+    product_map = {}
+    if stock_needed:
+        prows = sdb.table('products').select('id,name,cost_price').in_('id', list(stock_needed.keys())).eq('clinic_id', clinic_id).execute().data or []
+        product_map = {p['id']: p for p in prows}
+        for pid, need in stock_needed.items():
+            srow = sdb.table('inventory_stock').select('quantity').eq('clinic_id', clinic_id).eq('product_id', pid).eq('branch_id', data["branch_id"]).maybe_single().execute()
+            srow_data = getattr(srow, 'data', None) if srow else None
+            available = float(srow_data.get('quantity') or 0) if srow_data else 0.0
+            if need > available + 1e-9:
+                pname = (product_map.get(pid) or {}).get('name', 'producto')
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Stock insuficiente para '{pname}': disponible {int(available)}, solicitado {int(need)}."
+                )
     try:
         # Compute totals
         subtotal = 0.0
@@ -472,10 +494,11 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                 }).execute()
                 # If product, register an inventory_movement (negative qty); trigger updates stock
                 if it.get("product_id"):
+                    real_cost = float((product_map.get(it["product_id"]) or {}).get('cost_price') or 0)
                     sdb.table('inventory_movements').insert({
                         "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": it["product_id"],
                         "branch_id": data["branch_id"], "movement_type": "sale",
-                        "quantity": -int(round(qty)), "unit_cost": unit,
+                        "quantity": -int(round(qty)), "unit_cost": real_cost,
                         "reference_type": "sale", "reference_id": sale_id,
                         "performed_by": member["id"], "created_at": now,
                     }).execute()
@@ -515,7 +538,21 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}", exc_info=True)
             try: sdb.table('payments').delete().eq('sale_id', sale_id).execute()
             except Exception: pass
-            try: sdb.table('inventory_movements').delete().eq('reference_id', sale_id).eq('reference_type', 'sale').execute()
+            # The inventory_movements trigger only fires on INSERT, so deleting the sale
+            # movements would NOT restore stock. Insert compensating reverse movements instead.
+            try:
+                sale_movs = sdb.table('inventory_movements').select('product_id,branch_id,quantity').eq('reference_id', sale_id).eq('reference_type', 'sale').execute().data or []
+                for mv in sale_movs:
+                    q = int(round(float(mv.get('quantity') or 0)))
+                    if q != 0:
+                        sdb.table('inventory_movements').insert({
+                            "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": mv['product_id'],
+                            "branch_id": mv['branch_id'], "movement_type": "return",
+                            "quantity": -q,
+                            "reference_type": "sale_rollback", "reference_id": sale_id,
+                            "performed_by": member["id"], "created_at": now_iso(),
+                            "notes": "Reverso automático por error al registrar la venta",
+                        }).execute()
             except Exception: pass
             try: sdb.table('sale_items').delete().eq('sale_id', sale_id).execute()
             except Exception: pass
@@ -726,7 +763,7 @@ async def cancel_sale(sale_id: str, data: dict, ctx=Depends(require_clinic_membe
                 sdb.table('inventory_movements').insert({
                     "id": str(uuid.uuid4()), "clinic_id": clinic_id, "product_id": it['product_id'],
                     "branch_id": sale['branch_id'], "movement_type": "return",
-                    "quantity": float(it['quantity']),
+                    "quantity": int(round(float(it['quantity'] or 0))),
                     "reference_type": "sale_cancellation", "reference_id": sale_id,
                     "performed_by": member_id, "created_at": now,
                     "notes": "Anulación de venta",

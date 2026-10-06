@@ -92,6 +92,23 @@ async def create_patient(data: PatientFullCreate, ctx=Depends(require_clinic_mem
         _count = sdb.table('patients').select('id', count='exact').eq('clinic_id', clinic_id).eq('is_active', True).execute()
         if (_count.count or 0) >= _limit:
             raise HTTPException(status_code=400, detail="Límite de pacientes alcanzado para su plan. Contacte al administrador.")
+    # Deduplication within the clinic: by national_id, or by first+last name + date of birth.
+    nat = (data.national_id or "").strip() if data.national_id else ""
+    if nat:
+        dup = sdb.table('patients').select('id').eq('clinic_id', clinic_id).ilike('national_id', nat).limit(1).execute()
+        if dup.data:
+            raise HTTPException(status_code=400, detail="Ya existe un paciente con esa identificación (DPI/ID) en la clínica.")
+    if data.date_of_birth:
+        dup2 = (
+            sdb.table('patients').select('id')
+            .eq('clinic_id', clinic_id)
+            .ilike('first_name', data.first_name.strip())
+            .ilike('last_name', data.last_name.strip())
+            .eq('date_of_birth', data.date_of_birth)
+            .limit(1).execute()
+        )
+        if dup2.data:
+            raise HTTPException(status_code=400, detail="Ya existe un paciente con el mismo nombre y fecha de nacimiento.")
     try:
         now = now_iso()
         patient_id = str(uuid.uuid4())
