@@ -41,3 +41,13 @@ Las 9 vulnerabilidades fueron corregidas y validadas 100% por el agente de prueb
 9. ✅ `process_po_receive`: recalcula `products.cost_price` con costo promedio ponderado al recibir órdenes de compra.
 Archivo de pruebas de regresión: `/app/backend/tests/test_audit_9_fixes.py`.
 
+## ✅ REVISIÓN PROFUNDA DE CÓDIGO — 6 CORRECCIONES ADICIONALES (2026-10-06, "hazlas todas")
+Verificadas 100% (9/9 tests) por el testing agent en clínicas aisladas A/B. Regresión: `/app/backend/tests/test_audit_6_new_fixes.py`.
+1. ✅ **P0** `cancel_sale`: al anular revierte la cuenta por cobrar (status='cancelled', balance=0), borra cuotas del plan y elimina comisiones pendientes (las ya pagadas se conservan y se registran para revisión).
+2. ✅ **P1** `create_sale`: la creación de la CxC se movió DENTRO del bloque try → si falla, hace rollback completo (no quedan ventas 'completed' con deuda sin registrar).
+3. ✅ **P1** `create_sale`: verificación de stock post-insert (relee el stock actualizado por el trigger) que lanza 409 y hace rollback si quedó negativo → cierra la ventana de sobreventa por concurrencia.
+4. ✅ **P2** `reports.pnl_report`: resta el descuento global prorrateado → el P&L cuadra con el reporte de Ingresos (ambos netos de IVA y de descuento global). Además batch de costos (elimina N+1).
+5. ✅ **P2** `register_ar_payment`: aplica el pago a `payment_plan_installments` (FIFO), marcando cuotas como 'paid'.
+6. ✅ **P2** `import_products`: el stock inicial de la importación masiva se siembra vía `inventory_movements` (tipo 'purchase', reference_type 'import') en vez de escribir `inventory_stock` directo → kardex íntegro.
+Menores: webhook Stripe devuelve 500 en fallo de handler (reintento), `cash_sessions` filtra por `clinic_id`, y `sale_items.description` recibe default server-side (nombre del producto) para evitar 500 por NOT NULL.
+

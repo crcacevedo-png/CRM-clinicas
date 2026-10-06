@@ -21,6 +21,15 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
   - [x] FIX8 Nuevo endpoint `GET /clinic/reports/cash-flow` (cobros reales vs gastos, excluye 'credit').
   - [x] FIX9 `process_po_receive`: costo promedio ponderado recalculado al recibir órdenes de compra.
   - [x] Verificado 100% backend por testing agent (iteration_42.json). Regresión: `/app/backend/tests/test_audit_9_fixes.py`.
+- [x] **REVISIÓN PROFUNDA DE CÓDIGO — 6 CORRECCIONES** (6 Oct 2026, "hazlas todas"), verificadas 100% (9/9, iteration_43.json):
+  - [x] P0 `cancel_sale`: anular venta revierte CxC (cancelled/balance 0) + borra cuotas + elimina comisiones pendientes.
+  - [x] P1 `create_sale`: creación de CxC dentro del rollback (sin ventas completed con deuda fantasma).
+  - [x] P1 `create_sale`: verificación de stock post-insert (409 + rollback) contra sobreventa concurrente.
+  - [x] P2 `reports.pnl_report`: descuento global prorrateado → P&L cuadra con Ingresos; batch de costos (sin N+1).
+  - [x] P2 `register_ar_payment`: aplica pago a cuotas del plan (FIFO).
+  - [x] P2 `import_products`: stock inicial vía inventory_movements ('purchase'/'import'), no escritura directa.
+  - [x] Menores: webhook Stripe 500 en fallo (reintento), `cash_sessions` filtra clinic_id, default de `sale_items.description`.
+  - [x] Regresión: `/app/backend/tests/test_audit_6_new_fixes.py`.
 
 - [x] **SMART RETRIES (REINTENTOS INTELIGENTES DE STRIPE)** (6 Oct 2026):
   - [x] Nueva tabla `payment_attempts` con migración `2026_10_06_payment_attempts`: logs de cada intento Stripe (failed/succeeded/action_required) con `attempt_count`, `failure_code`, `failure_message`, `next_attempt_at`, `amount_due`.

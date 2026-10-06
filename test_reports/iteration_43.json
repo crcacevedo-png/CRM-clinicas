@@ -1,0 +1,36 @@
+{
+  "summary": "Backend regression tests for the 6 NEW audit fixes (FIX1-6 + MINOR cash_session filter) on Cortexia Medical CRM. All 9 pytest tests PASSED against isolated audit clinic A (and clinic B login validated). Covers: cancel credit sale reverts AR+stock+pending commissions; credit-sale happy path still consistent; oversell blocked and never leaves negative stock; PnL matches /reports/income when global discount is applied; AR payment applies to payment_plan_installments FIFO (partial + full); bulk import seeds stock via inventory_movements type='purchase' reference_type='import'; nonexistent/foreign cash_session_id rejected with 400.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/clinic/sales", "issue": "sale_items.description has a NOT NULL constraint in Postgres but the backend route accepts items without 'description' and only falls back to it.get('name'); if neither is provided it inserts NULL and triggers the full-sale rollback with HTTP 500 'Error al registrar la venta' (observed in logs). Minor UX/robustness: the API should validate description presence up-front (400) or default it to the product name server-side."},
+      {"endpoint": "POST /api/clinic/inventory-bulk/import", "issue": "The 'commit' flag only works when passed as a query param (declared as function arg, not Form). Passing it as multipart form field silently stays False with empty commit_errors — confusing. Minor: either accept Form(commit) or document."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_audit_6_new_fixes.py",
+    "/app/test_reports/pytest/audit6_new_results.xml"
+  ],
+  "action_items": [
+    "Consider server-side defaulting of sale_items.description to product/service name instead of relying on client (currently a null-description sale returns 500, not 400).",
+    "Minor: accept 'commit' as either query or form field in bulk import to avoid silent no-op commits."
+  ],
+  "critical_code_review_comments": [
+    "sales.cancel_sale: inventory_movements for return uses int(round(float(qty))) — fractional qty sales (if any path exists) would lose precision on cancel. Low risk since create_sale currently casts to int too.",
+    "sales.create_sale (FIX3 post-insert verification): the stock re-read uses .maybe_single() per product which is N queries. For large carts this is fine but could be batched with .in_(product_ids).",
+    "accounts_receivable.register_ar_payment installments FIFO: when installment is partially paid (e.g. 50 of 100), the installment status stays 'pending' (not 'partial'). This is acceptable per spec but note that `installments_list` does not expose a 'partial' intermediate state — downstream reporting might want it.",
+    "inventory.import_products: 'commit' is a bool query param (not Form). Form-based clients that send it in multipart body silently get commit=False with empty commit_errors — surface this as a clearer response or support both.",
+    "reports.income_report vs pnl_report consistency verified: both compute income net of IVA and net of global discount. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_audit_6_new_fixes.py (new, 9 tests, 56s)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "n/a (not requested)"},
+  "test_credentials": "audita@test-cortexia.com / AuditTest2026! (clinic A), auditb@test-cortexia.com / AuditTest2026! (clinic B). gender enum 'male'/'female'. sale_items REQUIRES 'description' (not-null column).",
+  "seed_data_creation": "Ephemeral TEST_-prefixed products, patients, and sales created in audit clinic A. One credit sale created+cancelled (AR reverted, stock restored). One payment plan with 3 installments created and fully paid. One CSV import (1 product, initial_stock=7) committed via inventory_movements purchase/import.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression file at /app/backend/tests/test_audit_6_new_fixes.py. Endpoint quirks: (1) 'commit' on /clinic/inventory-bulk/import is a QUERY param (not form). (2) sale_items.description is NOT NULL in DB — always send it in items. (3) GET /clinic/accounts-receivable/{ar_id} returns the AR with 'installments_list'. (4) Credit sale = payments[] empty or amount<total, with patient_id required. (5) Audit clinics A and B are isolated; use them only.",
+  "rca of the issue": "All 6 new audit fixes verified. FIX1 cancel_sale correctly reverts AR (status='cancelled', balance=0) and inserts compensating inventory_movements of type 'return' so stock trigger restores quantity. FIX2 credit-sale happy path leaves sale 'completed' with items + AR consistent (balance=80 for Q100 sale with Q20 partial pay). FIX3 pre-check 400 blocks oversell; stock remains 0 after exact sellout and never goes negative. FIX4 PnL current.income.total matches /reports/income total_income exactly (Q90 delta for a Q100+IVA sale with Q10 global discount). FIX5 register_ar_payment partial pay (Q150 on 3x100 plan) marks inst#1 'paid' and inst#2 'pending' with paid_amount=50; final Q150 marks all three installments 'paid' and AR status 'paid'. FIX6 bulk import with initial_stock=7 produced one inventory_movements row of type='purchase' reference_type='import' qty=7 and inventory_stock=7 (never a direct inventory_stock write). MINOR: fake/foreign cash_session_id -> HTTP 400 with 'Sesión de caja no encontrada'; sale without cash_session_id continues to work (fallback)."
+}

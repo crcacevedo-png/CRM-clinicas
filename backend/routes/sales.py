@@ -482,10 +482,11 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                 line_subtotal = round(line - disc_amount, 2)
                 line_tax = round(line_subtotal * (tr / 100), 2)
                 line_total = round(line_subtotal + line_tax, 2)
+                _desc = it.get("description") or it.get("name") or (product_map.get(it.get("product_id")) or {}).get("name") or "Ítem"
                 sdb.table('sale_items').insert({
                     "id": str(uuid.uuid4()), "sale_id": sale_id,
                     "product_id": it.get("product_id"), "service_id": it.get("service_id"),
-                    "description": it.get("description") or it.get("name"),
+                    "description": _desc,
                     "quantity": qty, "unit_price": unit,
                     "discount_pct": disc_pct, "discount_amount": disc_amount,
                     "tax_rate": tr, "tax_amount": line_tax,
