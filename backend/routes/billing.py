@@ -569,6 +569,9 @@ async def stripe_webhook(request: Request):
             _apply_payment_success(obj)
     except Exception as e:
         logger.error(f"webhook handler failed for {etype}: {e}", exc_info=True)
+        # Return 500 so Stripe retries recoverable failures instead of silently
+        # leaving our billing state out of sync.
+        raise HTTPException(status_code=500, detail="webhook handler error")
     return {"status": "ok"}
 
 

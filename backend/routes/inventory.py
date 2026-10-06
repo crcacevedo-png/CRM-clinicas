@@ -640,23 +640,31 @@ async def import_products(
             except Exception as e:
                 commit_errors.append({"batch": i // BATCH + 1, "message": str(e)[:200]})
 
-        # Seed inventory_stock for products with initial_stock > 0 at target branch
+        # Seed inventory_stock for products with initial_stock > 0 at target branch.
+        # Must go through inventory_movements (not a direct inventory_stock write) so the
+        # kardex/ledger stays the single source of truth for stock & valuation.
         if target_branch_id and not commit_errors:
-            stock_docs = []
+            move_docs = []
             for doc, initial, _ in valid_rows:
                 if initial and float(initial) > 0:
-                    stock_docs.append({
+                    move_docs.append({
                         "id": str(uuid.uuid4()),
                         "clinic_id": clinic_id,
                         "branch_id": target_branch_id,
                         "product_id": doc["id"],
+                        "movement_type": "purchase",
                         "quantity": int(float(initial)),
+                        "unit_cost": float(doc.get("cost_price") or 0),
+                        "reference_type": "import",
+                        "performed_by": ctx["member"]["id"],
+                        "created_at": now_iso(),
+                        "notes": "Stock inicial por importación masiva",
                     })
-            if stock_docs:
-                for i in range(0, len(stock_docs), BATCH):
-                    chunk = stock_docs[i:i + BATCH]
+            if move_docs:
+                for i in range(0, len(move_docs), BATCH):
+                    chunk = move_docs[i:i + BATCH]
                     try:
-                        sdb.table('inventory_stock').insert(chunk).execute()
+                        sdb.table('inventory_movements').insert(chunk).execute()
                         stock_seeded += len(chunk)
                     except Exception as e:
                         commit_errors.append({"batch": i // BATCH + 1, "message": f"Stock seed: {str(e)[:160]}"})

@@ -313,7 +313,7 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
     cash_session_id = data.get("cash_session_id")
     if cash_session_id:
         try:
-            cs = sdb.table('cash_sessions').select('id,cash_register_id,status').eq('id', cash_session_id).maybe_single().execute()
+            cs = sdb.table('cash_sessions').select('id,cash_register_id,status').eq('id', cash_session_id).eq('clinic_id', clinic_id).maybe_single().execute()
             cs_data = getattr(cs, 'data', None) if cs else None
             if not cs_data:
                 raise HTTPException(status_code=400, detail="Sesión de caja no encontrada")
@@ -533,9 +533,48 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
                             logger.debug(f"insurance_providers dup race ignored: {_dup}")
                 except Exception as _e:
                     logger.warning(f"insurance_providers upsert failed: {_e}")
+
+            # Post-insert stock verification: guards the concurrency window. Two
+            # simultaneous sales can both pass the pre-check, so re-read the
+            # trigger-updated stock and roll back if any product went negative.
+            if stock_needed:
+                for _pid in stock_needed:
+                    _sr = sdb.table('inventory_stock').select('quantity').eq('clinic_id', clinic_id).eq('product_id', _pid).eq('branch_id', data["branch_id"]).maybe_single().execute()
+                    _srd = getattr(_sr, 'data', None) if _sr else None
+                    _resulting = float(_srd.get('quantity') or 0) if _srd else 0.0
+                    if _resulting < -1e-9:
+                        _pname = (product_map.get(_pid) or {}).get('name', 'producto')
+                        raise HTTPException(status_code=409, detail=f"Stock insuficiente para '{_pname}' (posible venta concurrente). Intenta de nuevo.")
+
+            # Create the AR record INSIDE the try so a failure triggers the full
+            # rollback below (otherwise a completed sale could keep an untracked debt).
+            if amount_due > 0:
+                from datetime import datetime as dt, timedelta
+                due_default = (dt.now(timezone.utc) + timedelta(days=30)).date().isoformat()
+                installments = int(data.get("ar_installments") or 0)
+                ar_notes_parts = []
+                if insurance_amount_sale > 0:
+                    ar_notes_parts.append(f"Cargo a {insurance_name_sale}: Q{insurance_amount_sale:.2f}")
+                if patient_due > 0:
+                    ar_notes_parts.append(f"Saldo del paciente: Q{patient_due:.2f}")
+                ar_notes = " · ".join(ar_notes_parts) if ar_notes_parts else None
+                sdb.table('accounts_receivable').insert({
+                    "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
+                    "patient_id": data.get("patient_id"),
+                    "original_amount": total, "paid_amount": amount_paid, "balance": amount_due,
+                    "due_date": data.get("ar_due_date") or due_default,
+                    "status": "pending",
+                    "has_payment_plan": installments > 1, "installments": installments,
+                    "insurance_name": insurance_name_sale,
+                    "insurance_amount": insurance_amount_sale if insurance_amount_sale > 0 else None,
+                    "notes": ar_notes,
+                    "created_at": now, "updated_at": now,
+                }).execute()
         except Exception as inner_e:
-            # Rollback: delete payments, inventory movements (ref this sale), sale_items, sale
+            # Rollback: delete AR, payments, inventory movements (ref this sale), sale_items, sale
             logger.error(f"Sale post-insert failed, rolling back {sale_id}: {inner_e}", exc_info=True)
+            try: sdb.table('accounts_receivable').delete().eq('sale_id', sale_id).eq('clinic_id', clinic_id).execute()
+            except Exception: pass
             try: sdb.table('payments').delete().eq('sale_id', sale_id).execute()
             except Exception: pass
             # The inventory_movements trigger only fires on INSERT, so deleting the sale
@@ -558,44 +597,9 @@ async def create_sale(data: dict, ctx=Depends(require_clinic_member)):
             except Exception: pass
             try: sdb.table('sales').delete().eq('id', sale_id).execute()
             except Exception: pass
+            if isinstance(inner_e, HTTPException):
+                raise inner_e
             raise HTTPException(status_code=500, detail="Error al registrar la venta")
-
-        # If there is pending balance (patient debt + insurance) → create an AR record.
-        # The AR holds the whole pending balance (patient_due + insurance_amount) under the patient,
-        # with insurance_name/insurance_amount showing the portion owed by the insurer.
-        if amount_due > 0:
-            try:
-                from datetime import datetime as dt, timedelta
-                due_default = (dt.now(timezone.utc) + timedelta(days=30)).date().isoformat()
-                installments = int(data.get("ar_installments") or 0)
-                # Build descriptive notes when the pending balance is split between patient and insurer
-                ar_notes_parts = []
-                if insurance_amount_sale > 0:
-                    ar_notes_parts.append(
-                        f"Cargo a {insurance_name_sale}: Q{insurance_amount_sale:.2f}"
-                    )
-                if patient_due > 0:
-                    ar_notes_parts.append(f"Saldo del paciente: Q{patient_due:.2f}")
-                ar_notes = " · ".join(ar_notes_parts) if ar_notes_parts else None
-                sdb.table('accounts_receivable').insert({
-                    "id": str(uuid.uuid4()), "clinic_id": clinic_id, "sale_id": sale_id,
-                    "patient_id": data.get("patient_id"),
-                    "original_amount": total, "paid_amount": amount_paid, "balance": amount_due,
-                    "due_date": data.get("ar_due_date") or due_default,
-                    "status": "pending",
-                    "has_payment_plan": installments > 1, "installments": installments,
-                    "insurance_name": insurance_name_sale,
-                    "insurance_amount": insurance_amount_sale if insurance_amount_sale > 0 else None,
-                    "notes": ar_notes,
-                    "created_at": now, "updated_at": now,
-                }).execute()
-            except Exception as _e:
-                # Surface the error so the user knows the AR wasn't created
-                logger.error(f"AR create failed for sale {sale_id}: {_e}", exc_info=True)
-                raise HTTPException(
-                    status_code=500,
-                    detail="Venta creada pero no se pudo crear la cuenta por cobrar"
-                )
 
         # Compute commissions for the sale's doctor (best-effort)
         if data.get("doctor_id"):
@@ -773,6 +777,29 @@ async def cancel_sale(sale_id: str, data: dict, ctx=Depends(require_clinic_membe
             "cancellation_reason": data.get("reason"),
             "updated_at": now,
         }).eq('id', sale_id).execute()
+        # Revert accounts receivable tied to this sale so a cancelled sale does not
+        # keep a live debt in the cartera / insurance aging.
+        ars = sdb.table('accounts_receivable').select('id').eq('sale_id', sale_id).eq('clinic_id', clinic_id).execute().data or []
+        for ar in ars:
+            try: sdb.table('payment_plan_installments').delete().eq('account_receivable_id', ar['id']).execute()
+            except Exception: pass
+            try:
+                sdb.table('accounts_receivable').update({
+                    "balance": 0, "status": "cancelled", "updated_at": now,
+                    "notes": "Anulada por cancelación de la venta",
+                }).eq('id', ar['id']).execute()
+            except Exception:
+                # Fallback if 'cancelled' is not an allowed status: remove the AR row.
+                try: sdb.table('accounts_receivable').delete().eq('id', ar['id']).execute()
+                except Exception as _e: logger.warning(f"AR revert failed on cancel: {_e}")
+        # Revert pending commissions for this sale (already-paid ones are kept + flagged).
+        try:
+            sdb.table('commissions_earned').delete().eq('sale_id', sale_id).eq('clinic_id', clinic_id).neq('status', 'paid').execute()
+            paid_c = sdb.table('commissions_earned').select('id').eq('sale_id', sale_id).eq('clinic_id', clinic_id).eq('status', 'paid').execute().data or []
+            if paid_c:
+                logger.warning(f"Sale {sale_id} cancelled but {len(paid_c)} commission(s) already paid — manual review")
+        except Exception as _e:
+            logger.warning(f"Commission revert on cancel skipped: {_e}")
         return {"message": "Venta anulada"}
     except HTTPException:
         raise

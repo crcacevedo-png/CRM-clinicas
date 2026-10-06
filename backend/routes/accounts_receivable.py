@@ -298,6 +298,28 @@ async def register_ar_payment(ar_id: str, data: dict, ctx=Depends(require_clinic
             "paid_amount": new_paid, "balance": max(0.0, new_balance),
             "status": new_status, "updated_at": now,
         }).eq('id', ar_id).execute()
+        # If there's a payment plan, apply the payment to installments (FIFO).
+        if ar.get('has_payment_plan'):
+            try:
+                remaining = amount
+                insts = sdb.table('payment_plan_installments').select('*').eq('account_receivable_id', ar_id).order('installment_number').execute().data or []
+                for inst in insts:
+                    if remaining <= 0.001:
+                        break
+                    inst_amount = round(float(inst.get('amount') or 0), 2)
+                    inst_paid = round(float(inst.get('paid_amount') or 0), 2)
+                    inst_due = round(inst_amount - inst_paid, 2)
+                    if inst_due <= 0.001:
+                        continue
+                    apply_amt = min(remaining, inst_due)
+                    new_inst_paid = round(inst_paid + apply_amt, 2)
+                    inst_status = 'paid' if new_inst_paid + 0.001 >= inst_amount else 'pending'
+                    sdb.table('payment_plan_installments').update({
+                        "paid_amount": new_inst_paid, "status": inst_status,
+                    }).eq('id', inst['id']).execute()
+                    remaining = round(remaining - apply_amt, 2)
+            except Exception as _e:
+                logger.warning(f"Installment apply skipped: {_e}")
         # If sale exists, also keep its amounts in sync
         if ar.get('sale_id'):
             try:

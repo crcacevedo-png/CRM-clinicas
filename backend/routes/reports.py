@@ -282,28 +282,40 @@ async def pnl_report(
         prev_from, prev_to = _previous_period(d_from, d_to)
 
         def compute(df, dt_):
-            sq = sdb.table('sales').select('id,total').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', df).lte('created_at', dt_ + 'T23:59:59Z')
+            sq = sdb.table('sales').select('id,total,discount_amount').eq('clinic_id', clinic_id).neq('status', 'cancelled').gte('created_at', df).lte('created_at', dt_ + 'T23:59:59Z')
             if branch_id: sq = sq.eq('branch_id', branch_id)
             sales = sq.execute().data or []
             sale_ids = [s['id'] for s in sales]
+            # Global (sale-level) discounts are not reflected in sale_items.subtotal,
+            # so subtract them here to stay consistent with the income report (net of IVA).
+            total_global_disc = sum(float(s.get('discount_amount') or 0) for s in sales)
             # Income split by service vs product
             svc_income = 0.0
             prod_income = 0.0
             cogs = 0.0
             if sale_ids:
                 items = sdb.table('sale_items').select('product_id,service_id,quantity,subtotal,total').in_('sale_id', sale_ids).execute().data or []
+                # Batch-fetch product costs (avoids N+1).
+                pids = list({it['product_id'] for it in items if it.get('product_id')})
+                cost_map = {}
+                for i in range(0, len(pids), 100):
+                    prows = sdb.table('products').select('id,cost_price').in_('id', pids[i:i+100]).execute().data or []
+                    for pr in prows:
+                        cost_map[pr['id']] = float(pr.get('cost_price') or 0)
                 for it in items:
                     tot = float(it.get('subtotal') or 0)
                     qty = float(it.get('quantity') or 0)
                     if it.get('product_id'):
                         prod_income += tot
-                        # COGS via product cost_price
-                        p = sdb.table('products').select('cost_price').eq('id', it['product_id']).maybe_single().execute()
-                        p_data = getattr(p, 'data', None) if p else None
-                        if p_data and p_data.get('cost_price'):
-                            cogs += float(p_data['cost_price']) * qty
+                        cogs += cost_map.get(it['product_id'], 0.0) * qty
                     elif it.get('service_id'):
                         svc_income += tot
+            # Prorate global discounts across service/product income so totals reconcile.
+            _base = svc_income + prod_income
+            if total_global_disc > 0 and _base > 0:
+                _factor = max(0.0, (_base - total_global_disc)) / _base
+                svc_income *= _factor
+                prod_income *= _factor
             # Expenses by category
             eq = sdb.table('expenses').select('total,category').eq('clinic_id', clinic_id).gte('expense_date', df).lte('expense_date', dt_)
             if branch_id: eq = eq.eq('branch_id', branch_id)
