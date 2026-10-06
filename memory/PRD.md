@@ -10,6 +10,18 @@ CRM de clinicas medicas con Feature Flags, Planes, y Multi-branch.
 - **Almacenamiento**: Supabase Storage
 
 ## Implementados
+- [x] **AUDITORÍA QA/CONTABLE — 9 CORRECCIONES** (6 Oct 2026, aprobación "corrige todo"):
+  - [x] FIX1 `cancel_sale`: cantidad del movimiento a entero → anulación 200 + reposición de stock.
+  - [x] FIX2 `create_sale`: protección anti-sobreventa (stock por producto/sucursal) → HTTP 400.
+  - [x] FIX3 Rollback de venta fallida inserta movimientos 'return' compensatorios (trigger solo en INSERT).
+  - [x] FIX4 `create_sale`: movimiento 'sale' guarda `products.cost_price` (costo real) → kardex/COGS correcto.
+  - [x] FIX5 `register_ar_payment`: bloquea sobre-pagos (amount > balance → 400).
+  - [x] FIX6 Reportes (income/pnl/executive/by-branch): ingresos NETOS de IVA (total - tax_amount / subtotal).
+  - [x] FIX7 `create_patient`: dedupe por national_id y por nombre+fecha nacimiento.
+  - [x] FIX8 Nuevo endpoint `GET /clinic/reports/cash-flow` (cobros reales vs gastos, excluye 'credit').
+  - [x] FIX9 `process_po_receive`: costo promedio ponderado recalculado al recibir órdenes de compra.
+  - [x] Verificado 100% backend por testing agent (iteration_42.json). Regresión: `/app/backend/tests/test_audit_9_fixes.py`.
+
 - [x] **SMART RETRIES (REINTENTOS INTELIGENTES DE STRIPE)** (6 Oct 2026):
   - [x] Nueva tabla `payment_attempts` con migración `2026_10_06_payment_attempts`: logs de cada intento Stripe (failed/succeeded/action_required) con `attempt_count`, `failure_code`, `failure_message`, `next_attempt_at`, `amount_due`.
   - [x] Webhook `invoice.payment_failed` refactorizado: en vez de gracia fija de 3 días, usa el `next_payment_attempt` de Stripe (+24h buffer) para extender la ventana — la gracia nunca se encoge si una llamada posterior trae una fecha anterior. Si Stripe agotó reintentos (`next_payment_attempt=None`), fallback a 3 días.

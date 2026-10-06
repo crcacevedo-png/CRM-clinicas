@@ -1,0 +1,33 @@
+{
+  "summary": "Backend regression tests for the 9 audit business-logic fixes (CRM Cortexia Medical). All 9 fixes verified against isolated audit clinic A (4687b2ad-6530-43aa-948a-92dc0cdb5aae). 7/7 pytest tests PASSED covering the 9 bugs (FIX 1+3+4 combined into one lifecycle test).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_audit_9_fixes.py",
+    "/app/test_reports/pytest/audit9_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sales.py create_sale: oversell check uses int(available) in the error message which rounds down a decimal available; could show '0 disponible' when 0.5 is in stock. Minor UX nit.",
+    "sales.py cancel_sale: inventory_movements insert uses int(round(float(it['quantity']))). If a sale was created with fractional qty via another path, cancellation would lose fractional stock. Current sale creation already casts to int in the sale movement, so cycle is consistent — but DB column is likely numeric; recommend keeping float for symmetry.",
+    "reports.py pnl_report: fetches products.cost_price inside loop (N+1). Consider batching with .in_() for high-volume PnLs.",
+    "accounts_receivable.register_ar_payment: sale amount_paid sync adds raw `amount` without re-reading insurance split; works for the audit scope but can drift sale.amount_due when the original sale had insurance_amount > 0 and the AR payment is from the patient portion only. Not in scope of the 9 fixes."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_audit_9_fixes.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "n/a (not requested)"},
+  "test_credentials": "audita@test-cortexia.com / AuditTest2026! (clinic A). gender enum values are 'male'/'female' (NOT 'M'/'F').",
+  "seed_data_creation": "Created ephemeral TEST_-prefixed products, patients and a purchase order inside audit clinic A. One PO was received (10 units @ Q20 added onto 10 units @ Q10 to validate weighted avg cost = Q15). Several sales were created and one was cancelled.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable regression file at /app/backend/tests/test_audit_9_fixes.py. Endpoint quirks learned: (1) stock adjust path is POST /api/clinic/inventory/adjust with {product_id,branch_id,new_quantity,reason}. (2) gender enum requires 'male'/'female'. (3) GET /api/clinic/accounts-receivable returns {accounts:[], total, page, pages} — accepts patient_id filter. (4) Patients create uses PatientFullCreate pydantic model. (5) Audit clinic A has an open cash session; sales without cash_session_id still work.",
+  "rca of the issue": "All 9 reported audit bugs verified fixed. FIX1 confirmed by cancel_sale returning 200 and stock restored exactly. FIX2 confirmed by HTTP 400 'Stock insuficiente' with stock untouched. FIX3 confirmed by sale decrementing by exact qty. FIX4 confirmed: inventory_movements row of type 'sale' stores unit_cost=7.5 (product cost_price) not 50.0 (unit_price). FIX5 confirmed: overpay returns 400 'excede el saldo pendiente'; partial pays reduce balance; full pay sets status 'paid'. FIX6 confirmed: income/exec-summary/pnl all report income net of IVA (Q100 for a Q112-gross sale). FIX7 confirmed: both national_id dedup and first+last+DOB dedup return 400 with the right Spanish wording. FIX8 confirmed: /clinic/reports/cash-flow returns {inflows,outflows,total_in,total_out,net_cash_flow} with net=in-out. FIX9 confirmed: weighted-average cost_price recomputed as (old_qty*old_cost + recv_qty*recv_cost)/(old_qty+recv_qty) = (10*10+10*20)/20 = 15.0 exact."
+}

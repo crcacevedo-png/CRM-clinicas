@@ -27,3 +27,17 @@ Credenciales: audita@test-cortexia.com / AuditTest2026! · auditb@test-cortexia.
 ## Estado de los datos de prueba al cierre
 Dejé ambas clínicas de prueba intactas para inspección del usuario. Clínica A quedó con: 4 pacientes (incluye 1 duplicado intencional), 1 producto (stock=14, debería ser 15), 4 ventas (1 con anulación fallida que sigue 'completed'), 1 gasto Q400, 1 AR en estado corrupto (paid/0 por prueba de sobrepago intencional).
 No se aplicó ningún fix de código — pendiente de aprobación del usuario.
+
+## ✅ CORRECCIONES APLICADAS Y VERIFICADAS — 2026-10-06 (aprobación: "corrige todo")
+Las 9 vulnerabilidades fueron corregidas y validadas 100% por el agente de pruebas (iteration_42.json, 7/7 tests).
+1. ✅ `cancel_sale`: cantidad del movimiento convertida a entero `int(round(...))` → anulación devuelve 200 y repone stock.
+2. ✅ `create_sale`: validación de sobreventa (stock disponible por producto/sucursal) → HTTP 400 "Stock insuficiente".
+3. ✅ Rollback de venta fallida: inserta movimientos 'return' compensatorios (el trigger solo actúa en INSERT) → stock nunca queda desincronizado.
+4. ✅ `create_sale`: el movimiento 'sale' guarda `unit_cost = products.cost_price` (costo real) en vez del precio de venta → kardex/COGS correcto.
+5. ✅ `register_ar_payment`: bloquea sobre-pagos (`amount > balance + 0.01` → HTTP 400).
+6. ✅ Reportes (income, pnl, executive-summary, by-branch): ingresos NETOS de IVA (`total - tax_amount`, `sale_items.subtotal`).
+7. ✅ `create_patient`: dedupe por `national_id` y por `nombre + fecha de nacimiento`.
+8. ✅ Nuevo endpoint `GET /clinic/reports/cash-flow` (cobros reales vs gastos pagados, excluye 'credit').
+9. ✅ `process_po_receive`: recalcula `products.cost_price` con costo promedio ponderado al recibir órdenes de compra.
+Archivo de pruebas de regresión: `/app/backend/tests/test_audit_9_fixes.py`.
+
